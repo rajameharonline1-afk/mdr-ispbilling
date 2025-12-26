@@ -650,3 +650,9 @@ Done. Processed clients: 2
 - Client #21821 (R3545001): CLEAR -> ENABLE
   - Secret already enabled
 Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2

@@ -735,3 +735,16 @@ Stack trace:
 #0 /var/www/isp_billing/cron/sync_clients.php(75): PDOStatement->execute()
 #1 {main}
   thrown in /var/www/isp_billing/cron/sync_clients.php on line 75
+=============================
+📡 Connecting to Router: Access_Router (157.10.243.105)
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'password' in 'field list' in /var/www/isp_billing/cron/sync_clients.php:75
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(75): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 75
+
+Fatal error: Uncaught PDOException: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'password' in 'field list' in /var/www/isp_billing/cron/sync_clients.php:75
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(75): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 75
