@@ -1,0 +1,742 @@
+<?php
+// /public/onu_monitor.php
+// Final stable version — Original UI + VSOL Rx mapping (old/new firmware) + SafeRx + Cache
+
+require_once __DIR__ . '/../app/require_login.php';
+require_once __DIR__ . '/../app/db.php';
+
+set_time_limit(300);
+$pdo = db();
+
+const CACHE_DIR = __DIR__ . '/../storage/cache_snmp';
+const CACHE_TTL = 300;
+
+// ------------------------- Schema flags for OLTs -------------------------
+// (বাংলা) কিছু ইনস্টলেশনে olts টেবিলে snmp_community / rx_oid কলাম নেই,
+// সেখানে সরাসরি select করলে "Unknown column" error হয়। তাই আগে কলাম-লিস্ট দেখে নেই।
+try {
+    $oltCols = $pdo->query("SHOW COLUMNS FROM olts")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {
+    $oltCols = [];
+}
+$HAS_OLT_SNMP  = in_array('snmp_community', $oltCols, true);
+$HAS_OLT_RXOID = in_array('rx_oid', $oltCols, true);
+
+// ------------------------- Helpers -------------------------
+function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+function ensure_cache_dir(){ if(!is_dir(CACHE_DIR)) @mkdir(CACHE_DIR,0775,true); }
+function cache_key($olt){ return sha1(($olt['host']??'').'|'.($olt['vendor']??'')); }
+function cache_path($key){ return CACHE_DIR."/onu_cache_{$key}.json"; }
+function read_cache($p){
+    if(!is_file($p)) return null;
+    $d=json_decode(@file_get_contents($p),true);
+    if(!$d) return null;
+    $a=time()-($d['generated_at']??0);
+    if($a>CACHE_TTL) return null;
+    return $d+['age'=>$a];
+}
+function write_cache($p,$d){
+    $d['generated_at']=time();
+    @file_put_contents($p,json_encode($d,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+}
+function ensure_db_cache_table(PDO $pdo){
+    static $ready=false;
+    if($ready) return;
+    $pdo->exec("CREATE TABLE IF NOT EXISTS onu_monitor_cache (
+        olt_id INT UNSIGNED PRIMARY KEY,
+        data_json LONGTEXT NOT NULL,
+        generated_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $ready=true;
+}
+function read_db_cache(PDO $pdo, int $olt_id){
+    try{
+        ensure_db_cache_table($pdo);
+    }catch(Throwable $e){
+        return null;
+    }
+    $st = $pdo->prepare("SELECT data_json, generated_at FROM onu_monitor_cache WHERE olt_id=? LIMIT 1");
+    $st->execute([$olt_id]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if(!$row) return null;
+    $generated = strtotime($row['generated_at'] ?? '');
+    if(!$generated) return null;
+    $age = time() - $generated;
+    if($age > CACHE_TTL) return null;
+    $payload = json_decode($row['data_json'] ?? '', true);
+    if(!is_array($payload)) return null;
+    $payload['age'] = $age;
+    return $payload;
+}
+function write_db_cache(PDO $pdo, int $olt_id, array $payload){
+    try{
+        ensure_db_cache_table($pdo);
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+        if($json === false) return;
+        $st = $pdo->prepare("INSERT INTO onu_monitor_cache (olt_id,data_json,generated_at) VALUES (?,?,NOW())
+            ON DUPLICATE KEY UPDATE data_json=VALUES(data_json), generated_at=VALUES(generated_at)");
+        $st->execute([$olt_id,$json]);
+    }catch(Throwable $e){
+        // ignore DB cache errors
+    }
+}
+
+function snmpwalk_safe($host,$comm,$oid){
+    if(!$oid) return [];
+    $cmd = sprintf("timeout 60s snmpwalk -v2c -c %s -O n %s %s 2>&1",
+        escapeshellarg($comm), escapeshellarg($host), escapeshellarg($oid));
+    $out = trim(shell_exec($cmd));
+    if($out==='' || stripos($out,'Timeout')!==false) return [];
+    return explode("\n",$out);
+}
+
+// ---- ifDescr helpers ----
+function parse_ifdescr_text($line){
+    // returns raw text like 'EPON0/1:1 5058-woasik' or 'EPON01ONU6 Foo'
+    $txt = preg_replace('/^.*=\s*STRING:\s*/','',$line);
+    return trim($txt,'" ');
+}
+function split_iface_and_desc($ifText){
+    // -> ['EPON0/1:1','5058-woasik'] or ['EPON0/1','']
+    return preg_match('/^([A-Za-z0-9:\/]+)\s+(.+)$/',$ifText,$m) ? [$m[1], $m[2]] : [$ifText, ''];
+}
+
+// ---- slot/port/onu extractor (EPON/GPON all formats) ----
+function extract_spo_from_iface($ifaceText){
+    $t = strtoupper($ifaceText);
+
+    // EPON0/1:3 , EPON1/4:10
+    if(preg_match('/(?:EPON|GPON)\s*0*([0-9]+)\/\s*0*([0-9]+)\s*:\s*0*([0-9]+)/i',$t,$m))
+        return [(int)$m[1], (int)$m[2], (int)$m[3]];
+
+    // EPON1/4  (no ONU)
+    if(preg_match('/(?:EPON|GPON)\s*0*([0-9]+)\/\s*0*([0-9]+)/i',$t,$m))
+        return [(int)$m[1], (int)$m[2], null];
+
+    // EPON01ONU6  / GPON2ONU14
+    if(preg_match('/(?:EPON|GPON)\s*0*([0-9]+)\s*ONU\s*0*([0-9]+)/i',$t,$m))
+        return [(int)$m[1], null, (int)$m[2]];
+
+    // EPON01ONU06 (tight variants)
+    if(stripos($t,'ONU')!==false && preg_match('/(?:EPON|GPON)\s*0*([0-9]+)[^\d]*0*([0-9]+)$/i',$t,$m))
+        return [(int)$m[1], null, (int)$m[2]];
+
+    return [null,null,null];
+}
+
+// ---- VSOL raw → dBm conversion (handles 255/254, etc.) ----
+function vsol_raw_to_dbm($raw){
+    // Primary mapping: -raw/10
+    $v = -($raw/10.0);
+    if($v <= 0 && $v >= -45) return number_format($v,2);
+
+    // Some older images behave like (raw-300)/10
+    $v2 = ($raw-300)/10.0;
+    if($v2 <= 0 && $v2 >= -45) return number_format($v2,2);
+
+    // If both fail, treat as invalid
+    return 'N/A';
+}
+
+// ---- Build Rx Map: index by "slot/port:onu", "port:onu", and "onu:N" fallback ----
+function build_rx_map(array $rx_rows){
+    $map = [];
+    $seqOnu = 1;
+    foreach($rx_rows as $row){
+        // INTEGER based output: ...<slot>.<port>.<onu> = INTEGER: 255
+        if(preg_match('/\.(\d+)\.(\d+)\.(\d+)\s*=\s*(?:INTEGER:\s*)?([-+]?\d+)/', $row, $m)){
+            $slot = (int)$m[1]; $port = (int)$m[2]; $onu = (int)$m[3]; $raw = (int)$m[4];
+            $val = vsol_raw_to_dbm($raw);
+            $map["$slot/$port:$onu"] = $val;
+            $map["$port:$onu"]       = $val;
+            $map["onu:$onu"]         = $val;
+            $map["idx:$slot:$port:$onu"] = $val;
+        // String based output: ... = "0.02 mW (-16.33 dBm)"
+        } elseif(preg_match('/\.(?:\d+\.)*7\.(\d+)\.(\d+)(?:\.(\d+))?\s*=.*?\((-?\d+(?:\.\d+)?)\s*dBm\)/i', $row, $m)) {
+            if(isset($m[3]) && $m[3] !== ''){
+                $slot=(int)$m[1]; $port=(int)$m[2]; $onu=(int)$m[3];
+            } else {
+                $slot=null; $port=(int)$m[1]; $onu=(int)$m[2];
+            }
+            $val = (float)$m[4];
+            if($slot!==null) $map["$slot/$port:$onu"] = $val;
+            $map["$port:$onu"]     = $val;
+            $map["onu:$onu"]       = $val;
+            $idxKey = $slot!==null ? "idx:$slot:$port:$onu" : "idx:$port:$onu";
+            $map[$idxKey] = $val;
+        // Generic dBm fallback if indices missing but dBm present
+        } elseif(preg_match('/\((-?\d+(?:\.\d+)?)\s*dBm\)/i', $row, $m)) {
+            $map["seq:".$seqOnu] = (float)$m[1];
+            $seqOnu++;
+        // Some vendors expose ifIndex directly
+        } elseif(preg_match('/\.(\d+)\s*=\s*(?:INTEGER:\s*)?([-+]?\d+(?:\.\d+)?)/i', $row, $m)) {
+            $map["if:{$m[1]}"] = (float)$m[2];
+        // Raw integers but without explicit indices
+        } elseif(preg_match('/=\s*(?:INTEGER:\s*)?([-+]?\d+)/', $row, $m)) {
+            $raw = (int)$m[1];
+            $val = vsol_raw_to_dbm($raw);
+            $map["onu:".$seqOnu++] = $val;
+        }
+    }
+    return $map;
+}
+
+// ---- Safe Rx finder (prevents undefined index) ----
+function safe_rx($rx_map, $slot, $port, $onu, $ifIndex=null){
+    if ($slot!==null && $port!==null && $onu!==null && isset($rx_map["$slot/$port:$onu"]))
+        return $rx_map["$slot/$port:$onu"];
+    if ($port!==null && $onu!==null && isset($rx_map["$port:$onu"]))
+        return $rx_map["$port:$onu"];
+    if ($onu!==null && isset($rx_map["onu:$onu"]))
+        return $rx_map["onu:$onu"];
+    if ($ifIndex!==null && isset($rx_map["if:$ifIndex"]))
+        return $rx_map["if:$ifIndex"];
+    if ($onu!==null && isset($rx_map["seq:$onu"]))
+        return $rx_map["seq:$onu"];
+    return 'N/A';
+}
+
+// ---------------------- Vendor OIDs ----------------------
+$oids_vendor = [
+    'vsol'   => [
+        'string' => '.1.3.6.1.4.1.37950.1.1.5.12.2.1.8.1.7',
+        'new'    => '.1.3.6.1.4.1.37950.1.1.5.10.1.7',
+    ],
+    'bdcom'  => ['new' => '.1.3.6.1.4.1.3320.9.5.1.7'],
+    'zte'    => ['new' => '.1.3.6.1.4.1.3902.1082.20.1.1.5.1.6'],
+    'huawei' => ['new' => '.1.3.6.1.4.1.2011.6.3.12.1.1.6'],
+];
+
+// ------------------------- Load OLTs -------------------------
+// কলাম না থাকলে কনস্ট্যান্ট/NULL দিয়ে alias করি, যেন সবসময় snmp_community / rx_oid key থাকে।
+$oltSelectCols = 'id,name,vendor,host';
+$oltSelectCols .= $HAS_OLT_SNMP  ? ',snmp_community'            : ",'public' AS snmp_community";
+$oltSelectCols .= $HAS_OLT_RXOID ? ',rx_oid'                    : ',NULL AS rx_oid';
+$olts = $pdo->query("SELECT {$oltSelectCols} FROM olts WHERE is_active=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+$selected_id = (int)($_GET['olt_id'] ?? 0);
+$force_refresh = isset($_GET['refresh']);
+$format = strtolower((string)($_GET['format'] ?? 'html'));
+$wants_json = ($format === 'json');
+$selected = null;
+foreach($olts as $o){ if($o['id']===$selected_id) { $selected = $o; break; } }
+
+$error=null; $groups=[]; $total=0; $online=0; $offline=0; $cache_used=false; $cache_age=0; $oid_badge=null;
+
+if ($selected) {
+    $vendor = strtolower($selected['vendor']);
+    $host   = $selected['host'];
+    $comm   = $selected['snmp_community'] ?: 'public';
+    $rx_oid = $selected['rx_oid'] ?: null;
+
+    // VSOL: autodetect firmware output format (string vs integer) and persist rx_oid
+    if ($vendor === 'vsol') {
+        $try_string = $oids_vendor['vsol']['string'] ?? null;
+        $rx_rows_probe = $try_string ? snmpwalk_safe($host,$comm,$try_string) : [];
+        if (!empty($rx_rows_probe)) {
+            $rx_oid = $try_string;
+            $oid_badge = $rx_oid . " (String Format)";
+        } else {
+            $rx_oid = $oids_vendor['vsol']['new'] ?? $rx_oid;
+            if ($rx_oid) $oid_badge = $rx_oid . " (Integer Format)";
+        }
+        if ($rx_oid && $HAS_OLT_RXOID) {
+            $pdo->prepare("UPDATE olts SET rx_oid=? WHERE id=?")->execute([$rx_oid, $selected['id']]);
+        }
+    } elseif (isset($oids_vendor[$vendor]['new'])) {
+        $rx_oid = $oids_vendor[$vendor]['new'];
+        $oid_badge = $rx_oid;
+    }
+
+    // cache
+    ensure_cache_dir();
+    $ckey = cache_key($selected);
+    $cpath = cache_path($ckey);
+    $db_cache = null;
+    if(!$force_refresh){
+        $db_cache = read_db_cache($pdo, (int)$selected['id']);
+    }
+
+    if (!$force_refresh && $db_cache) {
+        $groups = $db_cache['groups'];
+        $online = (int)$db_cache['online'];
+        $offline= (int)$db_cache['offline'];
+        $total  = (int)$db_cache['total'];
+        $cache_used = true;
+        $cache_age  = (int)$db_cache['age'];
+    } elseif (!$force_refresh && ($cdata = read_cache($cpath))) {
+        $groups = $cdata['groups'];
+        $online = (int)$cdata['online'];
+        $offline= (int)$cdata['offline'];
+        $total  = (int)$cdata['total'];
+        $cache_used = true;
+        $cache_age  = (int)$cdata['age'];
+    } else {
+        try {
+            $ifdescr_rows = snmpwalk_safe($host,$comm,'.1.3.6.1.2.1.2.2.1.2'); // ifDescr
+            if (empty($ifdescr_rows)) throw new Exception("No interfaces found (ifDescr empty).");
+
+            $status_rows  = snmpwalk_safe($host,$comm,'.1.3.6.1.2.1.2.2.1.8'); // ifOperStatus
+            $mac_rows     = snmpwalk_safe($host,$comm,'.1.3.6.1.2.1.2.2.1.6'); // ifPhysAddress
+            $rx_rows      = $rx_oid ? snmpwalk_safe($host,$comm,$rx_oid) : [];
+
+            // Build maps: index->status, index->mac
+            $idx_status=[]; foreach($status_rows as $r)
+                if(preg_match('/\.(\d+)\s*=\s*(?:INTEGER:\s*)?(\d+)/',$r,$m)) $idx_status[$m[1]] = ((int)$m[2]===1?'Online':'Offline');
+            $idx_mac=[]; foreach($mac_rows as $r)
+                if(preg_match('/\.(\d+)\s*=\s*(?:Hex-STRING:\s*)?(.*)$/',$r,$m)) $idx_mac[$m[1]] = strtoupper(preg_replace('/\s+/',':',trim($m[2])));
+
+            // Build Rx lookup map
+            $rx_map = build_rx_map($rx_rows);
+
+            $seen_onu_keys = [];
+            // Grouping + table rows
+            foreach($ifdescr_rows as $row){
+                if(!preg_match('/\.(\d+)\s*=/',$row,$m)) continue;
+                $ifIndex = $m[1];
+                $rawText = parse_ifdescr_text($row);
+                if(!preg_match('/(EPON|GPON)/i',$rawText)) continue;
+
+                [$ifaceText, $descText] = split_iface_and_desc($rawText);
+                [$slot,$port,$onu] = extract_spo_from_iface($ifaceText);
+                if ($onu === null) continue;
+
+                $uniqueKey = ($slot!==null ? $slot : 's?') . '|' . ($port!==null ? $port : 'p?') . '|' . $onu;
+                if (isset($seen_onu_keys[$uniqueKey])) continue;
+                $seen_onu_keys[$uniqueKey] = true;
+
+                // decide PON name
+                $pon = 'PON?';
+                if($port!==null) $pon = 'PON'.(int)$port;
+                elseif($slot!==null) $pon = 'PON'.(int)$slot;
+
+                // find Rx by best key
+                $rx = safe_rx($rx_map, $slot, $port, $onu, $ifIndex);
+
+                $status = $idx_status[$ifIndex] ?? 'Offline';
+                $status_norm = strtolower(trim((string)$status));
+                $isOnline = ($status_norm === 'online');
+                $mac    = $idx_mac[$ifIndex] ?? 'N/A';
+                if (!$isOnline) $rx = 'N/A';
+
+                if (!isset($groups[$pon])) $groups[$pon] = ['list'=>[],'online'=>0,'offline'=>0];
+                $groups[$pon]['list'][] = [
+                    'iface'  => $ifaceText,
+                    'desc'   => $descText,
+                    'mac'    => $mac,
+                    'status' => $isOnline ? 'Online' : 'Offline',
+                    'rx'     => $rx,
+                ];
+                if ($isOnline) $groups[$pon]['online']++; else $groups[$pon]['offline']++;
+                $total++;
+            }
+
+            // sort PONs & rows
+            uksort($groups,function($a,$b){
+                preg_match('/PON(\d+)/',$a,$ma); preg_match('/PON(\d+)/',$b,$mb);
+                return ((int)($ma[1]??0)) <=> ((int)($mb[1]??0));
+            });
+            foreach($groups as &$g){ usort($g['list'],fn($x,$y)=>strnatcasecmp($x['iface'],$y['iface'])); }
+            unset($g); // break reference to avoid clobbering last group later
+            $online  = array_sum(array_column($groups,'online'));
+            $offline = array_sum(array_column($groups,'offline'));
+            $payload = ['groups'=>$groups,'online'=>$online,'offline'=>$offline,'total'=>$total];
+            write_cache($cpath, $payload);
+            write_db_cache($pdo, (int)$selected['id'], $payload);
+        } catch(Exception $e){ $error = $e->getMessage(); }
+    }
+}
+
+if ($wants_json) {
+    header('Content-Type: application/json; charset=utf-8');
+    if(!$selected_id){
+        echo json_encode(['ok'=>false,'error'=>'Select an OLT first.']);
+    } elseif($error){
+        echo json_encode(['ok'=>false,'error'=>$error]);
+    } else {
+        $selected_meta = $selected ? [
+            'id' => (int)$selected['id'],
+            'name' => $selected['name'],
+            'host' => $selected['host'],
+        ] : null;
+        echo json_encode([
+            'ok' => true,
+            'data' => [
+                'selected'   => $selected_meta,
+                'groups'     => $groups,
+                'total'      => $total,
+                'online'     => $online,
+                'offline'    => $offline,
+                'cache_used' => $cache_used,
+                'cache_age'  => $cache_age,
+                'cache_ttl'  => CACHE_TTL,
+                'oid_badge'  => $oid_badge,
+            ]
+        ], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
+$page_title="ONU Live Monitor";
+include __DIR__ . '/../partials/partials_header.php';
+?>
+
+<style>
+.status-online{color:#198754!important;font-weight:600}
+.status-offline{color:#dc3545!important;font-weight:600}
+.rx-good{color:#28a745!important;font-weight:600}
+.rx-warning{color:#ffc107!important;font-weight:600}
+.rx-bad{color:#dc3545!important;font-weight:700}
+.accordion-button:not(.collapsed){background:#e7f1ff;box-shadow:none}
+</style>
+
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-3">
+    <h4 class="mb-0"><i class="bi bi-broadcast"></i> ONU Live Monitor</h4>
+    <div class="text-end small" id="monitorMeta" <?= $selected ? '' : 'style="display:none;"' ?>>
+      <div>Monitoring: <strong id="monitorName"><?= $selected ? h($selected['name']) : '' ?></strong> (<span id="monitorHost"><?= $selected ? h($selected['host']) : '' ?></span>)</div>
+      <span class="badge bg-secondary me-1" id="oidBadge" <?= $oid_badge ? '' : 'style="display:none;"' ?>>
+        <i class="bi bi-code"></i> <span id="oidBadgeText"><?= $oid_badge ? h($oid_badge) : '' ?></span>
+      </span>
+      <span class="badge <?= $cache_used ? 'bg-info' : 'bg-secondary' ?>" id="cacheStateBadge" <?= $selected ? '' : 'style="display:none;"' ?>>
+        <i class="bi <?= $cache_used ? 'bi-hdd' : 'bi-wifi' ?>" id="cacheStateIcon"></i>
+        <span id="cacheStateText"><?= $selected ? ($cache_used ? 'Cache ' . (int)$cache_age . 's / TTL ' . CACHE_TTL . 's' : 'Live SNMP') : '' ?></span>
+      </span>
+      <a href="<?= $selected_id ? '?olt_id='.$selected_id.'&refresh=1' : '#' ?>" class="btn btn-sm btn-outline-primary ms-2 <?= $selected_id ? '' : 'disabled' ?>" id="forceRefreshBtn" <?= $selected_id ? '' : 'tabindex="-1" aria-disabled="true"' ?>>
+        <i class="bi bi-lightning-charge-fill"></i> Force Refresh
+      </a>
+      <button class="btn btn-sm btn-outline-info ms-2" data-bs-toggle="modal" data-bs-target="#rxOidModal" id="rxScanBtn">
+        <i class="bi bi-broadcast-pin"></i> Scan Rx OID
+      </button>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <form method="GET" class="row g-2 align-items-end" id="onuForm">
+        <div class="col-md-9">
+          <label class="form-label fw-bold">Select OLT</label>
+          <select name="olt_id" class="form-select" id="oltSelect">
+            <option value="">-- Choose an OLT --</option>
+            <?php foreach($olts as $o): ?>
+              <option value="<?=$o['id']?>" <?=($o['id']==$selected_id?'selected':'')?>>
+                <?=h($o['name'])?> (<?=h($o['host'])?>)
+              </option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="col-md-3 d-grid">
+          <button type="submit" class="btn btn-primary">Show ONUs</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="onuResults" data-has-initial="<?=$selected_id?1:0?>">
+    <?php if(!$selected_id): ?>
+      <div class="alert alert-info">Please choose an OLT to view ONU statistics.</div>
+    <?php elseif($error): ?>
+      <div class="alert alert-danger"><strong>Error:</strong> <?=h($error)?></div>
+    <?php elseif(empty($groups)): ?>
+      <div class="alert alert-warning">No ONUs found on this OLT.</div>
+    <?php else: ?>
+      <div class="card shadow-sm mb-3">
+        <div class="card-body d-flex flex-wrap gap-3 fw-bold">
+          <span>Total: <strong><?=$total?></strong></span>
+          <span class="text-success">Online: <strong><?=$online?></strong></span>
+          <span class="text-danger">Offline: <strong><?=$offline?></strong></span>
+          <?php if($cache_used): ?>
+            <span class="text-muted">Cache Age: <strong><?=$cache_age?>s</strong> / TTL <?=CACHE_TTL?>s</span>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <div class="accordion" id="ponAccordion">
+        <?php foreach($groups as $pon=>$g): $cid='c-'.preg_replace('/[^A-Za-z0-9_-]/','-',$pon); ?>
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#<?=$cid?>">
+              <strong class="me-3"><?=h($pon)?></strong>
+              <span class="badge bg-secondary me-2">Total: <?=count($g['list'])?></span>
+              <span class="badge bg-success me-2">On: <?=$g['online']?></span>
+              <span class="badge bg-danger">Off: <?=$g['offline']?></span>
+            </button>
+          </h2>
+          <div id="<?=$cid?>" class="accordion-collapse collapse" data-bs-parent="#ponAccordion">
+            <div class="accordion-body p-0">
+              <table class="table table-hover table-sm align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th><th>Interface</th><th>Description</th><th>MAC</th><th>Status</th><th>Rx Power (dBm)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                <?php $i=1; foreach($g['list'] as $r):
+                  $rxShow = $r['rx'];
+                  $cls='text-muted';
+                  $rxValue = null;
+                  if(is_numeric($rxShow)){
+                      $rxValue = (float)$rxShow;
+                  } elseif(is_string($rxShow) && preg_match('/-?\d+(?:\.\d+)?/', $rxShow, $m)) {
+                      $rxValue = (float)$m[0];
+                  }
+
+                  if($rxValue !== null){
+                      if ($rxValue >= -23) {
+                          $cls = 'rx-good';
+                      } elseif ($rxValue >= -25) {
+                          $cls = 'rx-warning';
+                      } else {
+                          $cls = 'rx-bad';
+                      }
+                  }
+                  $statusClass = ($r['status'] === 'Online') ? 'status-online' : 'status-offline';
+                ?>
+                  <tr>
+                    <td><?=$i++?></td>
+                    <td><strong><?=h($r['iface'])?></strong></td>
+                    <td><?=h($r['desc'])?></td>
+                    <td><code><?=h($r['mac'])?></code></td>
+                    <td class="text-center <?=$statusClass?>"><?=h($r['status'])?></td>
+                    <td class="text-center <?=$cls?>"><?= $rxValue !== null ? number_format($rxValue,2) : h($rxShow) ?></td>
+                  </tr>
+                <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  const form = document.getElementById('onuForm');
+  const select = document.getElementById('oltSelect');
+  const results = document.getElementById('onuResults');
+  const monitorMeta = document.getElementById('monitorMeta');
+  const monitorName = document.getElementById('monitorName');
+  const monitorHost = document.getElementById('monitorHost');
+  const oidBadge = document.getElementById('oidBadge');
+  const oidBadgeText = document.getElementById('oidBadgeText');
+  const cacheBadge = document.getElementById('cacheStateBadge');
+  const cacheIcon = document.getElementById('cacheStateIcon');
+  const cacheText = document.getElementById('cacheStateText');
+  const refreshBtn = document.getElementById('forceRefreshBtn');
+
+  if(!form || !select || !results) return;
+
+  let requestId = 0;
+
+  const escapeHtml = (str) => String(str ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[ch]));
+
+  const showMessage = (type, text) => {
+    results.innerHTML = `<div class="alert alert-${type}">${escapeHtml(text)}</div>`;
+  };
+
+  const showLoading = () => {
+    results.innerHTML = '<div class="py-5 text-center text-muted"><div class="spinner-border text-primary" role="status"></div><p class="mt-3 mb-0">Loading ONU data...</p></div>';
+  };
+
+  const disableMeta = () => {
+    if(monitorMeta) monitorMeta.style.display = 'none';
+    if(refreshBtn){
+      refreshBtn.classList.add('disabled');
+      refreshBtn.setAttribute('aria-disabled','true');
+      refreshBtn.setAttribute('tabindex','-1');
+      refreshBtn.href = '#';
+    }
+    if(cacheBadge) cacheBadge.style.display = 'none';
+    if(oidBadge) oidBadge.style.display = 'none';
+  };
+
+  const updateMeta = (payload, oltId) => {
+    if(!payload || !payload.selected){
+      disableMeta();
+      return;
+    }
+    if(monitorMeta) monitorMeta.style.display = '';
+    if(monitorName) monitorName.textContent = payload.selected.name || '';
+    if(monitorHost) monitorHost.textContent = payload.selected.host || '';
+    if(oidBadge && oidBadgeText){
+      if(payload.oid_badge){
+        oidBadge.style.display = '';
+        oidBadgeText.textContent = payload.oid_badge;
+      } else {
+        oidBadge.style.display = 'none';
+        oidBadgeText.textContent = '';
+      }
+    }
+    if(cacheBadge && cacheIcon && cacheText){
+      cacheBadge.style.display = '';
+      if(payload.cache_used){
+        cacheBadge.classList.remove('bg-secondary');
+        cacheBadge.classList.add('bg-info');
+        cacheIcon.className = 'bi bi-hdd';
+        cacheText.textContent = `Cache ${payload.cache_age}s / TTL ${payload.cache_ttl}s`;
+      } else {
+        cacheBadge.classList.remove('bg-info');
+        cacheBadge.classList.add('bg-secondary');
+        cacheIcon.className = 'bi bi-wifi';
+        cacheText.textContent = 'Live SNMP';
+      }
+    }
+    if(refreshBtn){
+      refreshBtn.classList.remove('disabled');
+      refreshBtn.removeAttribute('aria-disabled');
+      refreshBtn.removeAttribute('tabindex');
+      refreshBtn.href = `?olt_id=${encodeURIComponent(oltId)}&refresh=1`;
+    }
+  };
+
+  const rxClass = (value) => {
+    const n = parseFloat(value);
+    if(Number.isFinite(n)){
+      if(n >= -23) return 'rx-good';
+      if(n >= -25) return 'rx-warning';
+      return 'rx-bad';
+    }
+    return 'text-muted';
+  };
+
+  const rxDisplay = (value) => {
+    const n = parseFloat(value);
+    if(Number.isFinite(n)) return n.toFixed(2);
+    return escapeHtml(value ?? 'N/A');
+  };
+
+  const renderRows = (payload) => {
+    if(!payload.groups || Object.keys(payload.groups).length===0){
+      return '<div class="alert alert-warning">No ONUs found on this OLT.</div>';
+    }
+    let html = '<div class="card shadow-sm mb-3"><div class="card-body d-flex flex-wrap gap-3 fw-bold">';
+    html += `<span>Total: <strong>${payload.total}</strong></span>`;
+    html += `<span class="text-success">Online: <strong>${payload.online}</strong></span>`;
+    html += `<span class="text-danger">Offline: <strong>${payload.offline}</strong></span>`;
+    if(payload.cache_used){
+      html += `<span class="text-muted">Cache Age: <strong>${payload.cache_age}s</strong> / TTL ${payload.cache_ttl}s</span>`;
+    }
+    html += '</div></div>';
+
+    html += '<div class="accordion" id="ponAccordion">';
+    let idx = 0;
+    Object.entries(payload.groups).forEach(([pon, group]) => {
+      const cid = `pon-${idx++}-${pon.replace(/[^A-Za-z0-9_-]/g,'-')}`;
+      html += `<div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#${cid}">
+            <strong class="me-3">${escapeHtml(pon)}</strong>
+            <span class="badge bg-secondary me-2">Total: ${group.list.length}</span>
+            <span class="badge bg-success me-2">On: ${group.online}</span>
+            <span class="badge bg-danger">Off: ${group.offline}</span>
+          </button>
+        </h2>
+        <div id="${cid}" class="accordion-collapse collapse" data-bs-parent="#ponAccordion">
+          <div class="accordion-body p-0">
+            <table class="table table-hover table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>#</th><th>Interface</th><th>Description</th><th>MAC</th><th>Status</th><th>Rx Power (dBm)</th>
+                </tr>
+              </thead>
+              <tbody>`;
+      (group.list || []).forEach((row, i) => {
+        const statusClass = row.status === 'Online' ? 'status-online' : 'status-offline';
+        html += `<tr>
+          <td>${i+1}</td>
+          <td><strong>${escapeHtml(row.iface)}</strong></td>
+          <td>${escapeHtml(row.desc)}</td>
+          <td><code>${escapeHtml(row.mac)}</code></td>
+          <td class="text-center ${statusClass}">${escapeHtml(row.status)}</td>
+          <td class="text-center ${rxClass(row.rx)}">${rxDisplay(row.rx)}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div></div></div>';
+    });
+    html += '</div>';
+    return html;
+  };
+
+  const fetchOnuData = (forceRefresh=false) => {
+    const oltId = (select.value || '').trim();
+    if(!oltId){
+      disableMeta();
+      showMessage('info','Please choose an OLT to view ONU statistics.');
+      return;
+    }
+    showLoading();
+    const currentReq = ++requestId;
+    const params = new URLSearchParams({olt_id: oltId, format:'json'});
+    if(forceRefresh) params.set('refresh','1');
+
+    fetch(`onu_monitor.php?${params.toString()}`, {
+      headers: {'X-Requested-With':'fetch'}
+    })
+      .then(res => res.json())
+      .then(body => {
+        if(currentReq !== requestId) return;
+        if(!body.ok) throw new Error(body.error || 'Failed to load ONU data.');
+        updateMeta(body.data, oltId);
+        results.innerHTML = renderRows(body.data);
+      })
+      .catch(err => {
+        if(currentReq !== requestId) return;
+        showMessage('danger', err.message || 'Failed to load ONU data.');
+      });
+  };
+
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    fetchOnuData(false);
+  });
+
+  select.addEventListener('change', function(){
+    if(refreshBtn){
+      const oltId = (select.value || '').trim();
+      if(oltId){
+        refreshBtn.classList.remove('disabled');
+        refreshBtn.removeAttribute('aria-disabled');
+        refreshBtn.removeAttribute('tabindex');
+        refreshBtn.href = `?olt_id=${encodeURIComponent(oltId)}&refresh=1`;
+      } else {
+        refreshBtn.classList.add('disabled');
+        refreshBtn.setAttribute('aria-disabled','true');
+        refreshBtn.setAttribute('tabindex','-1');
+        refreshBtn.href = '#';
+      }
+    }
+  });
+
+  if(refreshBtn){
+    refreshBtn.addEventListener('click', function(ev){
+      if(refreshBtn.classList.contains('disabled')) return;
+      ev.preventDefault();
+      fetchOnuData(true);
+    });
+  }
+});
+</script>
+
+<!-- Rx OID Scanner Modal -->
+<div class="modal fade" id="rxOidModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-info text-white">
+        <h5 class="modal-title"><i class="bi bi-broadcast-pin"></i> Auto Detect Rx Power OID</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe src="/tools/find_rx_oid_web.php" style="width:100%;height:80vh;border:0;"></iframe>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<?php include __DIR__ . '/../partials/partials_footer.php'; ?>

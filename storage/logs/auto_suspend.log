@@ -1,0 +1,652 @@
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21815 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): DUE -> SUSPEND
+  - Secret disabled
+  - Active session removed
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21814 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): DUE -> SUSPEND
+  - Secret disabled
+  - Active session removed
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #5555 (R3545555): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+[!] No clients found.
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21817 (1234): CLEAR -> ENABLE
+  - PPPoE secret not found: 1234
+- Client #21818 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21818 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21819 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21819 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21820 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21821 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2

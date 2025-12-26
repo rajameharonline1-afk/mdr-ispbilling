@@ -1,0 +1,3 @@
+[2025-12-14 00:10:02] == Auto billing start for 2025-12 (force=0, dry=0) ==
+[2025-12-14 00:10:02] Skip: today is not 1st and no force/backfill (ym=2025-12)
+Skip: today is not 1st; use ?force=1 or pass a month/--force for backfill.

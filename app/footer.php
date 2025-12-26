@@ -1,0 +1,3 @@
+<?php
+// footer removed intentionally
+?>

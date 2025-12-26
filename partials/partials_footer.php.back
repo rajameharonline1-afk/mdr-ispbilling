@@ -1,0 +1,90 @@
+<?php
+// partials/partials_footer.php
+?>
+  </main><!-- /main -->
+</div><!-- /app-wrap -->
+
+<!-- Bootstrap Bundle (JS + Popper) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<style>
+#app-toast-holder{
+  position:fixed;
+  top:1rem;
+  right:1rem;
+  z-index:2050;
+  display:flex;
+  flex-direction:column;
+  gap:.5rem;
+  pointer-events:none;
+}
+.app-toast{
+  min-width:260px;
+  transform:translateX(120%);
+  opacity:0;
+  transition:transform .35s ease, opacity .35s ease;
+  pointer-events:auto;
+  box-shadow:0 8px 18px rgba(0,0,0,.2);
+}
+.app-toast.show{ transform:translateX(0); opacity:1; }
+.app-toast.hide{ transform:translateX(120%); opacity:0; }
+</style>
+<script>
+(function(){
+  function ensureHolder(){
+    let holder=document.getElementById('app-toast-holder');
+    if(!holder){
+      holder=document.createElement('div');
+      holder.id='app-toast-holder';
+      document.body.appendChild(holder);
+    }
+    return holder;
+  }
+  function globalToast(message, type='success', timeout=2200){
+    const holder=ensureHolder();
+    const map={success:'success', error:'danger', danger:'danger', warning:'warning', info:'info', primary:'primary'};
+    const variant=map[type] || 'primary';
+    const el=document.createElement('div');
+    el.className=`app-toast alert alert-${variant}`;
+    el.textContent=message;
+    holder.appendChild(el);
+    requestAnimationFrame(()=>el.classList.add('show'));
+    const hideTimer=setTimeout(()=>{ el.classList.add('hide'); }, timeout);
+    el.addEventListener('mouseenter',()=>clearTimeout(hideTimer));
+    el.addEventListener('mouseleave',()=>setTimeout(()=>el.classList.add('hide'), 800));
+    el.addEventListener('transitionend',()=>{ if(el.classList.contains('hide')) el.remove(); });
+  }
+  window.globalToast = globalToast;
+  window.showToast = globalToast;
+})();
+</script>
+
+<script>
+/* Sidebar pinned (desktop), offcanvas (mobile) — no collapse */
+(function(){
+  const KEY='sb-collapsed';
+  function clearCollapse(){
+    document.body.classList.remove('sb-collapsed');
+    try{ localStorage.removeItem(KEY); }catch(e){}
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    clearCollapse();
+    const btn = document.getElementById('btnSidebarToggle');
+    if (btn){
+      btn.addEventListener('click', function(){
+        // desktop: ignore collapse toggle (keep pinned)
+        if (!window.matchMedia('(min-width: 768px)').matches){
+          const oc = document.getElementById('sidebarOffcanvas');
+          if (oc){ new bootstrap.Offcanvas(oc).show(); }
+        }
+      });
+    }
+  });
+})();
+</script>
+
+
+</body>
+</html>
+
+
+<?php include __DIR__ . '/../app/footer.php'; ?>

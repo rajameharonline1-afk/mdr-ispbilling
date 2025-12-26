@@ -1,0 +1,97 @@
+# nano /etc/apache2/sites-available/isp_billing.conf
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+
+    # 1. DocumentRoot শুধু public ফোল্ডারে সেট করা থাকবে
+    DocumentRoot /var/www/isp_billing/public
+    ServerName 172.16.3.3
+
+    # 2. শুধু public ডিরেক্টরির জন্য অ্যাক্সেস অনুমোদিত
+    <Directory /var/www/isp_billing/public>
+        DirectoryIndex index.php index.html
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    # --- প্রজেক্টের রুটে থাকা বাকি ফোল্ডার যেগুলো HTTP দিয়ে এক্সেস লাগে ---
+    Alias /app          /var/www/isp_billing/app
+    Alias /api          /var/www/isp_billing/api
+    Alias /cron         /var/www/isp_billing/cron
+    Alias /olt         /var/www/isp_billing/olt
+    Alias /reports      /var/www/isp_billing/reports
+    Alias /tools        /var/www/isp_billing/tools
+    Alias /tg           /var/www/isp_billing/tg
+    Alias /assets       /var/www/isp_billing/assets
+    Alias /project_root /var/www/isp_billing
+
+    <Directory /var/www/isp_billing/app>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing/api>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing/cron>
+        AllowOverride All
+        Require all granted
+    </Directory>
+        <Directory /var/www/isp_billing/olt>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing/reports>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing/tools>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing/tg>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing/assets>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <Directory /var/www/isp_billing>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    # 3. পুরোনো বুকমার্কে যদি /public/... থাকে তাহলে সেই পথকে নতুন root-এ নিয়ে আসবো
+    RedirectMatch permanent "^/public/(.*)$" "/$1"
+
+    # 4. রুট URL কে login.php-তে রিডাইরেক্ট করবে (এই লাইনটি রাখুন)
+    RedirectMatch permanent "^/$" "/login.php"
+    # 5. /login (extension ছাড়া) পুরোনো বুকমার্ক সাপোর্টের জন্য login.php-তে পাঠাবে
+    RedirectMatch permanent "^/login/?$" "/login.php"
+
+    # 6. পাবলিক-এর বাইরে থাকা ফাইল অনুরোধ হলে সেগুলোকে project_root-এ রিরাইট করবো
+    RewriteEngine On
+
+    # প্রথমে: extension ছাড়া URL গুলোকে একই নামে থাকা .php ফাইলে পাঠাই
+    # উদাহরণ: /router_add -> /router_add.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{DOCUMENT_ROOT}/$1.php -f
+    RewriteRule ^(.+)$ /$1.php [L,QSA]
+
+    # এরপর: সত্যি যদি public এর ভিতরে কোনো ফাইল/ডিরেক্টরি না থাকে,
+    # তখন project_root-এ রিরাইট করবো (পুরনো path সাপোর্টের জন্য)
+    RewriteCond %{REQUEST_URI} !^/phpmyadmin
+    RewriteCond %{REQUEST_URI} !^/zabbix
+    RewriteCond %{REQUEST_URI} !^/login.php
+    RewriteCond %{REQUEST_URI} !^/project_root/
+    RewriteCond %{DOCUMENT_ROOT}/$1 !-f
+    RewriteCond %{DOCUMENT_ROOT}/$1 !-d
+    RewriteRule ^(.*)$ /project_root/$1 [L,PT]
+
+    ErrorLog ${APACHE_LOG_DIR}/isp_billing-error.log
+    CustomLog ${APACHE_LOG_DIR}/isp_billing-access.log combined
+</VirtualHost>
+====================================
