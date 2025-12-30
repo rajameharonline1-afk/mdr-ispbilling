@@ -20,6 +20,13 @@ if (isset($_SESSION['user_id'])) {
     exit;
 }
 
+require_once __DIR__ . '/../app/settings_store.php';
+$brand_name = trim((string)settings_get('company_name', '')) ?: 'ISP Billing';
+$brand_logo = trim((string)settings_get('company_logo', ''));
+$show_brand = (string)settings_get('show_login_brand', '0') === '1';
+$brand_logo_abs = $brand_logo !== '' ? ($_SERVER['DOCUMENT_ROOT'] . $brand_logo) : '';
+$brand_logo_ok = $brand_logo !== '' && is_file($brand_logo_abs);
+
 /* CSRF token */
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -37,7 +44,7 @@ $error = isset($_GET['error']) ? (string)$_GET['error'] : '';
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Login - ISP Billing</title>
+<title>Login - <?php echo htmlspecialchars($brand_name, ENT_QUOTES, 'UTF-8'); ?></title>
 
 <!-- Bootstrap & Icons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
@@ -172,6 +179,12 @@ body.login-page::after{
   margin: 0 auto 10px auto;
 }
 .brand-badge i{ font-size: 26px; color: #f2f6ff; }
+.brand-badge img{
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  display: block;
+}
 
 /* Titles */
 h1.title{
@@ -283,10 +296,21 @@ p.sub{
   <div class="login-wrapper container">
     <div class="card-glass p-4 p-md-4">
 
-      <div class="brand-badge">
-        <i class="bi bi-router-fill"></i>
-      </div>
-      <h1 class="title">ISP Billing</h1>
+      <?php if ($show_brand): ?>
+        <div class="brand-badge">
+          <?php if ($brand_logo_ok): ?>
+            <img src="<?php echo htmlspecialchars($brand_logo, ENT_QUOTES, 'UTF-8'); ?>" alt="<?php echo htmlspecialchars($brand_name, ENT_QUOTES, 'UTF-8'); ?>">
+          <?php else: ?>
+            <i class="bi bi-router-fill"></i>
+          <?php endif; ?>
+        </div>
+        <h1 class="title"><?php echo htmlspecialchars($brand_name, ENT_QUOTES, 'UTF-8'); ?></h1>
+      <?php else: ?>
+        <div class="brand-badge">
+          <i class="bi bi-router-fill"></i>
+        </div>
+        <h1 class="title">MDR ISP Billing</h1>
+      <?php endif; ?>
       <p class="sub">Sign in to continue</p>
 
       <?php if ($error !== ''): ?>
@@ -320,12 +344,12 @@ p.sub{
         </button>
       </form>
 
-      <div class="mt-3 helper">
+      <!-- <div class="mt-3 helper">
         Need access? Contact with
         <a href="https://fb.com/bapa.swapon" target="_blank" rel="noopener noreferrer" aria-label="Open BAPA on Facebook">
           BAPA
         </a>
-      </div>
+      </div> -->
 
     </div><!-- /.card-glass -->
   </div><!-- /.login-wrapper -->

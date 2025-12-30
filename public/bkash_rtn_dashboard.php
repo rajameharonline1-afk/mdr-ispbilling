@@ -109,14 +109,25 @@ $statuses = $pdo->query($statusesSql)->fetchAll(PDO::FETCH_COLUMN);
 
 ?>
 <?php require_once __DIR__ . '/../partials/partials_header.php'; ?>
+<style>
+  .hero-card { background: linear-gradient(135deg, #0d6efd, #0a58ca); color:#fff; border:0; box-shadow:0 6px 24px rgba(0,0,0,0.08); }
+  .stat-tile { border:0; box-shadow:0 6px 24px rgba(0,0,0,0.08); }
+  .stat-tile small { letter-spacing:.3px; text-transform: uppercase; }
+</style>
 <div class="container-fluid my-4">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-      <h3 class="mb-1">bKash RTN Webhook Monitor</h3>
-      <small class="text-muted">রিয়েল-টাইম পেমেন্ট নোটিফিকেশন (RTN) ট্র্যাকিং ও ম্যানেজমেন্ট</small>
-      <br>
-      <span class="badge bg-info mt-2"><i class="bi bi-cloud"></i> Webhook System</span>
-      <span class="badge bg-secondary mt-2"><i class="bi bi-shuffle"></i> Real-Time Processing</span>
+  <div class="hero-card card mb-3">
+    <div class="card-body d-flex flex-wrap justify-content-between align-items-center">
+      <div>
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-activity fs-4"></i>
+          <h3 class="mb-1 text-white">bKash RTN Webhook Monitor</h3>
+        </div>
+        <small class="opacity-75">রিয়েল-টাইম পেমেন্ট নোটিফিকেশন (RTN) ট্র্যাকিং ও ম্যানেজমেন্ট</small>
+      </div>
+      <div class="d-flex gap-2">
+        <span class="badge bg-light text-dark"><i class="bi bi-cloud me-1"></i>Webhook System</span>
+        <span class="badge bg-dark"><i class="bi bi-shuffle me-1"></i>Real-Time Processing</span>
+      </div>
     </div>
   </div>
   
@@ -151,7 +162,7 @@ $statuses = $pdo->query($statusesSql)->fetchAll(PDO::FETCH_COLUMN);
   </div>
   <div class="row mb-4">
     <div class="col-lg-2 col-md-3 col-sm-6 mb-2">
-      <div class="card bg-primary text-white h-100 border-0 shadow-sm">
+      <div class="card bg-primary text-white h-100 stat-tile">
         <div class="card-body p-3">
           <div class="d-flex justify-content-between align-items-start">
             <div>
@@ -163,7 +174,7 @@ $statuses = $pdo->query($statusesSql)->fetchAll(PDO::FETCH_COLUMN);
       </div>
     </div>
     <div class="col-lg-2 col-md-3 col-sm-6 mb-2">
-      <div class="card bg-success text-white h-100 border-0 shadow-sm">
+      <div class="card bg-success text-white h-100 stat-tile">
         <div class="card-body p-3">
           <div class="d-flex justify-content-between align-items-start">
             <div>
@@ -176,7 +187,7 @@ $statuses = $pdo->query($statusesSql)->fetchAll(PDO::FETCH_COLUMN);
       </div>
     </div>
     <div class="col-lg-2 col-md-3 col-sm-6 mb-2">
-      <div class="card bg-warning text-dark h-100 border-0 shadow-sm">
+      <div class="card bg-warning text-dark h-100 stat-tile">
         <div class="card-body p-3">
           <div class="d-flex justify-content-between align-items-start">
             <div>
@@ -189,7 +200,7 @@ $statuses = $pdo->query($statusesSql)->fetchAll(PDO::FETCH_COLUMN);
       </div>
     </div>
     <div class="col-lg-2 col-md-3 col-sm-6 mb-2">
-      <div class="card bg-info text-white h-100 border-0 shadow-sm">
+      <div class="card bg-info text-white h-100 stat-tile">
         <div class="card-body p-3">
           <div class="d-flex justify-content-between align-items-start">
             <div>

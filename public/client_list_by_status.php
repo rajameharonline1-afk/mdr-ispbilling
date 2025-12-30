@@ -15,7 +15,7 @@ $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 /* -------------------- Inputs -------------------- */
 // বাংলা: status ভ্যালিডেশন (left => is_left=1; নাহলে is_left=0 + c.status=given)
 $status = $_GET['status'] ?? 'active';
-$valid_status = ['active','inactive','pending','expired','left'];
+$valid_status = ['active','inactive','pending','expired','left','disabled'];
 if (!in_array($status, $valid_status, true)) { die('Invalid status'); }
 
 $q        = trim($_GET['q'] ?? '');

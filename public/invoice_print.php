@@ -6,6 +6,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/settings_store.php';
 // বাংলা: এই প্রিন্ট ভিউটি অ্যাডমিন এবং পোর্টাল—দুই দিক থেকেই ব্যবহার করা যাবে।
 // - অ্যাডমিন হলে require_login.php
 // - পোর্টাল হলে portal_require_login.php এবং ইনভয়েসটি সেই client-এর কিনা যাচাই হবে
@@ -133,13 +134,13 @@ $sub_total = $amount;
 $vat_amount = $vat > 0 ? round($sub_total * ($vat/100), 2) : 0.0;
 $grand_total = round($sub_total + $vat_amount, 2);
 
-// ---------- Company info (optional from config.php) ----------
+// ---------- Company info (settings table first, config fallback) ----------
 $company = [
-  'name'    => $GLOBALS['config']['company_name']    ?? 'Your Company Name',
-  'address' => $GLOBALS['config']['company_address'] ?? 'Company Address',
-  'phone'   => $GLOBALS['config']['company_phone']   ?? 'Phone',
-  'email'   => $GLOBALS['config']['company_email']   ?? 'info@example.com',
-  'logo'    => $GLOBALS['config']['company_logo']    ?? '/assets/img/logo.png',
+  'name'    => (string)settings_get('company_name', '') ?: ($GLOBALS['config']['company_name'] ?? 'Your Company Name'),
+  'address' => (string)settings_get('company_address', '') ?: ($GLOBALS['config']['company_address'] ?? 'Company Address'),
+  'phone'   => (string)settings_get('company_phone', '') ?: ($GLOBALS['config']['company_phone'] ?? 'Phone'),
+  'email'   => (string)settings_get('company_email', '') ?: ($GLOBALS['config']['company_email'] ?? 'info@example.com'),
+  'logo'    => (string)settings_get('company_logo', '') ?: ($GLOBALS['config']['company_logo'] ?? '/assets/img/logo.png'),
 ];
 
 // ---------- PDF generation (Dompdf auto-detect) ----------

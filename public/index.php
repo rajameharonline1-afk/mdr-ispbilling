@@ -157,6 +157,15 @@ $page_title = "Dashboard";
   padding:12px 14px; display:flex; gap:10px; align-items:flex-start;
   box-shadow:0 4px 12px rgba(16,24,40,.06);
 }
+.slim-kpi.dynamic-bg{
+  background: var(--kpi-bg, #fff);
+  border-color: transparent;
+  color: #fff;
+}
+.slim-kpi.dynamic-bg .lbl,
+.slim-kpi.dynamic-bg .tail{
+  color: rgba(255,255,255,.85);
+}
 .slim-kpi .ico{
   width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
   color:#fff; font-size:18px; flex:0 0 auto;
@@ -167,6 +176,9 @@ $page_title = "Dashboard";
 .slim-kpi .lbl{margin:0; font-size:13px; color:#4b5563;}
 .slim-kpi .tail{font-size:12px; margin-top:2px;}
 .ind-up{color:#059669;} .ind-down{color:#e11d48;} .ind-na{color:#6b7280;}
+.kpi-link{ display:block; text-decoration:none; color:inherit; }
+.kpi-link .slim-kpi{ cursor:pointer; transition: transform .15s ease, box-shadow .15s ease; }
+.kpi-link:hover .slim-kpi{ transform: translateY(-2px); box-shadow:0 10px 20px rgba(0,0,0,.12); }
 
 .section-title{font-weight:600; color:#374151; font-size:14px; margin:10px 0 6px;}
 /* grid */
@@ -183,48 +195,111 @@ $page_title = "Dashboard";
 
   <!-- ===== Status/Counts — একই শেপে সব বোতাম ===== -->
   <div class="grid-6 mb-2">
-    <div class="slim-kpi"><div class="ico i-blue"><i class="bi bi-people-fill"></i></div><div><p class="num"><?= nf($total_clients) ?></p><p class="lbl">Total Clinet</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-green"><i class="bi bi-check-circle"></i></div><div><p class="num"><?= nf($active_clients) ?></p><p class="lbl">Active Client</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-rose"><i class="bi bi-x-circle"></i></div><div><p class="num"><?= nf($inactive_clients) ?></p><p class="lbl">Inactive Cleint</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-rose"><i class="bi bi-slash-circle"></i></div><div><p class="num"><?= nf($auto_suspended) ?></p><p class="lbl">Auto Inactive</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-orange"><i class="bi bi-exclamation-circle"></i></div><div><p class="num"><?= nf($expired_clients) ?></p><p class="lbl">Expired Client</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-amber"><i class="bi bi-hourglass-split"></i></div><div><p class="num"><?= nf($pending_clients) ?></p><p class="lbl">Pending Clinet</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    <a class="kpi-link" href="/public/clients.php">
+      <div class="slim-kpi"><div class="ico i-blue"><i class="bi bi-people-fill"></i></div><div><p class="num"><?= nf($total_clients) ?></p><p class="lbl">Total Clinet</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=active">
+      <div class="slim-kpi"><div class="ico i-green"><i class="bi bi-check-circle"></i></div><div><p class="num"><?= nf($active_clients) ?></p><p class="lbl">Active Client</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=inactive">
+      <div class="slim-kpi"><div class="ico i-rose"><i class="bi bi-x-circle"></i></div><div><p class="num"><?= nf($inactive_clients) ?></p><p class="lbl">Inactive Cleint</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/suspended_clients.php">
+      <div class="slim-kpi"><div class="ico i-rose"><i class="bi bi-slash-circle"></i></div><div><p class="num"><?= nf($auto_suspended) ?></p><p class="lbl">Auto Inactive</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=expired">
+      <div class="slim-kpi"><div class="ico i-orange"><i class="bi bi-exclamation-circle"></i></div><div><p class="num"><?= nf($expired_clients) ?></p><p class="lbl">Expired Client</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=pending">
+      <div class="slim-kpi"><div class="ico i-amber"><i class="bi bi-hourglass-split"></i></div><div><p class="num"><?= nf($pending_clients) ?></p><p class="lbl">Pending Clinet</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
 
-    <div class="slim-kpi"><div class="ico i-slate"><i class="bi bi-box-arrow-left"></i></div><div><p class="num"><?= nf($left_clients) ?></p><p class="lbl">Left Cleint</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-cyan"><i class="bi bi-wifi"></i></div><div><p class="num"><?= nf($total_online) ?></p><p class="lbl">Online</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-gray"><i class="bi bi-wifi-off"></i></div><div><p class="num"><?= nf($total_offline) ?></p><p class="lbl">Offline</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-slate"><i class="bi bi-ban"></i></div><div><p class="num"><?= nf($total_disabled) ?></p><p class="lbl">Disabled</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=left">
+      <div class="slim-kpi"><div class="ico i-slate"><i class="bi bi-box-arrow-left"></i></div><div><p class="num"><?= nf($left_clients) ?></p><p class="lbl">Left Cleint</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/clients_online.php">
+      <div class="slim-kpi"><div class="ico i-cyan"><i class="bi bi-wifi"></i></div><div><p class="num"><?= nf($total_online) ?></p><p class="lbl">Online</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/clients_offline.php">
+      <div class="slim-kpi"><div class="ico i-gray"><i class="bi bi-wifi-off"></i></div><div><p class="num"><?= nf($total_offline) ?></p><p class="lbl">Offline</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=disabled">
+      <div class="slim-kpi"><div class="ico i-slate"><i class="bi bi-ban"></i></div><div><p class="num"><?= nf($total_disabled) ?></p><p class="lbl">Disabled</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
 
-    <div class="slim-kpi"><div class="ico i-blue"><i class="bi bi-person-plus"></i></div><div><p class="num"><?= nf($today_joined) ?></p><p class="lbl">Today's Joined</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-orange"><i class="bi bi-calendar-x"></i></div><div><p class="num"><?= nf($today_expired) ?></p><p class="lbl">Today's Expired</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
-    <div class="slim-kpi"><div class="ico i-rose"><i class="bi bi-slash-circle"></i></div><div><p class="num"><?= nf($today_inactive) ?></p><p class="lbl">Today's Inactive</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    <a class="kpi-link" href="/public/clients.php?join_from=<?= urlencode($today) ?>&join_to=<?= urlencode($today) ?>">
+      <div class="slim-kpi"><div class="ico i-blue"><i class="bi bi-person-plus"></i></div><div><p class="num"><?= nf($today_joined) ?></p><p class="lbl">Today's Joined</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/clients.php?exp_from=<?= urlencode($today) ?>&exp_to=<?= urlencode($today) ?>">
+      <div class="slim-kpi"><div class="ico i-orange"><i class="bi bi-calendar-x"></i></div><div><p class="num"><?= nf($today_expired) ?></p><p class="lbl">Today's Expired</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
+    <a class="kpi-link" href="/public/client_list_by_status.php?status=inactive">
+      <div class="slim-kpi"><div class="ico i-rose"><i class="bi bi-slash-circle"></i></div><div><p class="num"><?= nf($today_inactive) ?></p><p class="lbl">Today's Inactive</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div></div>
+    </a>
   </div>
 
   <!-- ===== Financial Summary — একই শেপ (NO DECIMALS) ===== -->
   <div class="section-title">Financial Summary</div>
   <div class="grid-6">
-    <div class="slim-kpi">
+    <a class="kpi-link" href="/public/due_report.php">
+      <div class="slim-kpi">
       <div class="ico i-rose"><i class="bi bi-cash-coin"></i></div>
       <div><p class="num"><?= nf($total_due) ?></p><p class="lbl">Total Due (Tk)</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div>
-    </div>
-    <div class="slim-kpi">
-      <div class="ico i-green"><i class="bi bi-piggy-bank"></i></div>
+      </div>
+    </a>
+    <a class="kpi-link" href="/public/wallets_dashboard.php">
+      <div class="slim-kpi">
+      <div class="ico i-green"><i class="fa-solid fa-money-check-dollar"></i></div>
       <div><p class="num"><?= nf($total_adv) ?></p><p class="lbl">Total Advance (Tk)</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div>
-    </div>
-    <div class="slim-kpi">
+      </div>
+    </a>
+    <a class="kpi-link" href="/public/collections.php?when=today">
+      <div class="slim-kpi">
       <div class="ico i-cyan"><i class="bi bi-cash-stack"></i></div>
       <div><p class="num"><?= nf($todays_collection) ?></p><p class="lbl">Today's Collection (Tk)</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div>
-    </div>
-    <div class="slim-kpi">
+      </div>
+    </a>
+    <a class="kpi-link" href="/public/collections.php">
+      <div class="slim-kpi">
       <div class="ico i-green"><i class="bi bi-collection"></i></div>
       <div><p class="num"><?= nf($this_month_collection) ?></p><p class="lbl">This Month Collection (Tk)</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div>
-    </div>
-    <div class="slim-kpi">
+      </div>
+    </a>
+    <a class="kpi-link" href="/public/invoices.php?status=unpaid">
+      <div class="slim-kpi">
       <div class="ico i-orange"><i class="bi bi-exclamation-triangle"></i></div>
       <div><p class="num"><?= nf($unpaid_invoices) ?></p><p class="lbl">Unpaid / Partial Invoices</p><div class="tail"><span class="ind-na">&nbsp;</span></div></div>
-    </div>
+      </div>
+    </a>
+
   </div>
 
+  <!-- ===== Recent bKash Webhook Pending ===== -->
+  <div class="section-title">Recent bKash Webhook Pending</div>
+  <div class="card mb-3">
+   <div class="card-body p-2">
+<div class="table-responsive">
+<?php
+require_once __DIR__.'/../app/db.php';
+$pdo = db();
+$rows = $pdo->query("SELECT * FROM bkash_webhook_pending ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC);
+?><table class="table table-sm">
+  <thead><tr><th>ID</th><th>Ref</th><th>MSISDN</th><th>Amount</th><th>Reason</th><th>Created</th></tr></thead>
+  <tbody>
+    <?php foreach ($rows as $r): ?>
+      <tr>
+        <td><?= (int)$r['id'] ?></td>
+        <td><?= htmlspecialchars($r['ref_code'] ?? '') ?></td>
+        <td><?= htmlspecialchars($r['msisdn'] ?? '') ?></td>
+        <td><?= htmlspecialchars($r['amount'] ?? '') ?></td>
+        <td><?= htmlspecialchars($r['reason'] ?? '') ?></td>
+        <td><?= htmlspecialchars($r['created_at'] ?? '') ?></td>
+      </tr>
+    <?php endforeach; ?>
+  </tbody>
+</table>
+
+     
 </div>
 
 
@@ -236,6 +311,29 @@ $page_title = "Dashboard";
 
 </div>
 
-<a href="https://info.flagcounter.com/HCBe"><img src="https://s01.flagcounter.com/count2/HCBe/bg_FFFFFF/txt_000000/border_CCCCCC/columns_2/maxflags_10/viewers_0/labels_0/pageviews_0/flags_0/percent_0/" alt="Flag Counter" border="0"></a>
+<script>
+// Dynamic KPI backgrounds on each reload
+(function(){
+  const cards = document.querySelectorAll('.slim-kpi');
+  if (!cards.length) return;
+  const palette = [
+    'linear-gradient(45deg, #0288d1, #26c6da)',
+    'linear-gradient(45deg, #26a69a, #b2dfdb)',
+    'linear-gradient(45deg, #7e57c2, #b39ddb)',
+    '#424242',
+    'linear-gradient(45deg, #039be5, #81d4fa)',
+    'linear-gradient(45deg, #2e7d32, #81c784)'
+  ];
+  for (let i = palette.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [palette[i], palette[j]] = [palette[j], palette[i]];
+  }
+  cards.forEach((card, idx) => {
+    const bg = palette[idx % palette.length];
+    card.style.setProperty('--kpi-bg', bg);
+    card.classList.add('dynamic-bg');
+  });
+})();
+</script>
 
 <?php require __DIR__ . '/../partials/partials_footer.php'; ?>

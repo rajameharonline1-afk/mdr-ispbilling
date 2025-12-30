@@ -13,11 +13,34 @@ $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 /* ---------- Runtime column detection ---------- */
 $clientCols = $pdo->query("SHOW COLUMNS FROM clients")->fetchAll(PDO::FETCH_COLUMN);
+if (!function_exists('pick_col')) {
+  function pick_col(array $cols, array $cands): string {
+    foreach ($cands as $c) {
+      if (in_array($c, $cols, true)) return $c;
+    }
+    return '';
+  }
+}
+
 $hasOnline  = in_array('is_online',   $clientCols, true);
 $hasLeft    = in_array('is_left',     $clientCols, true);
-$hasArea    = in_array('area',        $clientCols, true);
 $hasJoin    = in_array('join_date',   $clientCols, true);
 $hasExpire  = in_array('expiry_date', $clientCols, true);
+
+$AREA_COL       = pick_col($clientCols, ['area','zone','location']);
+$SUB_ZONE_COL   = pick_col($clientCols, ['sub_zone','subzone','sub_area']);
+$BOX_COL        = pick_col($clientCols, ['box','distribution_box','box_name']);
+$PROTOCOL_COL   = pick_col($clientCols, ['protocol_type','protocol']);
+$PROFILE_COL    = pick_col($clientCols, ['profile','pppoe_profile','profile_name','mt_profile']);
+$CLIENT_TYPE_COL= pick_col($clientCols, ['client_type','customer_type']);
+$CONN_TYPE_COL  = pick_col($clientCols, ['connection_type','conn_type']);
+$B_STATUS_COL   = pick_col($clientCols, ['billing_status','payment_status']);
+$M_STATUS_COL   = pick_col($clientCols, ['mikrotik_status','m_status','mt_status']);
+$CUSTOM_STATUS_COL = pick_col($clientCols, ['custom_status','status_custom']);
+
+$hasArea    = ($AREA_COL !== '');
+$hasSubZone = ($SUB_ZONE_COL !== '');
+$hasBox     = ($BOX_COL !== '');
 
 /* (বাংলা) প্যাকেজ/রাউটার টেবিলের নাম কলাম ডাইনামিকলি ঠিক করা */
 $pkgCols = [];
@@ -25,6 +48,11 @@ try { $pkgCols = $pdo->query("SHOW COLUMNS FROM packages")->fetchAll(PDO::FETCH_
 $pkgNameParts = [];
 foreach (['name','title','package_name'] as $c) { if (in_array($c,$pkgCols,true)) $pkgNameParts[] = "p.`$c`"; }
 $PKG_NAME_EXPR = $pkgNameParts ? ('COALESCE('.implode(',', $pkgNameParts).')') : 'NULL';
+
+$pkgProfileCols = array_values(array_filter(
+  ['profile','profile_name','pppoe_profile','mt_profile','router_profile'],
+  fn($c) => in_array($c, $pkgCols, true)
+));
 
 $rtCols = [];
 try { $rtCols = $pdo->query("SHOW COLUMNS FROM routers")->fetchAll(PDO::FETCH_COLUMN); } catch (Throwable $e) {}
@@ -48,18 +76,48 @@ $live = (int)($_GET['live'] ?? 1); // বাংলা নোট: ডিফল্
 /* ---- Advanced filters ---- */
 $package_id = (int)($_GET['package_id'] ?? 0);
 $router_id  = (int)($_GET['router_id']  ?? 0);
+$zone       = trim($_GET['zone'] ?? '');
 $area       = trim($_GET['area'] ?? '');
+if ($zone === '' && $area !== '') $zone = $area;
+
+$sub_zone   = trim($_GET['sub_zone'] ?? '');
+$box        = trim($_GET['box'] ?? '');
+$protocol   = trim($_GET['protocol'] ?? '');
+$profile    = trim($_GET['profile'] ?? '');
+$client_type = trim($_GET['client_type'] ?? '');
+$connection_type = trim($_GET['connection_type'] ?? '');
+$b_status   = trim($_GET['b_status'] ?? '');
+$m_status   = trim($_GET['m_status'] ?? '');
+$custom_status = trim($_GET['custom_status'] ?? '');
 
 $join_from  = trim($_GET['join_from'] ?? '');
 $join_to    = trim($_GET['join_to']   ?? '');
+$from_date  = trim($_GET['from_date'] ?? '');
+$to_date    = trim($_GET['to_date']   ?? '');
+if ($join_from === '' && $from_date !== '') $join_from = $from_date;
+if ($join_to === '' && $to_date !== '')     $join_to   = $to_date;
+
 $exp_from   = trim($_GET['exp_from']  ?? '');
 $exp_to     = trim($_GET['exp_to']    ?? '');
 
 $re_date = '/^\d{4}-\d{2}-\d{2}$/';
 if (!preg_match($re_date, $join_from)) $join_from = '';
 if (!preg_match($re_date, $join_to))   $join_to   = '';
+if (!preg_match($re_date, $from_date)) $from_date = '';
+if (!preg_match($re_date, $to_date))   $to_date   = '';
 if (!preg_match($re_date, $exp_from))  $exp_from  = '';
 if (!preg_match($re_date, $exp_to))    $exp_to    = '';
+
+if ($CUSTOM_STATUS_COL === '') {
+  if ($custom_status !== '' && in_array($custom_status, $allowedStatus, true)) {
+    $status = $custom_status;
+  } elseif ($custom_status !== '') {
+    $custom_status = '';
+  }
+}
+if ($custom_status === '' && $status !== '') {
+  $custom_status = $status;
+}
 
 /* ---- Sorting (?sort=name&dir=asc) ---- */
 $sort   = strtolower($_GET['sort'] ?? 'id');
@@ -71,11 +129,15 @@ $map = [
   'code'    => 'c.client_code',
   'name'    => 'c.name',
   'pppoe'   => 'c.pppoe_id',
+  'phone'   => 'c.mobile',
   'package' => $PKG_NAME_EXPR,   // (ডাইনামিক এক্সপ্রেশন)
   'status'  => 'c.status',
+  'area'    => $hasArea ? ('c.' . $AREA_COL) : 'c.id',
+  'balance' => 'c.ledger_balance',
 ];
 if ($hasJoin)   { $map['join']   = 'c.join_date'; }
 if ($hasOnline) { $map['online'] = 'c.is_online'; }
+if ($hasExpire) { $map['expiry'] = 'c.expiry_date'; }
 if (!isset($map[$sort])) $sort = 'id';
 
 $dirSql = ($dirRaw === 'asc') ? 'ASC' : 'DESC';
@@ -107,6 +169,7 @@ function sort_link(string $key, string $label): string {
 /* ================== Query Build ================== */
 $sql_base = "FROM clients c
              LEFT JOIN packages p ON c.package_id = p.id
+             LEFT JOIN routers r ON c.router_id = r.id
              WHERE 1";
 $params = [];
 
@@ -136,7 +199,29 @@ if ($search !== '') {
 /* Advanced filters */
 if ($package_id > 0) { $sql_base .= " AND c.package_id = ?";  $params[] = $package_id; }
 if ($router_id  > 0) { $sql_base .= " AND c.router_id  = ?";  $params[] = $router_id; }
-if ($hasArea && $area !== '') { $sql_base .= " AND c.area = ?"; $params[] = $area; }
+if ($hasArea && $zone !== '') { $sql_base .= " AND c.`{$AREA_COL}` = ?"; $params[] = $zone; }
+if ($hasSubZone && $sub_zone !== '') { $sql_base .= " AND c.`{$SUB_ZONE_COL}` = ?"; $params[] = $sub_zone; }
+if ($hasBox && $box !== '') { $sql_base .= " AND c.`{$BOX_COL}` = ?"; $params[] = $box; }
+if ($PROTOCOL_COL !== '' && $protocol !== '') { $sql_base .= " AND c.`{$PROTOCOL_COL}` = ?"; $params[] = $protocol; }
+if ($CLIENT_TYPE_COL !== '' && $client_type !== '') { $sql_base .= " AND c.`{$CLIENT_TYPE_COL}` = ?"; $params[] = $client_type; }
+if ($CONN_TYPE_COL !== '' && $connection_type !== '') { $sql_base .= " AND c.`{$CONN_TYPE_COL}` = ?"; $params[] = $connection_type; }
+if ($B_STATUS_COL !== '' && $b_status !== '') { $sql_base .= " AND c.`{$B_STATUS_COL}` = ?"; $params[] = $b_status; }
+if ($M_STATUS_COL !== '' && $m_status !== '') { $sql_base .= " AND c.`{$M_STATUS_COL}` = ?"; $params[] = $m_status; }
+if ($CUSTOM_STATUS_COL !== '' && $custom_status !== '') { $sql_base .= " AND c.`{$CUSTOM_STATUS_COL}` = ?"; $params[] = $custom_status; }
+
+if ($profile !== '') {
+  if ($PROFILE_COL !== '') {
+    $sql_base .= " AND c.`{$PROFILE_COL}` = ?";
+    $params[] = $profile;
+  } elseif (!empty($pkgProfileCols)) {
+    $or = [];
+    foreach ($pkgProfileCols as $col) {
+      $or[] = "p.`{$col}` = ?";
+      $params[] = $profile;
+    }
+    $sql_base .= " AND (" . implode(' OR ', $or) . ")";
+  }
+}
 
 /* বাংলা নোট: ইনডেক্স বাঁচাতে DATE() এড়াই; DATETIME ধরে বাউন্ড সেট */
 if ($hasJoin) {
@@ -156,7 +241,11 @@ $total_pages   = $limit > 0 ? (int)ceil($total_records / $limit) : 1;
 
 /* Data: (বাংলা) প্যাকেজ নামকে ডাইনামিক এক্সপ্রেশনে সিলেক্ট করি */
 $sql = "SELECT c.*,
-               {$PKG_NAME_EXPR} AS package_name
+               {$PKG_NAME_EXPR} AS package_name,
+               r.name AS router_name,
+               r.ip AS router_ip,
+               r.username AS router_user,
+               r.password AS router_pass
         ".$sql_base."
         ORDER BY $order, c.id DESC
         LIMIT $limit OFFSET $offset";
@@ -234,16 +323,47 @@ $packages = $pdo->query("SELECT id, ".($pkgNameParts ? ('COALESCE('.implode(',',
 
 $routers  = $pdo->query("SELECT id, ".($rtNameParts ? $ROUTER_NAME_EXPR : 'id')." AS name FROM routers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-$areas = [];
-if ($hasArea) {
-  $areas = array_column(
-    $pdo->query("SELECT DISTINCT area FROM clients WHERE area IS NOT NULL AND area<>'' ORDER BY area ASC")->fetchAll(PDO::FETCH_ASSOC),
-    'area'
-  );
+if (!function_exists('distinct_values')) {
+  function distinct_values(PDO $pdo, string $table, string $col): array {
+    try {
+      $st = $pdo->query("SELECT DISTINCT `$col` AS v FROM `$table` WHERE `$col` IS NOT NULL AND `$col`<>'' ORDER BY `$col` ASC");
+      return array_values(array_filter(array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN))));
+    } catch (Throwable $e) {
+      return [];
+    }
+  }
+}
+
+$zones = $hasArea ? distinct_values($pdo, 'clients', $AREA_COL) : [];
+$sub_zones_list = $hasSubZone ? distinct_values($pdo, 'clients', $SUB_ZONE_COL) : [];
+$boxes = $hasBox ? distinct_values($pdo, 'clients', $BOX_COL) : [];
+$protocols = ($PROTOCOL_COL !== '') ? distinct_values($pdo, 'clients', $PROTOCOL_COL) : [];
+$client_types = ($CLIENT_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CLIENT_TYPE_COL) : [];
+$connection_types = ($CONN_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CONN_TYPE_COL) : [];
+$b_statuses = ($B_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $B_STATUS_COL) : [];
+$m_statuses = ($M_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $M_STATUS_COL) : [];
+$custom_statuses = ($CUSTOM_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $CUSTOM_STATUS_COL) : [];
+
+$profiles = [];
+if ($PROFILE_COL !== '') {
+  $profiles = distinct_values($pdo, 'clients', $PROFILE_COL);
+} elseif (!empty($pkgProfileCols)) {
+  $tmp = [];
+  foreach ($pkgProfileCols as $col) {
+    $tmp = array_merge($tmp, distinct_values($pdo, 'packages', $col));
+  }
+  $profiles = array_values(array_unique($tmp));
+  sort($profiles, SORT_NATURAL | SORT_FLAG_CASE);
 }
 
 /* UI: adv filter active? */
-$adv_active = ($package_id>0 || $router_id>0 || ($hasArea && $area!=='') || ($hasJoin && ($join_from!=='' || $join_to!=='')) || ($hasExpire && ($exp_from!=='' || $exp_to!=='')));
+$adv_active = (
+  $package_id>0 || $router_id>0 || ($hasArea && $zone!=='') || ($hasSubZone && $sub_zone!=='') || ($hasBox && $box!=='') ||
+  $protocol!=='' || $profile!=='' || $client_type!=='' || $connection_type!=='' ||
+  $b_status!=='' || $m_status!=='' || $custom_status!=='' ||
+  ($hasJoin && ($join_from!=='' || $join_to!=='')) || ($hasExpire && ($exp_from!=='' || $exp_to!=='')) ||
+  $from_date!=='' || $to_date!==''
+);
 
 /* ====== Page header include ====== */
 $_active    = 'clients';         // বাংলা নোট: সাইডবার Active highlight
@@ -253,14 +373,21 @@ require __DIR__ . '/../partials/partials_header.php';
 <div class="container-fluid">
 
   <!-- Header -->
+  <?php
+    $headerStatus = $status;
+    if ($headerStatus === '' && $CUSTOM_STATUS_COL !== '' && $custom_status !== '') {
+      $headerStatus = $custom_status;
+    }
+  ?>
   <div class="mb-2 d-flex flex-wrap align-items-center gap-2">
     <h4 class="mb-0">
       <?php
-        if ($status === 'active')      echo "Active Clients";
-        elseif ($status === 'inactive') echo "Inactive Clients";
-        elseif ($status === 'online')   echo "Online Clients";
-        elseif ($status === 'offline')  echo "Offline Clients";
-        else                            echo "All Clients";
+        if ($headerStatus === 'active')      echo "Active Clients";
+        elseif ($headerStatus === 'inactive') echo "Inactive Clients";
+        elseif ($headerStatus === 'online')   echo "Online Clients";
+        elseif ($headerStatus === 'offline')  echo "Offline Clients";
+        elseif ($headerStatus !== '')         echo htmlspecialchars(ucfirst($headerStatus))." Clients";
+        else                                  echo "All Clients";
       ?>
     </h4>
     <span class="text-muted small">Total: <?= number_format($total_records) ?></span>
@@ -291,9 +418,9 @@ require __DIR__ . '/../partials/partials_header.php';
     <input type="hidden" name="live" value="<?= (int)$live ?>">
 
     <div class="card-body pb-2">
-      <div class="row g-2 align-items-stretch">
-        <div class="col-12 col-md">
-          <label class="form-label mb-1">Search</label>
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-md-6 col-xl-4">
+          <label class="form-label mb-1 text-uppercase small fw-semibold">Search</label>
           <div class="position-relative" id="search-group">
             <input type="text" name="search" id="search-input"
                    class="form-control form-control-sm"
@@ -301,55 +428,14 @@ require __DIR__ . '/../partials/partials_header.php';
                    value="<?= htmlspecialchars($search) ?>" autocomplete="off">
           </div>
         </div>
-
-        <div class="col-6 col-md-auto d-grid">
-          <label class="form-label mb-1 invisible d-none d-md-block">_</label>
-          <button class="btn btn-primary btn-sm" type="submit">
-            <i class="bi bi-search"></i> Apply
-          </button>
-        </div>
-        <div class="col-6 col-md-auto d-grid">
-          <label class="form-label mb-1 invisible d-none d-md-block">_</label>
-          <button class="btn btn-outline-secondary btn-sm" type="button"
-                  data-bs-toggle="collapse" data-bs-target="#advFilters" aria-expanded="<?= $adv_active?'true':'false' ?>">
-            <i class="bi bi-sliders"></i> Filters
-            <?php if ($adv_active): ?><span class="badge bg-danger ms-1">ON</span><?php endif; ?>
-          </button>
-        </div>
       </div>
 
-      <!-- Advanced filters -->
-      <div class="collapse <?= $adv_active?'show':'' ?> mt-3" id="advFilters">
-        <div class="row g-2">
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Status</label>
-            <select name="status" class="form-select form-select-sm">
-              <?php
-                $opts = [''=>'All','active'=>'Active','inactive'=>'Inactive'];
-                if ($hasOnline || $live) { $opts['online']='Online'; $opts['offline']='Offline'; }
-                foreach($opts as $k=>$v){
-                  $sel = ($status===$k)?'selected':''; echo '<option value="'.htmlspecialchars($k).'" '.$sel.'>'.$v.'</option>';
-                }
-              ?>
-            </select>
-          </div>
-
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Package</label>
-            <select name="package_id" class="form-select form-select-sm">
-              <option value="0">All Packages</option>
-              <?php foreach($packages as $pkg): ?>
-                <option value="<?= (int)$pkg['id'] ?>" <?= $package_id==(int)$pkg['id']?'selected':'' ?>>
-                  <?= htmlspecialchars($pkg['name'] ?? 'N/A') ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Router</label>
+      <div class="filter-grid mt-3">
+        <div class="row g-2 g-md-3">
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Server</label>
             <select name="router_id" class="form-select form-select-sm">
-              <option value="0">All Routers</option>
+              <option value="0">Select</option>
               <?php foreach($routers as $rt): ?>
                 <option value="<?= (int)$rt['id'] ?>" <?= $router_id==(int)$rt['id']?'selected':'' ?>>
                   <?= htmlspecialchars($rt['name'] ?? 'Router #'.(int)$rt['id']) ?>
@@ -358,66 +444,176 @@ require __DIR__ . '/../partials/partials_header.php';
             </select>
           </div>
 
-          <?php if ($hasArea): ?>
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Area</label>
-            <select name="area" class="form-select form-select-sm">
-              <option value="">All Areas</option>
-              <?php foreach($areas as $ar): ?>
-                <option value="<?= htmlspecialchars($ar) ?>" <?= $area===$ar?'selected':'' ?>>
-                  <?= htmlspecialchars($ar) ?>
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Protocol Type</label>
+            <select name="protocol" class="form-select form-select-sm" <?= $PROTOCOL_COL==='' ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($protocols as $p): ?>
+                <option value="<?= htmlspecialchars($p) ?>" <?= $protocol===$p?'selected':'' ?>><?= htmlspecialchars($p) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Profile</label>
+            <select name="profile" class="form-select form-select-sm" <?= empty($profiles) ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($profiles as $p): ?>
+                <option value="<?= htmlspecialchars($p) ?>" <?= $profile===$p?'selected':'' ?>><?= htmlspecialchars($p) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Zone</label>
+            <select name="zone" class="form-select form-select-sm" <?= !$hasArea ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($zones as $z): ?>
+                <option value="<?= htmlspecialchars($z) ?>" <?= $zone===$z?'selected':'' ?>><?= htmlspecialchars($z) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Sub Zone</label>
+            <select name="sub_zone" class="form-select form-select-sm" <?= !$hasSubZone ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($sub_zones_list as $sz): ?>
+                <option value="<?= htmlspecialchars($sz) ?>" <?= $sub_zone===$sz?'selected':'' ?>><?= htmlspecialchars($sz) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Box</label>
+            <select name="box" class="form-select form-select-sm" <?= !$hasBox ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($boxes as $b): ?>
+                <option value="<?= htmlspecialchars($b) ?>" <?= $box===$b?'selected':'' ?>><?= htmlspecialchars($b) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Package</label>
+            <select name="package_id" class="form-select form-select-sm">
+              <option value="0">Select</option>
+              <?php foreach($packages as $pkg): ?>
+                <option value="<?= (int)$pkg['id'] ?>" <?= $package_id==(int)$pkg['id']?'selected':'' ?>>
+                  <?= htmlspecialchars($pkg['name'] ?? 'N/A') ?>
                 </option>
               <?php endforeach; ?>
             </select>
           </div>
-          <?php endif; ?>
 
-          <?php if ($hasJoin): ?>
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Join (From)</label>
-            <input type="date" name="join_from" value="<?= htmlspecialchars($join_from) ?>" class="form-control form-control-sm">
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Client Type</label>
+            <select name="client_type" class="form-select form-select-sm" <?= $CLIENT_TYPE_COL==='' ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($client_types as $ct): ?>
+                <option value="<?= htmlspecialchars($ct) ?>" <?= $client_type===$ct?'selected':'' ?>><?= htmlspecialchars($ct) ?></option>
+              <?php endforeach; ?>
+            </select>
           </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Join (To)</label>
-            <input type="date" name="join_to" value="<?= htmlspecialchars($join_to) ?>" class="form-control form-control-sm">
-          </div>
-          <?php endif; ?>
 
-          <?php if ($hasExpire): ?>
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Expire (From)</label>
-            <input type="date" name="exp_from" value="<?= htmlspecialchars($exp_from) ?>" class="form-control form-control-sm">
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Connection Type</label>
+            <select name="connection_type" class="form-select form-select-sm" <?= $CONN_TYPE_COL==='' ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($connection_types as $ct): ?>
+                <option value="<?= htmlspecialchars($ct) ?>" <?= $connection_type===$ct?'selected':'' ?>><?= htmlspecialchars($ct) ?></option>
+              <?php endforeach; ?>
+            </select>
           </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label mb-1">Expire (To)</label>
-            <input type="date" name="exp_to" value="<?= htmlspecialchars($exp_to) ?>" class="form-control form-control-sm">
-          </div>
-          <?php endif; ?>
 
-          <div class="col-12 col-md-3 d-grid">
-            <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-filter"></i> Apply Filters</button>
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">B.Status</label>
+            <select name="b_status" class="form-select form-select-sm" <?= $B_STATUS_COL==='' ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($b_statuses as $bs): ?>
+                <option value="<?= htmlspecialchars($bs) ?>" <?= $b_status===$bs?'selected':'' ?>><?= htmlspecialchars($bs) ?></option>
+              <?php endforeach; ?>
+            </select>
           </div>
-          <div class="col-12 col-md-3 d-grid">
-            <?php
-              $base = $_GET;
-              unset($base['status'],$base['search'],$base['package_id'],$base['router_id'],$base['area'],
-                    $base['join_from'],$base['join_to'],$base['exp_from'],$base['exp_to'],$base['page']);
-              $reset_qs = http_build_query($base);
-            ?>
-            <a class="btn btn-outline-secondary btn-sm" href="?<?= $reset_qs ?>">
-              <i class="bi bi-x-circle"></i> Reset
-            </a>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">M.Status</label>
+            <select name="m_status" class="form-select form-select-sm" <?= $M_STATUS_COL==='' ? 'disabled' : '' ?>>
+              <option value="">Select</option>
+              <?php foreach($m_statuses as $ms): ?>
+                <option value="<?= htmlspecialchars($ms) ?>" <?= $m_status===$ms?'selected':'' ?>><?= htmlspecialchars($ms) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">Custom Status</label>
+            <select name="custom_status" class="form-select form-select-sm">
+              <?php
+                $status_opts = [''=>'Select','active'=>'Active','inactive'=>'Inactive'];
+                if ($hasOnline || $live) { $status_opts['online']='Online'; $status_opts['offline']='Offline'; }
+              ?>
+              <?php if ($CUSTOM_STATUS_COL !== ''): ?>
+                <option value="">Select</option>
+                <?php foreach($custom_statuses as $cs): ?>
+                  <option value="<?= htmlspecialchars($cs) ?>" <?= $custom_status===$cs?'selected':'' ?>><?= htmlspecialchars($cs) ?></option>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <?php foreach($status_opts as $k=>$v): ?>
+                  <option value="<?= htmlspecialchars($k) ?>" <?= $custom_status===$k?'selected':'' ?>><?= htmlspecialchars($v) ?></option>
+                <?php endforeach; ?>
+              <?php endif; ?>
+            </select>
+          </div>
+
+          <?php $from_val = $from_date !== '' ? $from_date : $join_from; ?>
+          <?php $to_val = $to_date !== '' ? $to_date : $join_to; ?>
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">From Date</label>
+            <input type="date" name="from_date" value="<?= htmlspecialchars($from_val) ?>" class="form-control form-control-sm">
+          </div>
+          <div class="col-6 col-md-4 col-xl-2">
+            <label class="form-label mb-1 text-uppercase small fw-semibold">To Date</label>
+            <input type="date" name="to_date" value="<?= htmlspecialchars($to_val) ?>" class="form-control form-control-sm">
           </div>
         </div>
+      </div>
+
+      <div class="row g-2 mt-3">
+        <div class="col-12 col-md-3 d-grid">
+          <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-filter"></i> Apply Filters</button>
+        </div>
+        <div class="col-12 col-md-3 d-grid">
+          <?php
+            $base = $_GET;
+            unset($base['status'],$base['custom_status'],$base['search'],$base['package_id'],$base['router_id'],$base['area'],$base['zone'],
+                  $base['sub_zone'],$base['box'],$base['protocol'],$base['profile'],$base['client_type'],$base['connection_type'],
+                  $base['b_status'],$base['m_status'],$base['from_date'],$base['to_date'],$base['join_from'],$base['join_to'],
+                  $base['exp_from'],$base['exp_to'],$base['page']);
+            $reset_qs = http_build_query($base);
+          ?>
+          <a class="btn btn-outline-secondary btn-sm" href="?<?= $reset_qs ?>">
+            <i class="bi bi-x-circle"></i> Reset
+          </a>
+        </div>
+      </div>
 
         <?php
           $badges = [];
-          if ($status!=='')     $badges[] = 'Status: '.htmlspecialchars(ucfirst($status));
+          if ($custom_status!=='') $badges[] = 'Status: '.htmlspecialchars($custom_status);
           if ($package_id>0)    { foreach($packages as $pkg){ if((int)$pkg['id']===$package_id){ $badges[]='Package: '.htmlspecialchars($pkg['name']??''); break; } } }
-          if ($router_id>0)     { foreach($routers as $rt){ if((int)$rt['id']===$router_id){ $badges[]='Router: '.htmlspecialchars($rt['name']??('Router #'.$router_id)); break; } } }
-          if ($hasArea && $area!=='')       $badges[] = 'Area: '.htmlspecialchars($area);
-          if ($hasJoin && $join_from!=='')  $badges[] = 'Join ≥ '.htmlspecialchars($join_from);
-          if ($hasJoin && $join_to!=='')    $badges[] = 'Join ≤ '.htmlspecialchars($join_to);
+          if ($router_id>0)     { foreach($routers as $rt){ if((int)$rt['id']===$router_id){ $badges[]='Server: '.htmlspecialchars($rt['name']??('Router #'.$router_id)); break; } } }
+          if ($hasArea && $zone!=='')       $badges[] = 'Zone: '.htmlspecialchars($zone);
+          if ($hasSubZone && $sub_zone!=='') $badges[] = 'Sub Zone: '.htmlspecialchars($sub_zone);
+          if ($hasBox && $box!=='')          $badges[] = 'Box: '.htmlspecialchars($box);
+          if ($protocol!=='')               $badges[] = 'Protocol: '.htmlspecialchars($protocol);
+          if ($profile!=='')                $badges[] = 'Profile: '.htmlspecialchars($profile);
+          if ($client_type!=='')            $badges[] = 'Client Type: '.htmlspecialchars($client_type);
+          if ($connection_type!=='')        $badges[] = 'Conn Type: '.htmlspecialchars($connection_type);
+          if ($b_status!=='')               $badges[] = 'B.Status: '.htmlspecialchars($b_status);
+          if ($m_status!=='')               $badges[] = 'M.Status: '.htmlspecialchars($m_status);
+          if ($hasJoin && $join_from!=='')  $badges[] = 'From: '.htmlspecialchars($join_from);
+          if ($hasJoin && $join_to!=='')    $badges[] = 'To: '.htmlspecialchars($join_to);
           if ($hasExpire && $exp_from!=='') $badges[] = 'Expire ≥ '.htmlspecialchars($exp_from);
           if ($hasExpire && $exp_to!=='')   $badges[] = 'Expire ≤ '.htmlspecialchars($exp_to);
         ?>
@@ -428,7 +624,6 @@ require __DIR__ . '/../partials/partials_header.php';
             <?php endforeach; ?>
           </div>
         <?php endif; ?>
-      </div>
     </div>
   </form>
 
@@ -444,7 +639,7 @@ require __DIR__ . '/../partials/partials_header.php';
         'status'     => $status,
         'package_id' => $package_id,
         'router_id'  => $router_id,
-        'area'       => $hasArea ? $area : '',
+        'area'       => $hasArea ? $zone : '',
         'join_from'  => $hasJoin ? $join_from : '',
         'join_to'    => $hasJoin ? $join_to   : '',
         'exp_from'   => $hasExpire ? $exp_from : '',
@@ -468,11 +663,15 @@ require __DIR__ . '/../partials/partials_header.php';
           <th style="width:32px;"><input type="checkbox" id="select-all"></th>
           <th><?= sort_link('id', 'Client ID') ?></th>
           <th><?= sort_link('name',   'Name') ?></th>
+          <?php if ($hasArea): ?><th><?= sort_link('area', 'Area') ?></th><?php endif; ?>
           <th><?= sort_link('pppoe',  'PPPoE ID') ?></th>
+          <th><?= sort_link('phone',  'Phone') ?></th>
           <th><?= sort_link('package','Package') ?></th>
           <th><?= sort_link('status', 'Status') ?></th>
           <?php if ($showOnlineCol): ?><th><?= $hasOnline ? sort_link('online','Online') : 'Online' ?></th><?php endif; ?>
           <?php if ($hasJoin): ?><th><?= sort_link('join',   'Join Date') ?></th><?php endif; ?>
+          <?php if ($hasExpire): ?><th><?= sort_link('expiry','Expiry') ?></th><?php endif; ?>
+          <th><?= sort_link('balance','Balance') ?></th>
           <th>Action</th>
         </tr>
       </thead>
@@ -488,6 +687,10 @@ require __DIR__ . '/../partials/partials_header.php';
 
           <td data-label="Name"><?= htmlspecialchars($client['name']); ?></td>
 
+          <?php if ($hasArea): ?>
+          <td data-label="Area"><?= htmlspecialchars($client[$AREA_COL] ?? ''); ?></td>
+          <?php endif; ?>
+
           <td data-label="PPPoE ID">
             <a href="client_view.php?id=<?= (int)$client['id']; ?>"
                class="text-decoration-none"
@@ -495,6 +698,8 @@ require __DIR__ . '/../partials/partials_header.php';
               <?= htmlspecialchars($client['pppoe_id'] ?? '') ?>
             </a>
           </td>
+
+          <td data-label="Phone"><?= htmlspecialchars($client['mobile'] ?? '') ?></td>
 
           <td data-label="Package"><?= htmlspecialchars($client['package_name'] ?? 'N/A'); ?></td>
 
@@ -527,6 +732,12 @@ require __DIR__ . '/../partials/partials_header.php';
           <td data-label="Join Date"><?= htmlspecialchars($client['join_date'] ?? ''); ?></td>
           <?php endif; ?>
 
+          <?php if ($hasExpire): ?>
+          <td data-label="Expiry"><?= htmlspecialchars($client['expiry_date'] ?? ''); ?></td>
+          <?php endif; ?>
+
+          <td data-label="Balance"><?= number_format((float)($client['ledger_balance'] ?? 0), 0, '.', ',') ?></td>
+
           <td data-label="Action">
             <div class="btn-group btn-group-sm" role="group">
               <a href="client_view.php?id=<?= $client['pppoe_id']; ?>" class="btn btn-outline-primary" title="View Client">
@@ -535,7 +746,23 @@ require __DIR__ . '/../partials/partials_header.php';
               <a href="client_edit.php?id=<?= (int)$client['id']; ?>" class="btn btn-outline-primary" title="Edit Client">
                 <i class="bi bi-pencil-square"></i>
               </a>
-              <button class="btn btn-outline-primary" title="Send SMS" onclick="showToast('SMS dialog coming soon');">
+              <button
+                type="button"
+                class="btn btn-outline-primary btn-send-msg"
+                title="Send Message"
+                data-bs-toggle="modal"
+                data-bs-target="#sendMsgModal"
+                data-name="<?= h($client['name'] ?? '') ?>"
+                data-code="<?= h($client['client_code'] ?? '') ?>"
+                data-id="<?= (int)($client['id'] ?? 0) ?>"
+                data-pppoe="<?= h($client['pppoe_id'] ?? '') ?>"
+                data-pppoe-pass="<?= h($client['pppoe_pass'] ?? '') ?>"
+                data-mobile="<?= h($client['mobile'] ?? '') ?>"
+                data-package="<?= h($client['package_name'] ?? '') ?>"
+                data-router-ip="<?= h($client['router_ip'] ?? '') ?>"
+                data-router-user="<?= h($client['router_user'] ?? '') ?>"
+                data-router-pass="<?= h($client['router_pass'] ?? '') ?>"
+              >
                 <i class="bi bi-envelope"></i>
               </button>
               <button class="btn btn-outline-primary" title="Change Package" onclick="bp2HandleBulkProfile()">
@@ -559,7 +786,7 @@ require __DIR__ . '/../partials/partials_header.php';
           </td>
         </tr>
       <?php endforeach; else: ?>
-        <tr><td colspan="<?= 7 + (int)$showOnlineCol + (int)$hasJoin ?>" class="text-center text-muted">No clients found.</td></tr>
+        <tr><td colspan="<?= 9 + (int)$showOnlineCol + (int)$hasJoin + (int)$hasExpire + (int)$hasArea ?>" class="text-center text-muted">No clients found.</td></tr>
       <?php endif; ?>
       </tbody>
     </table>
@@ -592,6 +819,29 @@ require __DIR__ . '/../partials/partials_header.php';
   <?php endif; ?>
 
 </div><!-- /.container-fluid -->
+
+<!-- Send Message Modal -->
+<div class="modal fade" id="sendMsgModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content send-msg-card">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-chat-dots me-1"></i> Send Message</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex align-items-start gap-3">
+          <div class="msg-icon"><i class="bi bi-pencil-square"></i></div>
+          <textarea class="form-control" id="smsMessage" rows="5"></textarea>
+        </div>
+        <!-- <div class="form-text small mt-2">Message content is auto-filled with client and server details.</div> -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="smsSendBtn">Send</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ====== API endpoints ====== */
@@ -636,6 +886,67 @@ function customConfirm({title='Confirm', message='Are you sure?', okText='OK', c
     setTimeout(()=> bd.querySelector('[data-act="ok"]')?.focus(), 10);
   });
 }
+
+/* ====== Send Message Modal ====== */
+(function(){
+  const modalEl = document.getElementById('sendMsgModal');
+  if (!modalEl) return;
+  const msgBox = document.getElementById('smsMessage');
+  const sendBtn = document.getElementById('smsSendBtn');
+
+  function buildMessage(data){
+    const name = data.name || 'গ্রাহক';
+    const id = data.id || data.code || '';
+    const pppoe = data.pppoe || '';
+    const pass = data.pppoePass || '';
+   
+    return `প্রিয় ${name}, আপনার কোড হচ্ছেঃ ${id}, আইপি হচ্ছেঃ ${pppoe}, পাসওয়ার্ড হচ্ছেঃ ${pass}  ধন্যবাদ।`;
+  }
+
+  document.querySelectorAll('.btn-send-msg').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const data = {
+        name: btn.dataset.name || '',
+        id: btn.dataset.id || '',
+        pppoe: btn.dataset.pppoe || '',
+        pppoePass: btn.dataset.pppoePass || '',
+        mobile: btn.dataset.mobile || '',
+        pkg: btn.dataset.package || '',
+        routerIp: btn.dataset.routerIp || '',
+        routerUser: btn.dataset.routerUser || '',
+        routerPass: btn.dataset.routerPass || ''
+      };
+      const msg = buildMessage(data);
+      if (msgBox) msgBox.value = msg;
+      if (sendBtn) sendBtn.dataset.mobile = data.mobile;
+      if (window.bootstrap && bootstrap.Modal) {
+        const inst = bootstrap.Modal.getOrCreateInstance(modalEl);
+        inst.show();
+      }
+    });
+  });
+
+  if (sendBtn) {
+    sendBtn.addEventListener('click', async () => {
+      const msg = (msgBox && msgBox.value ? msgBox.value.trim() : '');
+      if (msg === '') {
+        showToast('Message is empty.', 'error', 2500);
+        return;
+      }
+      const to = sendBtn.dataset.mobile || '';
+      if (to) {
+        window.location.href = `sms:${to}?body=${encodeURIComponent(msg)}`;
+      } else {
+        try {
+          await navigator.clipboard.writeText(msg);
+          showToast('Message copied.', 'success', 2200);
+        } catch (e) {
+          showToast('Copy failed.', 'error', 2200);
+        }
+      }
+    });
+  }
+})();
 
 /* ====== Single enable/disable ====== */
 async function changeStatus(btn, id, action){
@@ -822,4 +1133,4 @@ function bp2HandleBulkProfile(){
 </script>
 
 <?php
-// require __DIR__ . '/../partials/partials_footer.php';
+require __DIR__ . '/../partials/partials_footer.php';

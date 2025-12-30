@@ -11,6 +11,10 @@ require_once __DIR__ . '/../app/mikrotik.php';
 require_once __DIR__ . '/../app/package_profile.php';
 @include_once __DIR__ . '/../app/audit.php'; // (বাংলা) থাকলে অডিট লগ করবো
 
+if (function_exists('require_perm')) {
+    require_perm('add.client');
+}
+
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
 /* ==================== Audit wrapper (client context) ==================== */
@@ -224,6 +228,24 @@ function normalize_mac_for_lookup(?string $mac): ?string {
     return implode(':', str_split($hex, 2));
 }
 
+/* ==================== Date helpers ==================== */
+function normalize_day_only_date(string $raw): string {
+    $raw = trim($raw);
+    if ($raw === '') return '';
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) return $raw;
+    if (preg_match('/^\d{1,2}$/', $raw)) {
+        $day = (int)$raw;
+        if ($day <= 0) return '';
+        $nextMonth = strtotime('first day of next month');
+        $year = (int)date('Y', $nextMonth);
+        $month = (int)date('m', $nextMonth);
+        $daysInMonth = (int)date('t', $nextMonth);
+        if ($day > $daysInMonth) $day = $daysInMonth;
+        return sprintf('%04d-%02d-%02d', $year, $month, $day);
+    }
+    return $raw;
+}
+
 function auto_link_client_olt_from_cache(PDO $pdo, int $client_id, array $fields): array {
     $tokens = [];
     $addToken = static function($val) use (&$tokens) {
@@ -379,6 +401,7 @@ $area_options    = location_option_list($pdoOptions, 'area');
 $subzone_options = $HAS_SUB_ZONE ? location_option_list($pdoOptions, 'sub_zone') : [];
 $box_options     = $HAS_BOX ? location_option_list($pdoOptions, 'box') : [];
 $LOC_CSRF        = csrf_ensure_token();
+$csrf_form       = csrf_ensure_token();
 
 /* ==================== Handle POST ==================== */
 $errors = [];
@@ -387,6 +410,9 @@ $new_id = null;
 $new_invoice = null;
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if (!csrf_validate($_POST['csrf'] ?? '')) {
+        $errors[] = 'Invalid CSRF token.';
+    }
     // (বাংলা) ইনপুট নিন
     $client_code  = trim($_POST['client_code'] ?? '');
     $name         = trim($_POST['name'] ?? '');
@@ -405,7 +431,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $router_id    = (int)($_POST['router_id']  ?? 0);
     $selectedPackage = null;
     $monthly_bill = isset($_POST['monthly_bill']) && is_numeric($_POST['monthly_bill']) ? (float)$_POST['monthly_bill'] : 0.0;
-    $expiry_date  = trim($_POST['expiry_date'] ?? '');
+    $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ''));
     $status       = trim($_POST['status'] ?? 'active');
     $auto_invoice = isset($_POST['auto_invoice']) ? 1 : 0; // checkbox
 
@@ -597,6 +623,7 @@ include __DIR__ . '/../partials/partials_header.php';
   <?php endif; ?>
 
   <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+    <input type="hidden" name="csrf" value="<?= h($csrf_form) ?>">
     <div class="row g-3">
       <!-- Account -->
       <div class="col-12 col-lg-4">
@@ -619,7 +646,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Area</label>
-                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="area"><i class="bi bi-plus-lg"></i> Area</button>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="area"><i class="fa-sharp-duotone fa-light fa-plus"></i></button>
               </div>
               <select name="area" class="form-select form-select-sm" data-loc-type="area" required>
                 <option value="">Select</option>
@@ -634,7 +661,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Sub Zone</label>
-                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="sub_zone"><i class="bi bi-plus-lg"></i> Sub Zone</button>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="sub_zone"><i class="fa-sharp-duotone fa-light fa-plus"></i></button>
               </div>
               <select name="sub_zone" class="form-select form-select-sm" data-loc-type="sub_zone" required>
                 <option value="">Select</option>
@@ -650,7 +677,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Box</label>
-                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="box"><i class="bi bi-plus-lg"></i> Box</button>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="box"><i class="fa-sharp-duotone fa-light fa-plus"></i></button>
               </div>
               <select name="box" class="form-select form-select-sm" data-loc-type="box" required>
                 <option value="">Select</option>
@@ -676,7 +703,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <label class="form-label req">Mobile</label>
               <input type="text" name="mobile" pattern="\d{11}" maxlength="11" inputmode="numeric" class="form-control form-control-sm" value="<?= h($_POST['mobile'] ?? '') ?>" required>
-              <div class="form-text small">Enter 11-digit mobile number (digits only).</div>
+              <!-- <div class="form-text small">Enter 11-digit mobile number (digits only).</div> -->
             </div>
 
             <div class="mb-2">
@@ -719,18 +746,32 @@ include __DIR__ . '/../partials/partials_header.php';
                   </option>
                 <?php endforeach; ?>
               </select>
-              <div class="form-text small">(Package name = MikroTik PPP profile name 1:1)</div>
+              <!-- <div class="form-text small">(Package name = MikroTik PPP profile name 1:1)</div> -->
             </div>
 
             <div class="mb-2">
               <label class="form-label req">Monthly Bill</label>
               <input type="number" step="0.01" name="monthly_bill" id="monthly_bill" class="form-control form-control-sm" value="<?= h($_POST['monthly_bill'] ?? '0') ?>" required>
-              <div class="form-text small" id="autoHint">Auto from package price when selection changes.</div>
+              <!-- <div class="form-text small" id="autoHint">Auto from package price when selection changes.</div> -->
             </div>
 
             <div class="mb-2">
               <label class="form-label">Expiry Date</label>
-              <input type="date" name="expiry_date" class="form-control form-control-sm" value="<?= h($_POST['expiry_date'] ?? '') ?>">
+              <?php
+                $exp_raw = (string)($_POST['expiry_date'] ?? '');
+                $exp_day = '';
+                if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp_raw)) {
+                  $exp_day = (string)(int)substr($exp_raw, 8, 2);
+                } elseif (preg_match('/^\d{1,2}$/', $exp_raw)) {
+                  $exp_day = (string)(int)$exp_raw;
+                }
+              ?>
+              <select name="expiry_date" class="form-select form-select-sm">
+                <option value="">Select</option>
+                <?php for ($d=1; $d<=31; $d++): ?>
+                  <option value="<?= $d ?>" <?= $exp_day===(string)$d ? 'selected' : '' ?>><?= $d ?></option>
+                <?php endfor; ?>
+              </select>
             </div>
 
             <div class="mb-2">
@@ -748,7 +789,7 @@ include __DIR__ . '/../partials/partials_header.php';
 
             <div class="form-check mt-2">
               <input class="form-check-input" type="checkbox" id="auto_invoice" name="auto_invoice" value="1" <?= isset($_POST['auto_invoice']) ? ( ($_POST['auto_invoice']?'checked':'') ) : 'checked' ?>>
-              <label class="form-check-label" for="auto_invoice">Generate first invoice now</label>
+              <!-- <label class="form-check-label" for="auto_invoice">Generate first invoice now</label> -->
             </div>
           </div>
         </div>

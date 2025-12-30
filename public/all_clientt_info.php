@@ -52,7 +52,7 @@ function map_table(PDO $pdo, string $tbl): array{
     'join_date'     => $pick(['join_date','created_at','registered_at','added_at','created']),
     'expiry_date'   => $pick(['expiry_date','expire_at']),
     'ledger_balance'=> $pick(['ledger_balance','balance']),
-    'profile'       => $pick(['profile','package','plan']),
+    'profile'       => $pick(['profile','package','plan','package_id']),
     'router'        => $pick(['router_id','router','nas_id','nas']),
     'created_at'    => $pick(['created_at','added_at','created']),
     'updated_at'    => $pick(['updated_at','modified_at','updated']),
@@ -155,6 +155,37 @@ $areas = $pdo->query("SELECT area, COUNT(*) c FROM ($unionSql) U WHERE area IS N
 $profiles = $pdo->query("SELECT profile, COUNT(*) c FROM ($unionSql) U WHERE profile IS NOT NULL AND profile<>'' GROUP BY profile ORDER BY c DESC")->fetchAll(PDO::FETCH_ASSOC);
 $routers  = $pdo->query("SELECT router, COUNT(*) c FROM ($unionSql) U WHERE router IS NOT NULL AND router<>'' GROUP BY router ORDER BY c DESC")->fetchAll(PDO::FETCH_ASSOC);
 
+/* ---------------- name lookups ---------------- */
+$areaMap = [];
+if (tbl_exists($pdo, 'client_location_options')) {
+  $stArea = $pdo->prepare("SELECT id, label FROM client_location_options WHERE type='area'");
+  $stArea->execute();
+  foreach ($stArea->fetchAll(PDO::FETCH_ASSOC) as $a) {
+    $areaMap[(int)$a['id']] = (string)$a['label'];
+  }
+}
+$pkgMap = [];
+if (tbl_exists($pdo, 'packages')) {
+  foreach ($pdo->query("SELECT id, name FROM packages") as $p) {
+    $pkgMap[(int)$p['id']] = (string)$p['name'];
+  }
+}
+$routerMap = [];
+if (tbl_exists($pdo, 'routers')) {
+  foreach ($pdo->query("SELECT id, name FROM routers") as $r) {
+    $routerMap[(int)$r['id']] = (string)$r['name'];
+  }
+}
+function map_label($val, array $map): string {
+  $raw = trim((string)$val);
+  if ($raw === '') return '';
+  if (is_numeric($raw)) {
+    $id = (int)$raw;
+    if (isset($map[$id])) return $map[$id];
+  }
+  return $raw;
+}
+
 /* ---------------- KPI / counts ---------------- */
 $totalAll   = (int)q_scalar($pdo, "SELECT COUNT(*) $base");
 $totalMatch = (int)q_scalar($pdo, "SELECT COUNT(*) $base $wsql", $args);
@@ -232,7 +263,8 @@ if ($asCsv){
       <select class="form-select" name="area">
         <option value="">All</option>
         <?php foreach($areas as $a): $val=(string)$a['area']; if($val==='') continue; ?>
-          <option value="<?= h($val) ?>" <?= $area===$val?'selected':'' ?>><?= h($val) ?> (<?= (int)$a['c'] ?>)</option>
+          <?php $label = map_label($val, $areaMap); ?>
+          <option value="<?= h($val) ?>" <?= $area===$val?'selected':'' ?>><?= h($label) ?> (<?= (int)$a['c'] ?>)</option>
         <?php endforeach; ?>
       </select>
     </div>
@@ -241,7 +273,8 @@ if ($asCsv){
       <select class="form-select" name="profile">
         <option value="">All</option>
         <?php foreach($profiles as $p): $val=(string)$p['profile']; if($val==='') continue; ?>
-          <option value="<?= h($val) ?>" <?= $profile===$val?'selected':'' ?>><?= h($val) ?> (<?= (int)$p['c'] ?>)</option>
+          <?php $label = map_label($val, $pkgMap); ?>
+          <option value="<?= h($val) ?>" <?= $profile===$val?'selected':'' ?>><?= h($label) ?> (<?= (int)$p['c'] ?>)</option>
         <?php endforeach; ?>
       </select>
     </div>
@@ -250,7 +283,8 @@ if ($asCsv){
       <select class="form-select" name="router">
         <option value="">All</option>
         <?php foreach($routers as $rr): $val=(string)$rr['router']; if($val==='') continue; ?>
-          <option value="<?= h($val) ?>" <?= $router===$val?'selected':'' ?>><?= h($val) ?> (<?= (int)$rr['c'] ?>)</option>
+          <?php $label = map_label($val, $routerMap); ?>
+          <option value="<?= h($val) ?>" <?= $router===$val?'selected':'' ?>><?= h($label) ?> (<?= (int)$rr['c'] ?>)</option>
         <?php endforeach; ?>
       </select>
     </div>
@@ -317,16 +351,23 @@ if ($asCsv){
           $balCls = $bal>0?'danger':($bal<0?'success':'secondary');
         ?>
         <tr>
-          <td><?= h($r['src_id'] ?? '') ?></td>
+          <?php
+            $codeVal = trim((string)($r['code'] ?? ''));
+            if ($codeVal === '') $codeVal = (string)($r['src_id'] ?? '');
+            $areaVal = map_label($r['area'] ?? '', $areaMap);
+            $profileVal = map_label($r['profile'] ?? '', $pkgMap);
+            $routerVal = map_label($r['router'] ?? '', $routerMap);
+          ?>
+          <td><?= h($codeVal) ?></td>
           <td><?= h($r['name'] ?? '') ?></td>
           <td><code><?= h($r['username'] ?? '') ?></code></td>
           <td><?= h($r['phone'] ?? '') ?></td>
-          <td><?= h($r['area'] ?? '') ?></td>
+          <td><?= h($areaVal) ?></td>
           <td><span class="badge bg-<?= $stCls ?>"><?= h($r['status'] ?? '') ?></span></td>
           <td><span class="badge bg-<?= $isOn?'success':'danger' ?>"><?= $isOn?'Online':'Offline' ?></span></td>
           <td><span class="badge bg-<?= $balCls ?>"><?= nf0($bal) ?></span></td>
-          <td><?= h($r['profile'] ?? '') ?></td>
-          <td><?= h($r['router'] ?? '') ?></td>
+          <td><?= h($profileVal) ?></td>
+          <td><?= h($routerVal) ?></td>
           <td><small><?= h($r['expiry_date'] ?? '') ?></small></td>
 		  <td><small><?= h($r['created_at'] ?? '') ?></small></td> <!-- নতুন -->
           <td><span class="badge bg-light text-dark"><?= h($r['src'] ?? '') ?></span></td>

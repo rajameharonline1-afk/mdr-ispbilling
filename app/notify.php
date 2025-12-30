@@ -1,4 +1,4 @@
-notify.php<?php
+<?php
 // /app/notify.php
 // UI: English; Comments: বাংলা — নোটিফাই কোর: টেমপ্লেট রেন্ডার, কিউ, সেন্ডার
 
@@ -7,11 +7,15 @@ declare(strict_types=1);
 if (!function_exists('notify_cfg')) {
   // বাংলা: কনফিগ — চাইলে /app/config.php থেকে ওভাররাইড করো
   function notify_cfg(): array {
-    return [
+    $cfg = [
       // SMS Provider (generic HTTP POST)
       'sms_api_url' => getenv('SMS_API_URL') ?: '',        // e.g., https://api.example.com/sms/send
       'sms_api_key' => getenv('SMS_API_KEY') ?: '',        // e.g., xyz
       'sms_sender'  => getenv('SMS_SENDER')  ?: 'ISP',
+      // Optional SMS login fields
+      'sms_user'    => '',
+      'sms_pass'    => '',
+      'sms_provider'=> '',
       // Email (basic mail() fallback; চাইলে PHPMailer ব্যবহার করো)
       'mail_from'   => getenv('MAIL_FROM') ?: 'no-reply@your-isp.tld',
       'mail_name'   => getenv('MAIL_NAME') ?: 'Your ISP',
@@ -20,6 +24,21 @@ if (!function_exists('notify_cfg')) {
       // Batch size
       'batch_limit' => 100,
     ];
+
+    // Try settings store overrides if available
+    $settings_file = __DIR__ . '/settings_store.php';
+    if (is_file($settings_file)) {
+      require_once $settings_file;
+    }
+    if (function_exists('settings_get')) {
+      $cfg['sms_api_url'] = (string)settings_get('sms_api_url', $cfg['sms_api_url']);
+      $cfg['sms_api_key'] = (string)settings_get('sms_api_key', $cfg['sms_api_key']);
+      $cfg['sms_sender']  = (string)settings_get('sms_sender', $cfg['sms_sender']);
+      $cfg['sms_user']    = (string)settings_get('sms_user', $cfg['sms_user']);
+      $cfg['sms_pass']    = (string)settings_get('sms_password', $cfg['sms_pass']);
+      $cfg['sms_provider']= (string)settings_get('sms_provider', $cfg['sms_provider']);
+    }
+    return $cfg;
   }
 }
 
@@ -143,6 +162,15 @@ if (!function_exists('notify_send_sms')) {
       'sender'  => $cfg['sms_sender'] ?? 'ISP',
       'api_key' => $cfg['sms_api_key'] ?? '',
     ];
+    if (!empty($cfg['sms_user'])) {
+      $payload['username'] = $cfg['sms_user'];
+    }
+    if (!empty($cfg['sms_pass'])) {
+      $payload['password'] = $cfg['sms_pass'];
+    }
+    if (!empty($cfg['sms_provider'])) {
+      $payload['provider'] = $cfg['sms_provider'];
+    }
     $ch=curl_init($cfg['sms_api_url']);
     curl_setopt_array($ch, [
       CURLOPT_POST => true,

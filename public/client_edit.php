@@ -29,6 +29,36 @@ function ensure_option_present(array $options, string $value): array {
     return $options;
 }
 
+function mikrotik_fetch_pppoe_password(array $client): ?string {
+    $pppoe = trim((string)($client['pppoe_id'] ?? ''));
+    $ip = trim((string)($client['router_ip'] ?? ''));
+    $user = trim((string)($client['r_user'] ?? ''));
+    $pass = (string)($client['r_pass'] ?? '');
+    $port = isset($client['api_port']) && $client['api_port'] ? (int)$client['api_port'] : 8728;
+
+    if ($pppoe === '' || $ip === '' || $user === '') return null;
+
+    $api = new RouterosAPI();
+    $api->debug = false;
+    if (!$api->connect($ip, $user, $pass, $port)) return null;
+
+    try {
+        $res = $api->comm('/ppp/secret/print', [
+            '?name' => $pppoe,
+            '.proplist' => 'password',
+        ]);
+    } catch (Throwable $e) {
+        $api->disconnect();
+        return null;
+    }
+
+    $api->disconnect();
+    if (is_array($res) && isset($res[0]['password'])) {
+        return (string)$res[0]['password'];
+    }
+    return null;
+}
+
 /**
  * Save uploaded photo for a client using PPPoE ID for the filename.
  * - Filename: <pppoe-id-sanitized>.<ext>  (no random)
@@ -150,6 +180,32 @@ $subzone_options = $HAS_SUB_ZONE ? location_option_list($pdoOptions, 'sub_zone')
 $box_options     = $HAS_BOX ? location_option_list($pdoOptions, 'box') : [];
 $LOC_CSRF        = csrf_ensure_token();
 
+$pppoe_pass_display = $HAS_PPPOE_PASS ? (string)($client['pppoe_pass'] ?? '') : '';
+if ($HAS_PPPOE_PASS && $pppoe_pass_display === '') {
+    $mkPass = mikrotik_fetch_pppoe_password($client);
+    if ($mkPass !== null && $mkPass !== '') {
+        $pppoe_pass_display = $mkPass;
+    }
+}
+
+/* --------- date helpers --------- */
+function normalize_day_only_date(string $raw): string {
+    $raw = trim($raw);
+    if ($raw === '') return '';
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) return $raw;
+    if (preg_match('/^\d{1,2}$/', $raw)) {
+        $day = (int)$raw;
+        if ($day <= 0) return '';
+        $nextMonth = strtotime('first day of next month');
+        $year = (int)date('Y', $nextMonth);
+        $month = (int)date('m', $nextMonth);
+        $daysInMonth = (int)date('t', $nextMonth);
+        if ($day > $daysInMonth) $day = $daysInMonth;
+        return sprintf('%04d-%02d-%02d', $year, $month, $day);
+    }
+    return $raw;
+}
+
 /* --------- process save --------- */
 $errors = [];
 $notice = null;
@@ -174,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $package_id   = intval($_POST['package_id'] ?? $client['package_id']);
     $router_id    = intval($_POST['router_id']  ?? $client['router_id']);
     $monthly_bill = is_numeric($_POST['monthly_bill'] ?? null) ? (0+$_POST['monthly_bill']) : (0+$client['monthly_bill']);
-    $expiry_date  = trim($_POST['expiry_date'] ?? ($client['expiry_date'] ?? ''));
+    $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? '')));
     $status       = trim($_POST['status'] ?? $client['status']);
 
     if ($name === '')        $errors[] = 'Name is required.';
@@ -420,8 +476,8 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Area</label>
-                <button type="button" class="btn btn-link btn-sm px-1 py-0 text-primary" data-loc-add="area" title="Add Area" style="text-decoration:none;">
-                  <i class="bi bi-plus-lg"></i>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="area" title="Add Area" style="text-decoration:none;">
+                  <i class="fa-sharp-duotone fa-light fa-plus"></i>
                 </button>
               </div>
               <select name="area" class="form-select form-select-sm" data-loc-type="area" required>
@@ -436,8 +492,8 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Sub Zone</label>
-                <button type="button" class="btn btn-link btn-sm px-1 py-0 text-primary" data-loc-add="sub_zone" title="Add Sub Zone" style="text-decoration:none;">
-                  <i class="bi bi-plus-lg"></i>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="sub_zone" title="Add Sub Zone" style="text-decoration:none;">
+                  <i class="fa-sharp-duotone fa-light fa-plus"></i>
                 </button>
               </div>
               <select name="sub_zone" class="form-select form-select-sm" data-loc-type="sub_zone" required>
@@ -453,8 +509,8 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Box</label>
-                <button type="button" class="btn btn-link btn-sm px-1 py-0 text-primary" data-loc-add="box" title="Add Box" style="text-decoration:none;">
-                  <i class="bi bi-plus-lg"></i>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="box" title="Add Box" style="text-decoration:none;">
+                  <i class="fa-sharp-duotone fa-light fa-plus"></i>
                 </button>
               </div>
               <select name="box" class="form-select form-select-sm" data-loc-type="box" required>
@@ -475,7 +531,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <label class="form-label req">Mobile</label>
               <input type="text" name="mobile" pattern="\d{11}" maxlength="11" inputmode="numeric" class="form-control form-control-sm" value="<?= h($_POST['mobile'] ?? $client['mobile']) ?>" required>
-              <div class="form-text small">Enter 11-digit mobile number (digits only).</div>
+              <!-- <div class="form-text small">Enter 11-digit mobile number (digits only).</div> -->
             </div>
             <div class="mb-2">
               <label class="form-label">Email</label>
@@ -541,7 +597,7 @@ include __DIR__ . '/../partials/partials_header.php';
                   </option>
                 <?php endforeach; ?>
               </select>
-              <div class="form-text small">(Package name = MikroTik PPP profile name 1:1)</div>
+              <!-- <div class="form-text small">(Package name = MikroTik PPP profile name 1:1)</div> -->
             </div>
             <div class="mb-2">
               <label class="form-label req">Monthly Bill</label>
@@ -549,7 +605,21 @@ include __DIR__ . '/../partials/partials_header.php';
             </div>
             <div class="mb-2">
               <label class="form-label">Expiry Date</label>
-              <input type="date" name="expiry_date" class="form-control form-control-sm" value="<?= h($client['expiry_date'] ?? '') ?>">
+              <?php
+                $exp_raw = (string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? ''));
+                $exp_day = '';
+                if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp_raw)) {
+                  $exp_day = (string)(int)substr($exp_raw, 8, 2);
+                } elseif (preg_match('/^\d{1,2}$/', $exp_raw)) {
+                  $exp_day = (string)(int)$exp_raw;
+                }
+              ?>
+              <select name="expiry_date" class="form-select form-select-sm">
+                <option value="">Select</option>
+                <?php for ($d=1; $d<=31; $d++): ?>
+                  <option value="<?= $d ?>" <?= $exp_day===(string)$d ? 'selected' : '' ?>><?= $d ?></option>
+                <?php endfor; ?>
+              </select>
             </div>
             <div class="mb-2">
               <label class="form-label">Status</label>
@@ -592,7 +662,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <?php if ($HAS_PPPOE_PASS): ?>
             <div class="mb-2">
               <label class="form-label">PPPoE Password</label>
-              <input type="text" name="pppoe_pass" class="form-control form-control-sm mono" value="<?= h($client['pppoe_pass'] ?? '') ?>">
+              <input type="text" name="pppoe_pass" class="form-control form-control-sm mono" value="<?= h($pppoe_pass_display) ?>">
             </div>
             <?php endif; ?>
 

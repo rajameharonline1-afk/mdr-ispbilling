@@ -59,6 +59,7 @@ return [
       ['key'=>'roles_perms', 'label'=>'Roles & Permissions', 'icon'=>'bi-shield-lock', 'url'=>'/public/users_permission.php', 'perm'=>'users.manage'],
       ['key'=>'users_menu_access', 'label'=>'User Menu Access', 'icon'=>'bi-list-check', 'url'=>'/public/users_menu_access.php', 'perm'=>'users.manage'],
       ['key'=>'settings', 'label'=>'Settings', 'icon'=>'bi-gear', 'url'=>'/public/settings.php', 'perm'=>'settings.view'],
+      ['key'=>'settings_company', 'label'=>'Company Setup', 'icon'=>'bi-buildings', 'url'=>'/public/settings_company.php', 'perm'=>'settings.view'],
     ],
   ],
 ];
