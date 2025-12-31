@@ -1,1 +1,6 @@
 /storage/logs/*.log
+vendor/
+storage/logs/*.log
+backups/*.sql
+app/config.php
+.env

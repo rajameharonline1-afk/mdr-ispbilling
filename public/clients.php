@@ -182,10 +182,9 @@ if ($status === 'active') {
     $sql_base .= " AND c.status = 'active'";
 } elseif ($status === 'inactive') {
     $sql_base .= " AND c.status = 'inactive'";
-} elseif ($status === 'online' && $hasOnline && !$live) {
-    // বাংলা নোট: live=0 হলে DB is_online দিয়ে ফিল্টার; live=1 হলে পরে PHP-তে ফিল্টার করা যায়
+} elseif ($status === 'online' && $hasOnline) {
     $sql_base .= " AND c.is_online = 1";
-} elseif ($status === 'offline' && $hasOnline && !$live) {
+} elseif ($status === 'offline' && $hasOnline) {
     $sql_base .= " AND c.is_online = 0";
 }
 
@@ -202,21 +201,21 @@ if ($router_id  > 0) { $sql_base .= " AND c.router_id  = ?";  $params[] = $route
 if ($hasArea && $zone !== '') { $sql_base .= " AND c.`{$AREA_COL}` = ?"; $params[] = $zone; }
 if ($hasSubZone && $sub_zone !== '') { $sql_base .= " AND c.`{$SUB_ZONE_COL}` = ?"; $params[] = $sub_zone; }
 if ($hasBox && $box !== '') { $sql_base .= " AND c.`{$BOX_COL}` = ?"; $params[] = $box; }
-if ($PROTOCOL_COL !== '' && $protocol !== '') { $sql_base .= " AND c.`{$PROTOCOL_COL}` = ?"; $params[] = $protocol; }
-if ($CLIENT_TYPE_COL !== '' && $client_type !== '') { $sql_base .= " AND c.`{$CLIENT_TYPE_COL}` = ?"; $params[] = $client_type; }
-if ($CONN_TYPE_COL !== '' && $connection_type !== '') { $sql_base .= " AND c.`{$CONN_TYPE_COL}` = ?"; $params[] = $connection_type; }
-if ($B_STATUS_COL !== '' && $b_status !== '') { $sql_base .= " AND c.`{$B_STATUS_COL}` = ?"; $params[] = $b_status; }
-if ($M_STATUS_COL !== '' && $m_status !== '') { $sql_base .= " AND c.`{$M_STATUS_COL}` = ?"; $params[] = $m_status; }
-if ($CUSTOM_STATUS_COL !== '' && $custom_status !== '') { $sql_base .= " AND c.`{$CUSTOM_STATUS_COL}` = ?"; $params[] = $custom_status; }
+if ($PROTOCOL_COL !== '' && $protocol !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$PROTOCOL_COL}`)) = TRIM(LOWER(?))"; $params[] = $protocol; }
+if ($CLIENT_TYPE_COL !== '' && $client_type !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$CLIENT_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $client_type; }
+if ($CONN_TYPE_COL !== '' && $connection_type !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$CONN_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $connection_type; }
+if ($B_STATUS_COL !== '' && $b_status !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$B_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $b_status; }
+if ($M_STATUS_COL !== '' && $m_status !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$M_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $m_status; }
+if ($CUSTOM_STATUS_COL !== '' && $custom_status !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$CUSTOM_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $custom_status; }
 
 if ($profile !== '') {
   if ($PROFILE_COL !== '') {
-    $sql_base .= " AND c.`{$PROFILE_COL}` = ?";
+    $sql_base .= " AND TRIM(LOWER(c.`{$PROFILE_COL}`)) = TRIM(LOWER(?))";
     $params[] = $profile;
   } elseif (!empty($pkgProfileCols)) {
     $or = [];
     foreach ($pkgProfileCols as $col) {
-      $or[] = "p.`{$col}` = ?";
+      $or[] = "TRIM(LOWER(p.`{$col}`)) = TRIM(LOWER(?))";
       $params[] = $profile;
     }
     $sql_base .= " AND (" . implode(' OR ', $or) . ")";
@@ -416,21 +415,16 @@ require __DIR__ . '/../partials/partials_header.php';
       <input type="hidden" name="dir" value="<?= htmlspecialchars($_GET['dir']) ?>">
     <?php endif; ?>
     <input type="hidden" name="live" value="<?= (int)$live ?>">
-
-    <div class="card-body pb-2">
-      <div class="row g-2 align-items-end">
-        <div class="col-12 col-md-6 col-xl-4">
-          <label class="form-label mb-1 text-uppercase small fw-semibold">Search</label>
-          <div class="position-relative" id="search-group">
-            <input type="text" name="search" id="search-input"
-                   class="form-control form-control-sm"
-                   placeholder="Name / PPPoE / Mobile"
-                   value="<?= htmlspecialchars($search) ?>" autocomplete="off">
-          </div>
+    <div class="card-body">
+      <div class="row g-2 mt-1 justify-content-end">
+        <div class="col-12 col-md-3 d-grid">
+          <button class="btn btn-primary btn-sm filter-toggle-btn" type="button" id="toggle-filters" aria-expanded="<?= $adv_active ? 'true' : 'false' ?>">
+            <i class="bi bi-filter"></i> Filters
+          </button>
         </div>
       </div>
 
-      <div class="filter-grid mt-3">
+      <div class="filter-grid mt-3 <?= $adv_active ? '' : 'd-none' ?>" id="filters-panel">
         <div class="row g-2 g-md-3">
           <div class="col-6 col-md-4 col-xl-2">
             <label class="form-label mb-1 text-uppercase small fw-semibold">Server</label>
@@ -579,9 +573,9 @@ require __DIR__ . '/../partials/partials_header.php';
         </div>
       </div>
 
-      <div class="row g-2 mt-3">
+      <div class="row g-2 mt-3 <?= $adv_active ? '' : 'd-none' ?>" id="filters-actions">
         <div class="col-12 col-md-3 d-grid">
-          <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-filter"></i> Apply Filters</button>
+          <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-check2-circle"></i> Apply</button>
         </div>
         <div class="col-12 col-md-3 d-grid">
           <?php
@@ -598,6 +592,7 @@ require __DIR__ . '/../partials/partials_header.php';
         </div>
       </div>
 
+      <div class="<?= $adv_active ? '' : 'd-none' ?>" id="filters-badges">
         <?php
           $badges = [];
           if ($custom_status!=='') $badges[] = 'Status: '.htmlspecialchars($custom_status);
@@ -624,6 +619,7 @@ require __DIR__ . '/../partials/partials_header.php';
             <?php endforeach; ?>
           </div>
         <?php endif; ?>
+      </div>
     </div>
   </form>
 
@@ -789,8 +785,8 @@ require __DIR__ . '/../partials/partials_header.php';
         <tr><td colspan="<?= 9 + (int)$showOnlineCol + (int)$hasJoin + (int)$hasExpire + (int)$hasArea ?>" class="text-center text-muted">No clients found.</td></tr>
       <?php endif; ?>
       </tbody>
-    </table>
-  </div>
+      </table>
+    </div>
 
   <!-- Pagination -->
   <?php if ($total_pages > 1): ?>
@@ -844,6 +840,21 @@ require __DIR__ . '/../partials/partials_header.php';
 </div>
 
 <script>
+document.addEventListener('DOMContentLoaded', () => {
+  const toggle = document.getElementById('toggle-filters');
+  const panel = document.getElementById('filters-panel');
+  const actions = document.getElementById('filters-actions');
+  const badges = document.getElementById('filters-badges');
+  if (!toggle || !panel || !actions || !badges) return;
+  toggle.addEventListener('click', () => {
+    const willShow = panel.classList.contains('d-none');
+    panel.classList.toggle('d-none', !willShow);
+    actions.classList.toggle('d-none', !willShow);
+    badges.classList.toggle('d-none', !willShow);
+    toggle.setAttribute('aria-expanded', willShow ? 'true' : 'false');
+  });
+});
+
 /* ====== API endpoints ====== */
 const API_SINGLE       = '../api/control.php';
 const API_BULK         = '../api/bulk_control.php';

@@ -29,6 +29,33 @@ function col_exists(PDO $pdo,string $t,string $c):bool{
 function pdo_scalar(PDO $pdo,string $sql,array $p=[]){
   $st=$pdo->prepare($sql); $st->execute($p); return $st->fetchColumn();
 }
+function find_invoice_vat_col(PDO $pdo): ?string {
+  $candidates = ['vat','vat_amount','tax','tax_amount','vat_total','tax_total'];
+  foreach ($candidates as $c) if (col_exists($pdo,'invoices',$c)) return $c;
+  try {
+    $db = $pdo->query('SELECT DATABASE()')->fetchColumn();
+    $q  = $pdo->prepare("
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA=? AND TABLE_NAME='invoices' AND COLUMN_NAME LIKE '%vat%'
+      LIMIT 1
+    ");
+    $q->execute([$db]);
+    $col = $q->fetchColumn();
+    return $col ? (string)$col : null;
+  } catch (Throwable) { return null; }
+}
+function pick_col(PDO $pdo, string $table, array $cands): string {
+  foreach ($cands as $c) { if (col_exists($pdo, $table, $c)) return $c; }
+  return '';
+}
+function distinct_values(PDO $pdo, string $table, string $col): array {
+  try {
+    $st = $pdo->query("SELECT DISTINCT `$col` AS v FROM `$table` WHERE `$col` IS NOT NULL AND `$col`<>'' ORDER BY `$col` ASC");
+    return array_values(array_filter(array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN))));
+  } catch (Throwable $e) {
+    return [];
+  }
+}
 // (বাংলা) Payments-এ active ফিল্টার (soft-delete/void বাদ)
 function payments_active_where(PDO $pdo, string $alias='pm'): string {
   $c=[];
@@ -77,10 +104,12 @@ $invAmountCol = col_exists($pdo,'invoices','payable') ? 'payable'
              : (col_exists($pdo,'invoices','net_amount') ? 'net_amount'
              : (col_exists($pdo,'invoices','amount') ? 'amount'
              : (col_exists($pdo,'invoices','total')  ? 'total'  : 'total')));
+$invStatusCol = col_exists($pdo,'invoices','status') ? 'status' : null;
 // (বাংলা) যদি invAmountCol net হয়, তবে ডিসকাউন্ট already applied ধরা হবে
 $isNetInvAmount = in_array($invAmountCol, ['payable','net_amount','net_total'], true);
 
 $invoiceDiscCol   = find_invoice_discount_col($pdo);
+$invoiceVatCol    = find_invoice_vat_col($pdo);
 $showDiscountCol  = $hasPayDiscount || (bool)$invoiceDiscCol;
 
 $ledgerCols = ['ledger_balance','balance','wallet_balance','ledger'];
@@ -91,7 +120,36 @@ $clientMobileCol = null; foreach (['mobile','phone','cell','contact'] as $mc) if
 $hasPackages = tbl_exists($pdo,'packages') && col_exists($pdo,'clients','package_id') && col_exists($pdo,'packages','id');
 $hasPkgName  = $hasPackages && col_exists($pdo,'packages','name');
 $payDateCol  = col_exists($pdo,'payments','payment_date') ? 'payment_date'
-            : (col_exists($pdo,'payments','created_at') ? 'created_at' : null);
+            : (col_exists($pdo,'payments','paid_at') ? 'paid_at'
+            : (col_exists($pdo,'payments','created_at') ? 'created_at' : null));
+
+$routerNameParts = [];
+if (tbl_exists($pdo,'routers')) {
+  foreach (['name','identity','ip','host'] as $c) if (col_exists($pdo,'routers',$c)) $routerNameParts[] = "r.`$c`";
+}
+$ROUTER_NAME_EXPR = $routerNameParts ? ('COALESCE('.implode(',', $routerNameParts).')') : 'NULL';
+
+/* ---------- Filter columns (clients/packages) ---------- */
+$AREA_COL        = pick_col($pdo, 'clients', ['area','zone','location']);
+$SUB_ZONE_COL    = pick_col($pdo, 'clients', ['sub_zone','subzone','sub_area']);
+$BOX_COL         = pick_col($pdo, 'clients', ['box','distribution_box','box_name']);
+$PROTOCOL_COL    = pick_col($pdo, 'clients', ['protocol_type','protocol']);
+$PROFILE_COL     = pick_col($pdo, 'clients', ['profile','pppoe_profile','profile_name','mt_profile']);
+$CLIENT_TYPE_COL = pick_col($pdo, 'clients', ['client_type','customer_type']);
+$CONN_TYPE_COL   = pick_col($pdo, 'clients', ['connection_type','conn_type']);
+$B_STATUS_COL    = pick_col($pdo, 'clients', ['billing_status','payment_status']);
+$M_STATUS_COL    = pick_col($pdo, 'clients', ['mikrotik_status','m_status','mt_status']);
+$CUSTOM_STATUS_COL = pick_col($pdo, 'clients', ['custom_status','status_custom']);
+$hasArea    = ($AREA_COL !== '');
+$hasSubZone = ($SUB_ZONE_COL !== '');
+$hasBox     = ($BOX_COL !== '');
+
+$pkgProfileCols = [];
+if ($PROFILE_COL === '' && $hasPackages) {
+  foreach (['profile','profile_name','pppoe_profile','mt_profile','router_profile'] as $c) {
+    if (col_exists($pdo, 'packages', $c)) $pkgProfileCols[] = $c;
+  }
+}
 
 /* ---------- Inputs ---------- */
 $month    = trim($_GET['month'] ?? date('Y-m'));
@@ -102,6 +160,26 @@ $page     = max(1,(int)($_GET['page']??1));
 $limit    = max(1, (int)($_GET['limit'] ?? 20));
 $export   = isset($_GET['export']) && $_GET['export']==='csv';
 
+$EXPIRY_COL = pick_col($pdo, 'clients', ['expiry_date','expire_date']);
+$MONTHLY_BILL_COL = pick_col($pdo, 'clients', ['monthly_bill','monthly_bill_amount','bill_amount','monthly_bill_tk']);
+$ADVANCE_COL = pick_col($pdo, 'clients', ['advance','advance_balance','advance_amount','prepaid','wallet_advance']);
+
+/* ---- Advanced filters (list view) ---- */
+$package_id = (int)($_GET['package_id'] ?? 0);
+$router_id  = (int)($_GET['router_id']  ?? 0);
+$zone       = trim($_GET['zone'] ?? '');
+$area       = trim($_GET['area'] ?? '');
+if ($zone === '' && $area !== '') $zone = $area;
+$sub_zone   = trim($_GET['sub_zone'] ?? '');
+$box        = trim($_GET['box'] ?? '');
+$protocol   = trim($_GET['protocol'] ?? '');
+$profile    = trim($_GET['profile'] ?? '');
+$client_type = trim($_GET['client_type'] ?? '');
+$connection_type = trim($_GET['connection_type'] ?? '');
+$b_status   = trim($_GET['b_status'] ?? '');
+$m_status   = trim($_GET['m_status'] ?? '');
+$custom_status = trim($_GET['custom_status'] ?? '');
+
 /* Normalize month (সবসময় শুরু/শেষ তারিখ) */
 $monthParam = preg_match('/^\d{4}-\d{2}$/',$month)?$month:date('Y-m');
 [$yr,$mo] = array_map('intval', explode('-', $monthParam));
@@ -109,13 +187,32 @@ $date_start = $monthParam.'-01';
 $date_end   = date('Y-m-t', strtotime($date_start));
 
 /* invoices-এর জন্য month WHERE */
-if ($hasInvBillMonth)       { $params_base = [$date_start,$date_end]; $whereMonth = "billing_month BETWEEN ? AND ?"; }
-elseif ($hasInvMonth && $hasInvYear) { $params_base = [$mo,$yr]; $whereMonth = "month=? AND year=?"; }
-else                         { $params_base = []; $whereMonth = "1=0"; }
+$hasInvDate = col_exists($pdo,'invoices','invoice_date');
+$useInvoiceDate = false;
+if ($hasInvBillMonth && $hasInvDate) {
+  $cntMonth = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM invoices WHERE billing_month BETWEEN ? AND ?", [$date_start, $date_end]);
+  if ($cntMonth === 0) $useInvoiceDate = true;
+}
+if ($useInvoiceDate) {
+  $params_base = [$date_start,$date_end];
+  $whereMonth = "invoice_date BETWEEN ? AND ?";
+} elseif ($hasInvBillMonth) {
+  $params_base = [$date_start,$date_end];
+  $whereMonth = "billing_month BETWEEN ? AND ?";
+} elseif ($hasInvMonth && $hasInvYear) {
+  $params_base = [$mo,$yr];
+  $whereMonth = "month=? AND year=?";
+} else {
+  $params_base = [];
+  $whereMonth = "1=0";
+}
 
 /* ===================== Helper: Max invoice up-to-month-end ===================== */
 /* (বাংলা) carryover due ধরতে “<= month-end” পর্যন্ত সর্বশেষ ইনভয়েস নেব */
-if ($hasInvBillMonth) {
+if ($useInvoiceDate) {
+  $rangeUpTo = "WHERE invoice_date <= ?";
+  $params_upto = [$date_end];
+} elseif ($hasInvBillMonth) {
   $rangeUpTo = "WHERE billing_month <= ?";
   $params_upto = [$date_end];
 } elseif ($hasInvMonth && $hasInvYear) {
@@ -284,6 +381,32 @@ if($search!==''){
   foreach (['name','pppoe_id','mobile','phone','cell','contact'] as $sc) if (col_exists($pdo,'clients',$sc)) $searchCols[] = "c.`$sc` LIKE ?";
   if ($searchCols) { $filter .= " AND (".implode(' OR ',$searchCols).") "; foreach ($searchCols as $_) $params[] = "%$search%"; }
 }
+if ($view === 'list') {
+  if ($package_id > 0) { $filter .= " AND c.package_id = ?";  $params[] = $package_id; }
+  if ($router_id  > 0) { $filter .= " AND c.router_id  = ?";  $params[] = $router_id; }
+  if ($hasArea && $zone !== '') { $filter .= " AND TRIM(LOWER(c.`{$AREA_COL}`)) = TRIM(LOWER(?))"; $params[] = $zone; }
+  if ($hasSubZone && $sub_zone !== '') { $filter .= " AND TRIM(LOWER(c.`{$SUB_ZONE_COL}`)) = TRIM(LOWER(?))"; $params[] = $sub_zone; }
+  if ($hasBox && $box !== '') { $filter .= " AND TRIM(LOWER(c.`{$BOX_COL}`)) = TRIM(LOWER(?))"; $params[] = $box; }
+  if ($PROTOCOL_COL !== '' && $protocol !== '') { $filter .= " AND TRIM(LOWER(c.`{$PROTOCOL_COL}`)) = TRIM(LOWER(?))"; $params[] = $protocol; }
+  if ($CLIENT_TYPE_COL !== '' && $client_type !== '') { $filter .= " AND TRIM(LOWER(c.`{$CLIENT_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $client_type; }
+  if ($CONN_TYPE_COL !== '' && $connection_type !== '') { $filter .= " AND TRIM(LOWER(c.`{$CONN_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $connection_type; }
+  if ($B_STATUS_COL !== '' && $b_status !== '') { $filter .= " AND TRIM(LOWER(c.`{$B_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $b_status; }
+  if ($M_STATUS_COL !== '' && $m_status !== '') { $filter .= " AND TRIM(LOWER(c.`{$M_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $m_status; }
+  if ($CUSTOM_STATUS_COL !== '' && $custom_status !== '') { $filter .= " AND TRIM(LOWER(c.`{$CUSTOM_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $custom_status; }
+  if ($profile !== '') {
+    if ($PROFILE_COL !== '') {
+      $filter .= " AND TRIM(LOWER(c.`{$PROFILE_COL}`)) = TRIM(LOWER(?))";
+      $params[] = $profile;
+    } elseif (!empty($pkgProfileCols)) {
+      $or = [];
+      foreach ($pkgProfileCols as $col) {
+        $or[] = "TRIM(LOWER(p.`{$col}`)) = TRIM(LOWER(?))";
+        $params[] = $profile;
+      }
+      $filter .= " AND (" . implode(' OR ', $or) . ")";
+    }
+  }
+}
 
 /* Header counters */
 // total invoices created this month (as-is)
@@ -334,6 +457,32 @@ $count_due  =(int)pdo_scalar($pdo,"SELECT COUNT(*) FROM ($innerCnt) x WHERE x.re
 /* Row builder (latest up-to-month-end) */
 $selectMobile = $clientMobileCol ? ", c.`$clientMobileCol` AS mobile" : ", NULL AS mobile";
 $selectPkg    = $hasPkgName ? ", p.name AS package_name" : ", NULL AS package_name";
+$selectPkgSpeed = ($hasPackages && col_exists($pdo,'packages','speed')) ? ", p.speed AS package_speed" : ", NULL AS package_speed";
+$selectClientCode = col_exists($pdo,'clients','client_code') ? ", c.client_code AS client_code" : ", NULL AS client_code";
+$selectIp = col_exists($pdo,'clients','ip_address') ? ", c.ip_address AS ip_address" : ", NULL AS ip_address";
+$selectZone = $hasArea ? ", c.`$AREA_COL` AS zone_name" : ", NULL AS zone_name";
+$selectSubZone = $hasSubZone ? ", c.`$SUB_ZONE_COL` AS sub_zone" : ", NULL AS sub_zone";
+$selectBox = $hasBox ? ", c.`$BOX_COL` AS box_name" : ", NULL AS box_name";
+$selectClientType = $CLIENT_TYPE_COL !== '' ? ", c.`$CLIENT_TYPE_COL` AS client_type" : ", NULL AS client_type";
+$selectConnType = $CONN_TYPE_COL !== '' ? ", c.`$CONN_TYPE_COL` AS connection_type" : ", NULL AS connection_type";
+$selectProtocol = $PROTOCOL_COL !== '' ? ", c.`$PROTOCOL_COL` AS protocol_type" : ", NULL AS protocol_type";
+$selectProfile = $PROFILE_COL !== '' ? ", c.`$PROFILE_COL` AS profile_name" : ", NULL AS profile_name";
+$selectExpiry = $EXPIRY_COL !== '' ? ", c.`$EXPIRY_COL` AS expiry_date" : ", NULL AS expiry_date";
+$selectMonthlyBill = $MONTHLY_BILL_COL !== '' ? ", NULLIF(c.`$MONTHLY_BILL_COL`,'') AS monthly_bill" : ", NULL AS monthly_bill";
+$selectBillingStatus = $B_STATUS_COL !== '' ? ", c.`$B_STATUS_COL` AS billing_status" : ($invStatusCol ? ", i.`$invStatusCol` AS billing_status" : ", NULL AS billing_status");
+$selectMikrotikStatus = $M_STATUS_COL !== '' ? ", c.`$M_STATUS_COL` AS mikrotik_status" : (col_exists($pdo,'clients','is_online') ? ", c.is_online AS mikrotik_status" : ", NULL AS mikrotik_status");
+$selectRouter = $ROUTER_NAME_EXPR !== 'NULL' ? ", $ROUTER_NAME_EXPR AS router_name" : ", NULL AS router_name";
+$selectVat = $invoiceVatCol ? ", COALESCE(i.`$invoiceVatCol`,0) AS vat_amount" : ", 0 AS vat_amount";
+$selectAdvance = $ADVANCE_COL !== '' ? ", COALESCE(c.`$ADVANCE_COL`,0) AS advance_amount" : ", GREATEST(0, -1 * COALESCE($clientLedgerExpr,0)) AS advance_amount";
+
+$lastPayDateExpr = "NULL";
+if ($payDateCol) {
+  if ($payFk) {
+    $lastPayDateExpr = "(SELECT MAX(pm.`$payDateCol`) FROM payments pm WHERE pm.`$payFk`=i.id".payments_active_where($pdo,'pm').")";
+  } elseif ($hasPayClientId) {
+    $lastPayDateExpr = "(SELECT MAX(pm.`$payDateCol`) FROM payments pm WHERE pm.client_id=i.client_id".payments_active_where($pdo,'pm').")";
+  }
+}
 
 /* sumPaid / sumDisc for rows */
 if ($payFk) {
@@ -361,10 +510,28 @@ $innerRows = "
   SELECT 
     c.id AS client_id, c.name AS client_name, c.pppoe_id
     $selectMobile
-    $selectPkg,
-    i.id AS invoice_id,
+    $selectPkg
+    $selectPkgSpeed
+    $selectClientCode
+    $selectIp
+    $selectZone
+    $selectSubZone
+    $selectBox
+    $selectClientType
+    $selectConnType
+    $selectProtocol
+    $selectProfile
+    $selectExpiry
+    $selectMonthlyBill
+    $selectBillingStatus
+    $selectMikrotikStatus
+    $selectRouter
+    $selectVat
+    $selectAdvance
+    , $lastPayDateExpr AS last_payment_date
+    , i.id AS invoice_id,
     i.`$invAmountCol` AS inv_amount,
-    i.status,
+    ".($invStatusCol ? "i.`$invStatusCol` AS inv_status" : "NULL AS inv_status").",
     $sumDisc AS discount,
     $sumPaid AS paid_amount,
     $clientLedgerExpr AS ledger_balance,
@@ -376,6 +543,7 @@ $innerRows = "
       ON t.max_id=i1.id
   ) i ON i.client_id=c.id
   ".($hasPackages ? "LEFT JOIN packages p ON p.id=c.package_id" : "")."
+  ".(tbl_exists($pdo,'routers') ? "LEFT JOIN routers r ON r.id=c.router_id" : "")."
   WHERE 1=1 $filter
 ";
 
@@ -391,6 +559,12 @@ $stc=$pdo->prepare($sql_count_clients);
 $stc->execute($params_count);
 $total_clients=(int)$stc->fetchColumn();
 
+if ($view === 'list') {
+  $count_total = $total_clients;
+  $count_paid = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM ( $innerRows ) x WHERE x.remain<=0.0001", $params_count);
+  $count_due  = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM ( $innerRows ) x WHERE x.remain>0.0001",  $params_count);
+}
+
 $pages=max(1,(int)ceil($total_clients/$limit));
 $page=min(max(1,$page),$pages);
 $offset=($page-1)*$limit;
@@ -403,6 +577,34 @@ $std=$pdo->prepare($sql_rows);
 $params_rows = array_merge($params_rows_base, $params);
 $std->execute($params_rows);
 $rows=$std->fetchAll(PDO::FETCH_ASSOC);
+
+/* Dropdown data */
+$packages = $hasPackages
+  ? $pdo->query("SELECT id, name FROM packages ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC)
+  : [];
+$routers  = tbl_exists($pdo,'routers') && col_exists($pdo,'routers','id')
+  ? $pdo->query("SELECT id, ".(col_exists($pdo,'routers','name') ? 'name' : 'id')." AS name FROM routers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC)
+  : [];
+$zones = $hasArea ? distinct_values($pdo, 'clients', $AREA_COL) : [];
+$sub_zones_list = $hasSubZone ? distinct_values($pdo, 'clients', $SUB_ZONE_COL) : [];
+$boxes = $hasBox ? distinct_values($pdo, 'clients', $BOX_COL) : [];
+$protocols = ($PROTOCOL_COL !== '') ? distinct_values($pdo, 'clients', $PROTOCOL_COL) : [];
+$client_types = ($CLIENT_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CLIENT_TYPE_COL) : [];
+$connection_types = ($CONN_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CONN_TYPE_COL) : [];
+$b_statuses = ($B_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $B_STATUS_COL) : [];
+$m_statuses = ($M_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $M_STATUS_COL) : [];
+$custom_statuses = ($CUSTOM_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $CUSTOM_STATUS_COL) : [];
+$profiles = [];
+if ($PROFILE_COL !== '') {
+  $profiles = distinct_values($pdo, 'clients', $PROFILE_COL);
+} elseif (!empty($pkgProfileCols)) {
+  $tmp = [];
+  foreach ($pkgProfileCols as $col) {
+    $tmp = array_merge($tmp, distinct_values($pdo, 'packages', $col));
+  }
+  $profiles = array_values(array_unique($tmp));
+  sort($profiles, SORT_NATURAL | SORT_FLAG_CASE);
+}
 
 /* ========================== NEW TOTALS ========================== */
 /* (বাংলা) 1) Total Due (Month): এই মাসের ইনভয়েসগুলোর remain যোগফল (search/tab উপেক্ষা) */
@@ -525,7 +727,7 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
     </div>
 
     <!-- Filters -->
-    <form class="card border-0 shadow-sm mb-3" method="GET">
+    <form class="filter-card card border-0 shadow-sm mb-3" method="GET">
       <div class="card-body">
         <div class="row g-2 align-items-end">
           <div class="col-12 col-sm-3">
@@ -552,6 +754,136 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
           </div>
           <?php endif; ?>
         </div>
+
+        <?php if($view==='list'): ?>
+        <div class="filter-grid mt-3">
+          <div class="row g-2 g-md-3">
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Server</label>
+              <select name="router_id" class="form-select form-select-sm">
+                <option value="0">Select</option>
+                <?php foreach($routers as $rt): ?>
+                  <option value="<?= (int)$rt['id'] ?>" <?= $router_id==(int)$rt['id']?'selected':'' ?>>
+                    <?= h($rt['name'] ?? 'Router #'.(int)$rt['id']) ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Protocol Type</label>
+              <select name="protocol" class="form-select form-select-sm" <?= $PROTOCOL_COL==='' ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($protocols as $p): ?>
+                  <option value="<?= h($p) ?>" <?= $protocol===$p?'selected':'' ?>><?= h($p) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Profile</label>
+              <select name="profile" class="form-select form-select-sm" <?= empty($profiles) ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($profiles as $p): ?>
+                  <option value="<?= h($p) ?>" <?= $profile===$p?'selected':'' ?>><?= h($p) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Zone</label>
+              <select name="zone" class="form-select form-select-sm" <?= !$hasArea ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($zones as $z): ?>
+                  <option value="<?= h($z) ?>" <?= $zone===$z?'selected':'' ?>><?= h($z) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Sub Zone</label>
+              <select name="sub_zone" class="form-select form-select-sm" <?= !$hasSubZone ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($sub_zones_list as $sz): ?>
+                  <option value="<?= h($sz) ?>" <?= $sub_zone===$sz?'selected':'' ?>><?= h($sz) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Box</label>
+              <select name="box" class="form-select form-select-sm" <?= !$hasBox ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($boxes as $b): ?>
+                  <option value="<?= h($b) ?>" <?= $box===$b?'selected':'' ?>><?= h($b) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Package</label>
+              <select name="package_id" class="form-select form-select-sm">
+                <option value="0">Select</option>
+                <?php foreach($packages as $pkg): ?>
+                  <option value="<?= (int)$pkg['id'] ?>" <?= $package_id==(int)$pkg['id']?'selected':'' ?>>
+                    <?= h($pkg['name'] ?? 'N/A') ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Client Type</label>
+              <select name="client_type" class="form-select form-select-sm" <?= $CLIENT_TYPE_COL==='' ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($client_types as $ct): ?>
+                  <option value="<?= h($ct) ?>" <?= $client_type===$ct?'selected':'' ?>><?= h($ct) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Connection Type</label>
+              <select name="connection_type" class="form-select form-select-sm" <?= $CONN_TYPE_COL==='' ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($connection_types as $ct): ?>
+                  <option value="<?= h($ct) ?>" <?= $connection_type===$ct?'selected':'' ?>><?= h($ct) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">B.Status</label>
+              <select name="b_status" class="form-select form-select-sm" <?= $B_STATUS_COL==='' ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($b_statuses as $bs): ?>
+                  <option value="<?= h($bs) ?>" <?= $b_status===$bs?'selected':'' ?>><?= h($bs) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">M.Status</label>
+              <select name="m_status" class="form-select form-select-sm" <?= $M_STATUS_COL==='' ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($m_statuses as $ms): ?>
+                  <option value="<?= h($ms) ?>" <?= $m_status===$ms?'selected':'' ?>><?= h($ms) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-6 col-md-4 col-xl-2">
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Custom Status</label>
+              <select name="custom_status" class="form-select form-select-sm" <?= $CUSTOM_STATUS_COL==='' ? 'disabled' : '' ?>>
+                <option value="">Select</option>
+                <?php foreach($custom_statuses as $cs): ?>
+                  <option value="<?= h($cs) ?>" <?= $custom_status===$cs?'selected':'' ?>><?= h($cs) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+          </div>
+        </div>
+        <?php endif; ?>
         <input type="hidden" name="view" value="<?= h($view) ?>">
         <?php if($view==='list'): ?><input type="hidden" name="tab" value="<?= h($tab) ?>"><?php endif; ?>
         <input type="hidden" name="page" value="1">
@@ -659,19 +991,51 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
         </div>
       </div>
 
+      <form class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2" method="GET">
+        <div class="d-flex align-items-center gap-2">
+          <label class="small text-muted mb-0" for="bill-limit">Show</label>
+          <select id="bill-limit" name="limit" class="form-select form-select-sm" style="width: 90px;" onchange="this.form.submit()">
+            <?php foreach ([10,25,50,100] as $opt): ?>
+              <option value="<?= $opt ?>" <?= $limit===$opt?'selected':'' ?>><?= $opt ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="small text-muted">entries</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 ms-auto">
+          <label class="small text-muted mb-0" for="bill-search">Search:</label>
+          <input id="bill-search" type="text" class="form-control form-control-sm" name="search" value="<?= h($search) ?>" placeholder="Name / PPPoE / Mobile">
+          <button class="btn btn-primary btn-sm" type="submit">Go</button>
+        </div>
+        <input type="hidden" name="month" value="<?= h($monthParam) ?>">
+        <input type="hidden" name="view" value="<?= h($view) ?>">
+        <input type="hidden" name="tab" value="<?= h($tab) ?>">
+        <input type="hidden" name="page" value="1">
+      </form>
+
       <div class="overflow-x">
         <table class="table table-striped table-hover table-sm align-middle">
           <thead>
             <tr>
-              <th>Client ID</th>
-              <th>ID / Name / Cell</th>
+              <th style="width:28px;"><input type="checkbox" aria-label="Select all"></th>
+              <th>C.Code</th>
+              <th>ID / IP</th>
+              <th>Cus. Name</th>
+              <th>MobileNumber</th>
+              <th>Zone</th>
+              <th>Cus. Type</th>
+              <th>Conn. Type</th>
               <th>Package</th>
-              <th>Status</th>
-              <th class="text-end">Total</th>
-              <?php if($showDiscountCol): ?><th class="text-end">Discount</th><?php endif; ?>
-              <th class="text-end">Paid</th>
-              <th class="text-end">Payable</th>
-              <th class="text-end">Ledger</th>
+              <th>Speed</th>
+              <th>Ex.Date</th>
+              <th class="text-end">M.Bill</th>
+              <th class="text-end">Received</th>
+              <th class="text-end">VAT</th>
+              <th class="text-end">BalanceDue</th>
+              <th class="text-end">Advance</th>
+              <th>PaymentDate</th>
+              <th>Server</th>
+              <th>M.Status</th>
+              <th>B.Status</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -682,43 +1046,63 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
               $disc      = (float)($r['discount']??0);
               $remain    = max(0.0, $invAmount - ($isNetInvAmount?0:$disc) - $paid);
               $pay_class = $remain>0.0001?'due':'zero';
-              $status_badge = $r['status']==='paid'?'success':($r['status']==='partial'?'warning text-dark':($r['status']==='unpaid'?'danger':'secondary'));
               $ledger    = (float)($r['ledger_balance']??0);
-              $lb_label  = '৳ '.number_format(abs($ledger),2);
-              $lb_label  = $ledger>=0 ? $lb_label : ('-'.$lb_label);
-              $lb_class  = $ledger>0?'danger':($ledger<0?'success':'secondary');
+              $advance   = (float)($r['advance_amount'] ?? 0);
+              $vat       = (float)($r['vat_amount'] ?? 0);
+              $m_bill    = (float)($r['monthly_bill'] ?? 0);
+              if ($m_bill <= 0) { $m_bill = $invAmount; }
+              $speed     = trim((string)($r['package_speed'] ?? ''));
+              if ($speed === '') { $speed = trim((string)($r['profile_name'] ?? '')); }
+              if ($speed === '') { $speed = '-'; }
+
+              $billing_status = strtolower(trim((string)($r['billing_status'] ?? '')));
+              if ($billing_status === '') { $billing_status = strtolower(trim((string)($r['inv_status'] ?? ''))); }
+              $bill_badge = $billing_status==='paid'?'success':($billing_status==='partial'?'warning text-dark':($billing_status==='unpaid'?'danger':'secondary'));
+              $bill_label = $billing_status !== '' ? ucfirst($billing_status) : 'N/A';
+
+              $m_status_raw = $r['mikrotik_status'] ?? '';
+              $m_status_val = is_numeric($m_status_raw) ? (int)$m_status_raw : strtolower(trim((string)$m_status_raw));
+              $m_status_on  = ($m_status_val === 1 || $m_status_val === 'online' || $m_status_val === 'active' || $m_status_val === 'enabled' || $m_status_val === 'up');
+              $m_status_lbl = $m_status_raw === '' ? '-' : ($m_status_on ? 'On' : 'Off');
+              $m_status_badge = $m_status_on ? 'success' : 'secondary';
+
+              $exp_date = trim((string)($r['expiry_date'] ?? ''));
+              $pay_date = trim((string)($r['last_payment_date'] ?? ''));
+              $pay_ts = $pay_date !== '' ? strtotime($pay_date) : false;
+              $pay_date_fmt = $pay_ts ? date('M-d-Y', $pay_ts) : '-';
 
               $return = $cur_url;
               $pay_url = 'payment_add.php?invoice_id='.(int)$r['invoice_id'].'&return='.rawurlencode($return);
               $ledger_url = 'client_ledger.php?client_id='.(int)$r['client_id'].'&return='.rawurlencode($cur_url);
             ?>
             <tr class="<?= $remain<=0.0001 ? 'table-success' : '' ?>">
-              <td>#<?= (int)$r['client_id'] ?></td>
+              <td><input type="checkbox" aria-label="Select"></td>
+              <?php $ccode = trim((string)($r['client_code'] ?? '')); ?>
+              <td><?= $ccode !== '' ? h($ccode) : '#'.(int)$r['client_id'] ?></td>
+              <td>
+                <div class="fw-semibold"><?= h($r['pppoe_id'] ?? '') ?></div>
+                <div class="text-muted small"><?= h($r['ip_address'] ?? '-') ?></div>
+              </td>
               <td>
                 <div class="fw-semibold"><a class="text-decoration-none" href="client_view.php?id=<?= (int)$r['client_id'] ?>"><?= h($r['client_name']) ?></a></div>
-                <div class="text-muted small"><?= h($r['pppoe_id'] ?? '') ?><?= ($r['mobile'] ?? '') ? ' • '.h($r['mobile']) : '' ?></div>
+                <div class="text-muted small"><?= h($r['sub_zone'] ?? '') ?><?= ($r['box_name'] ?? '') ? ' • '.h($r['box_name']) : '' ?></div>
               </td>
+              <td><?= h($r['mobile'] ?? '-') ?></td>
+              <td><?= h($r['zone_name'] ?? '-') ?></td>
+              <td><?= h($r['client_type'] ?? '-') ?></td>
+              <td><?= h($r['connection_type'] ?? '-') ?></td>
               <td><?= h($r['package_name'] ?? '-') ?></td>
-              <td><span class="badge bg-<?= $status_badge ?>"><?= ucfirst((string)$r['status']) ?></span></td>
-              <td class="text-end">৳ <?= number_format($invAmount, 2) ?></td>
-
-              <?php if($showDiscountCol): ?>
-              <td class="text-end">
-                ৳ <?= number_format($disc, 2) ?>
-                <?php if ($disc > 0): ?>
-                  <button type="button"
-                          class="btn btn-link btn-sm p-0 ms-1 manage-discount"
-                          data-invoice="<?= (int)$r['invoice_id'] ?>"
-                          title="Manage discounts for this invoice">
-                    <i class="bi bi-gear"></i>
-                  </button>
-                <?php endif; ?>
-              </td>
-              <?php endif; ?>
-
+              <td><?= h($speed) ?></td>
+              <td><?= h($exp_date) ?></td>
+              <td class="text-end">৳ <?= number_format($m_bill, 2) ?></td>
               <td class="text-end">৳ <?= number_format($paid, 2) ?></td>
+              <td class="text-end">৳ <?= number_format($vat, 2) ?></td>
               <td class="text-end payable <?= $pay_class ?>">৳ <?= number_format($remain, 2) ?></td>
-              <td class="text-end"><span class="badge bg-<?= $lb_class ?>" title="Positive = Due, Negative = Advance"><?= $lb_label ?></span></td>
+              <td class="text-end">৳ <?= number_format($advance, 2) ?></td>
+              <td><?= h($pay_date_fmt) ?></td>
+              <td><?= h($r['router_name'] ?? '-') ?></td>
+              <td><span class="badge bg-<?= $m_status_badge ?>"><?= h($m_status_lbl) ?></span></td>
+              <td><span class="badge bg-<?= $bill_badge ?>"><?= h($bill_label) ?></span></td>
               <td>
                 <div class="btn-group btn-group-sm">
                   <a class="btn btn-outline-success" title="Pay (Full/Partial)" href="<?= h($pay_url) ?>"><i class="bi bi-cash-coin"></i> Pay</a>
@@ -728,7 +1112,7 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
               </td>
             </tr>
             <?php endforeach; else: ?>
-              <tr><td colspan="<?= $showDiscountCol? '10':'9' ?>" class="text-center text-muted">No data found for this month.</td></tr>
+              <tr><td colspan="21" class="text-center text-muted">No data found for this month.</td></tr>
             <?php endif; ?>
           </tbody>
         </table>

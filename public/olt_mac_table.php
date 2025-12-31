@@ -48,14 +48,6 @@ function port_sort_key(array $row): string {
   return 'Z' . strtoupper($port);
 }
 
-function format_onu_label(?string $onu): string {
-  if(!$onu) return '—';
-  if(preg_match('/(\d+)/', $onu, $m)){
-    return sprintf('ONU%02d', (int)$m[1]);
-  }
-  return strtoupper(trim($onu));
-}
-
 function format_onu_identifier(array $row): string {
   $port = $row['normalized_port'] ?? '';
   $onuNum = onu_numeric($row['onu'] ?? '');
@@ -369,12 +361,6 @@ function rx_power_meta($value): array {
   return ['Critical', 'bg-danger'];
 }
 
-function pon_attr_slug(string $label): string {
-  $slug = strtolower(preg_replace('/[^a-z0-9]+/', '-', $label));
-  $slug = trim($slug, '-');
-  return $slug !== '' ? $slug : 'pon-other';
-}
-
 function onu_numeric(?string $onu): int {
   if($onu && preg_match('/(\d+)/', $onu, $m)){
     return (int)$m[1];
@@ -607,8 +593,6 @@ try {
   }
 }
 
-$latestMac = $rows[0]['mac'] ?? null;
-$ponGroups = [];
 $groupedMacs = [];
 $clientMacCache = $filterOlt > 0 ? load_onu_client_mac_rows($db, $filterOlt) : [];
 $clientLookup   = load_client_lookup($db, $filterOlt);
@@ -628,9 +612,6 @@ if(!$tableMissing && $rows){
     }
     $row['pon_slot'] = $slot;
     $label = 'PON '.$slot;
-    $row['pon_label'] = $label;
-    $row['pon_attr'] = pon_attr_slug($label);
-    $ponGroups[$label] = ($ponGroups[$label] ?? 0) + 1;
     $backfilled = backfill_cache_client_id($db, $row, $clientLookup);
     if($backfilled){
       $row['client_id'] = $backfilled;
@@ -652,8 +633,6 @@ if(!$tableMissing && $rows){
     }
     return strcmp($ka, $kb);
   });
-  ksort($ponGroups, SORT_NATURAL);
-
   foreach($rows as $row){
     $slot = $row['pon_slot'];
     if(!$slot) continue;
@@ -766,16 +745,16 @@ if($filterOlt > 0){
         <h4 class="md-0">OLT MAC Table</h4>
       <?php $refreshUrl = '/api/olt_mac_refresh_telnet.php' . ($filterOlt > 0 ? ('?olt_id=' . $filterOlt) : ''); ?>
       <div class="d-flex gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="/public/sync_clients_router_mac.php?mode=if_diff" target="_blank" rel="noopener">
-          <i class="bi bi-hdd-network"></i> Sync Router MACs
-        </a>
-        <button type="button"
-                class="btn btn-primary btn-sm telnet-refresh-btn"
-                data-url="<?=h($refreshUrl . (strpos($refreshUrl,'?')!==false ? '&' : '?') . 'mode=full');?>">
-          <span class="btn-label"><i class="bi bi-arrow-clockwise"></i> Full Sync</span>
-        </button>
+          <a class="btn btn-outline-secondary btn-sm" href="/public/sync_clients_router_mac.php?mode=if_diff" target="_blank" rel="noopener">
+            <i class="bi bi-hdd-network"></i> Sync Router MACs
+          </a>
+          <button type="button"
+                  class="btn btn-primary btn-sm telnet-refresh-btn"
+                  data-url="<?=h($refreshUrl . (strpos($refreshUrl,'?')!==false ? '&' : '?') . 'mode=full');?>">
+            <span class="btn-label"><i class="bi bi-arrow-clockwise"></i> Full Sync</span>
+          </button>
+        </div>
       </div>
-    </div>
       <div id="telnetRefreshStatus" class="text-muted small text-end"></div>
 
       <?php if($link_notice): ?>
@@ -915,8 +894,6 @@ if($filterOlt > 0){
                             <span class="text-muted">—</span>
                           <?php endif; ?>
                         </td>
-                        <!-- <td><span class="badge text-bg-secondary"><?//=h($row['vlan'] ?? '—');?></span></td> -->
-                        
                         <td>
                           <?php [$statusLabel,$statusClass] = status_badge_meta(resolve_row_status($row)); ?>
                           <span class="<?=$statusClass;?>"><?=$statusLabel;?></span>
@@ -989,33 +966,23 @@ if($filterOlt > 0){
   <?php endif; ?>
 </div>
 <style>
-.selected-olt-pill{
-  border:1px solid rgba(59,130,246,.3);
-  border-radius:.75rem;
-  padding:.5rem 1rem;
-  background:transparent;
-}
 .olt-mac-table{
   table-layout: fixed;
   width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
 }
 .olt-mac-table th,
 .olt-mac-table td{
   vertical-align: middle;
-  border-right: 1px solid #e1e5ee;
-}
-.olt-mac-table th:first-child,
-.olt-mac-table td:first-child{
-  border-left: 1px solid #e1e5ee;
-}
-.olt-mac-table th:last-child,
-.olt-mac-table td:last-child{
-  border-right: 0;
+  border: 1px solid #e1e5ee;
+  text-align: center;
 }
 .olt-mac-table thead th{
   white-space: normal;
   line-height: 1.1;
   text-align: center;
+  border: 1px solid #e1e5ee;
 }
 .olt-mac-table thead th:nth-child(8){
   text-align: center;
@@ -1023,19 +990,19 @@ if($filterOlt > 0){
 .olt-mac-table th:nth-child(1),
 .olt-mac-table td:nth-child(1){
   width: 9%;
-  text-align: left;
+  text-align: center;
 }
 .olt-mac-table th:nth-child(2),
 .olt-mac-table td:nth-child(2){
   width: 13%;
-  text-align: left;
+  text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 .olt-mac-table th:nth-child(3),
 .olt-mac-table td:nth-child(3){
   width: 15%;
-  text-align: left;
+  text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -1057,28 +1024,28 @@ if($filterOlt > 0){
 .olt-mac-table th:nth-child(7),
 .olt-mac-table td:nth-child(7){
   width: 7%;
-  text-align: right;
+  text-align: center;
   font-variant-numeric: tabular-nums;
   min-width: 90px;
 }
 .olt-mac-table th:nth-child(8),
 .olt-mac-table td:nth-child(8){
-  width: 12%;
-  text-align: right;
+  width: 9%;
+  text-align: center;
   font-variant-numeric: tabular-nums;
-  min-width: 110px;
+  min-width: 90px;
 }
 .olt-mac-table th:nth-child(9),
 .olt-mac-table td:nth-child(9){
-  width: 10%;
-  text-align: left;
+  width: 13%;
+  text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 .olt-mac-table th:nth-child(10),
 .olt-mac-table td:nth-child(10){
   width: 8%;
-  text-align: right;
+  text-align: center;
 }
 .olt-mac-table td:nth-child(1),
 .olt-mac-table td:nth-child(4),
@@ -1090,27 +1057,13 @@ if($filterOlt > 0){
   white-space: nowrap;
 }
 .olt-rx-cell{
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: .2rem;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  max-width: 100%;
+  width: 13%;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 100px;
 }
-.olt-dist-col{
-  text-align: right;
-  white-space: nowrap;
-  padding-right: .75rem;
-  border-right: 1px solid rgba(0,0,0,.08);
-}
-.olt-rx-col{
-  padding-left: .75rem;
-  border-left: 1px solid rgba(0,0,0,.08);
-}
-.olt-dereg-cell{
-  line-height: 1.2;
-}
+
 @media (max-width: 767.98px){
   .olt-mac-table{
     table-layout: auto;
