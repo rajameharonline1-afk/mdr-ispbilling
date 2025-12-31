@@ -4,5 +4,8 @@ git clone https://github.com/bdidamir/mrd_billing.git
 # ২. প্রজেক্ট ফোল্ডারে প্রবেশ করুন
 cd mrd_billing
 
-# ৩. স্ক্রিপ্টগুলোকে এক্সিকিউটেবল (Executable) করুন
+# ৩. স্ক্রিপ্টগুলোকে এক্সিকিউটেবল করুন
 chmod +x *.sh
+
+# ৪. ফুল সেটআপ রান করুন (Root পারমিশন প্রয়োজন)
+sudo ./full_setup.sh
