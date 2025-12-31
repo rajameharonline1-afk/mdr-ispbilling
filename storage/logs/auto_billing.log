@@ -22,3 +22,6 @@ Skip: today is not 1st; use ?force=1 or pass a month/--force for backfill.
 [2025-12-31 00:10:02] == Auto billing start for 2025-12 (force=0, dry=0) ==
 [2025-12-31 00:10:02] Skip: today is not 1st and no force/backfill (ym=2025-12)
 Skip: today is not 1st; use ?force=1 or pass a month/--force for backfill.
+[2026-01-01 00:10:01] == Auto billing start for 2026-01 (force=0, dry=0) ==
+[2026-01-01 00:10:01] Skip: invoices already exist (non-void) for 2026-01
+Skip: invoices already exist for 2026-01

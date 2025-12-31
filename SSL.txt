@@ -1,0 +1,23 @@
+ধাপ ১: নতুন SSL সার্টিফিকেট তৈরি করা
+যদি আপনার সার্টিফিকেটের মেয়াদ শেষ হয়ে যায় বা নতুন করে তৈরি করতে হয়:
+
+Bash
+
+# ১. সার্টিফিকেট এবং কী ফাইল জেনারেট করা
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/isp_billing.key \
+  -out /etc/ssl/certs/isp_billing.crt
+⚙️ ধাপ ২: অ্যাপাচি কনফিগারেশন আপডেট করা
+সার্টিফিকেট তৈরির পর অ্যাপাচিকে তা চিনিয়ে দিতে হয়:
+
+Bash
+
+# ১. কনফিগারেশন ফাইলটি এডিট করা
+sudo nano /etc/apache2/sites-available/isp_billing-ssl.conf
+
+# ২. ফাইলের ভেতরে এই লাইন দুটি নিশ্চিত করা:
+# SSLCertificateFile /etc/ssl/certs/isp_billing.crt
+# SSLCertificateKeyFile /etc/ssl/private/isp_billing.key
+
+# ৩. অ্যাপাচি রিস্টার্ট করা
+sudo systemctl restart apache2
