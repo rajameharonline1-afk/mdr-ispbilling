@@ -1,0 +1,8 @@
+# ১. রিপোজিটরি ক্লোন করুন
+git clone https://github.com/bdidamir/mrd_billing.git
+
+# ২. প্রজেক্ট ফোল্ডারে প্রবেশ করুন
+cd mrd_billing
+
+# ৩. স্ক্রিপ্টগুলোকে এক্সিকিউটেবল (Executable) করুন
+chmod +x *.sh
