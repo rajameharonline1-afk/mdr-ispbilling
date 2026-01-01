@@ -10,7 +10,24 @@ function load_oui_db(): array {
             $json = file_get_contents($path);
             $db = json_decode($json, true) ?: [];
         } else {
+            $csvPath = __DIR__ . '/../assets/mac_vendors.csv';
             $db = [];
+            if (file_exists($csvPath)) {
+                if (($fh = fopen($csvPath, 'r')) !== false) {
+                    while (($row = fgetcsv($fh)) !== false) {
+                        if (count($row) < 2) continue;
+                        $prefixRaw = strtoupper(preg_replace('/[^0-9A-F]/i', '', (string)$row[0]));
+                        if (strlen($prefixRaw) < 6) continue;
+                        $prefix = substr($prefixRaw, 0, 6);
+                        $vendor = trim((string)$row[1]);
+                        if ($vendor === '' || $vendor === 'vendor') continue;
+                        if (!isset($db[$prefix])) {
+                            $db[$prefix] = $vendor;
+                        }
+                    }
+                    fclose($fh);
+                }
+            }
         }
     }
     return $db;

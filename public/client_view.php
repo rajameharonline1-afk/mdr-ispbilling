@@ -8,6 +8,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/routeros_api.class.php';
+require_once __DIR__ . '/../app/mac_lookup.php';
 
 const ONU_MONITOR_CACHE_TTL = 300;
 
@@ -518,6 +519,11 @@ if (!empty($client['olt_id']) && !empty($client['olt_port']) && !empty($client['
   }
 }
 $onu_mac = $onu_mac ?: ($client['caller_mac'] ?? null);
+$router_mac_display = norm_mac($client['router_mac'] ?? ($client['caller_mac'] ?? ($client['ap_mac'] ?? null)));
+$device_vendor = null;
+if ($router_mac_display && function_exists('mac_vendor_lookup')) {
+  $device_vendor = mac_vendor_lookup($router_mac_display);
+}
 
 /* ---------------- Status badges (with Left) ---------------- */
 $stVal  = strtolower(trim($client['status'] ?? 'active'));
@@ -835,7 +841,7 @@ include __DIR__ . '/../partials/partials_header.php';
               <tr>
                 <td class="k"><i class="bi bi-ethernet"></i>Router Mac</td>
                 <td class="v mono">
-                  <span id="router-mac">—</span>
+                  <span id="router-mac"><?= $router_mac_display ? h($router_mac_display) : '—' ?></span>
                   <button type="button" id="btn-copy-router" class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
                           data-copy-el="#router-mac" title="Copy Router Mac">
                     <i class="bi bi-clipboard"></i>
@@ -852,7 +858,7 @@ include __DIR__ . '/../partials/partials_header.php';
                   </button>
                 </td>
               </tr> -->
-              <tr><td class="k"><i class="bi bi-cpu"></i> Vendor</td><td class="v" id="device-vendor">—</td></tr>
+              <tr><td class="k"><i class="bi bi-cpu"></i> Vendor</td><td class="v" id="device-vendor"><?= $device_vendor ? h($device_vendor) : '—' ?></td></tr>
               <tr><td class="k"><i class="bi bi-pc-display"></i> IP Address</td><td class="v mono" id="live-ip"><?= h($live_ip) ?></td></tr>
               <tr><td class="k"><i class="bi bi-stopwatch"></i> Uptime</td><td class="v" id="uptime">—</td></tr>
               <tr>
@@ -892,7 +898,7 @@ include __DIR__ . '/../partials/partials_header.php';
               <tr><td class="k"><i class="bi bi-cpu"></i> Vendor</td><td class="v" id="olt-vendor"><?= $olt_linked && $olt_vendor ? h($olt_vendor) : '—' ?></td></tr>
               <tr><td class="k"><i class="bi bi-hdd-network"></i> Host/IP</td><td class="v" id="olt-host"><?= $olt_linked && $olt_host ? h($olt_host) : '—' ?></td></tr>
               <tr><td class="k"><i class="bi bi-diagram-2"></i> PON Port</td><td class="v" id="olt-port"><?= $pon_port_display ? h($pon_port_display) : ($pon_display ? h($pon_display) : ($pon_iface ? h($pon_iface) : '—')) ?></td></tr>
-              <tr><td class="k"><i class="bi bi-disc"></i> ONU ID</td><td class="v" id="olt-onu"><?= $onu_full ? h($onu_full) : ($onu_id_display !== null && $onu_id_display !== '' ? h((string)$onu_id_display) : '—') ?></td></tr>
+              <tr><td class="k"><i class="bi bi-disc"></i> ONU ID</td><td class="v" id="olt-onu"><?= ($onu_id_display !== null && $onu_id_display !== '' ? h((string)$onu_id_display) : '—') ?></td></tr>
               <tr><td class="k"><i class="bi bi-upc-scan"></i> ONU MAC</td><td class="v mono" id="olt-mac"><?= $onu_mac ? h(strtoupper($onu_mac)) : '—' ?></td></tr>
               <tr><td class="k"><i class="bi bi-calendar2-week"></i> Last Linked</td><td class="v" id="olt-linked-at"><?= $last_linked_display ? h($last_linked_display) : '—' ?></td></tr>
               <tr>
@@ -1226,7 +1232,9 @@ function loadLiveStatus(){
   fetch('/api/client_live_status.php?id=<?= (int)$client['id']; ?>', {cache:'no-store', signal: ctl.signal})
     .then(res=>res.json()).then(d=>{
       const dv = document.getElementById('device-vendor');
-      if (dv) dv.textContent = (d.device_vendor && d.device_vendor.trim()!=='') ? d.device_vendor : '—';
+      if (dv && d.device_vendor && d.device_vendor.trim() !== '') {
+        dv.textContent = d.device_vendor;
+      }
 
       const rmacEl = document.getElementById('router-mac');
       const amacEl = document.getElementById('active-mac');
@@ -1248,7 +1256,7 @@ function loadLiveStatus(){
         else { aBtn.style.display='none'; aBtn.setAttribute('data-copy',''); }
       }
 
-      if (dv && (dv.textContent==='—' || dv.textContent==='') && rmac && rmac!=='—'){
+      if (dv && (dv.textContent==='—' || dv.textContent==='' || dv.textContent==='Unknown Vendor') && rmac && rmac!=='—'){
         fetch('/api/mac_vendor.php?mac='+encodeURIComponent(rmac), {cache:'no-store'})
           .then(r=>r.json()).then(j=>{ if (j && j.vendor) dv.textContent = j.vendor; }).catch(()=>{});
       }

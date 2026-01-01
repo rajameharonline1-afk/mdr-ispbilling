@@ -134,7 +134,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Billing & maintenance
 10 0 * * * /usr/bin/php /var/www/isp_billing/cron/auto_billing.php >> /var/log/auto_billing.log
-*/30 * * * * /usr/bin/php /var/www/isp_billing/cron/auto_inactive.php >> /var/log/auto_inactive.log
+*/30 * * * * /usr/bin/php /var/www/isp_billing/cron/auto_expire_inactive.php >> /var/log/auto_inactive.log
 
 # Router sync
 5 * * * * /usr/bin/php /var/www/isp_billing/cron/sync_clients.php >> /var/log/sync_clients.log
