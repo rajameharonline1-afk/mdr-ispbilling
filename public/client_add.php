@@ -874,6 +874,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <label class="form-label">Details (optional)</label>
             <textarea class="form-control" id="locDetailInput" rows="3" placeholder="Notes"></textarea>
           </div>
+          <div id="locSaveNotice" class="form-text small d-none"></div>
         </form>
       </div>
       <div class="modal-footer d-flex justify-content-between">
@@ -937,6 +938,7 @@ include __DIR__ . '/../partials/partials_header.php';
   const typeField = document.getElementById('locTypeField');
   const labelInput = document.getElementById('locLabelInput');
   const detailInput = document.getElementById('locDetailInput');
+  const noticeEl = document.getElementById('locSaveNotice');
   const clearBtn = document.getElementById('locClearBtn');
   const saveBtn = document.getElementById('locSaveBtn');
   const parentAreaWrap = document.querySelector('[data-field="parent_area"]');
@@ -952,16 +954,17 @@ include __DIR__ . '/../partials/partials_header.php';
     const sel = document.querySelector(`select[data-loc-type="${type}"]`);
     if (!sel) return;
     try {
-      const res = await fetch(`/public/ajax/location_options.php?type=${encodeURIComponent(type)}`, {cache:'no-store'});
+      const res = await fetch(`/ajax/location_options.php?type=${encodeURIComponent(type)}`, {cache:'no-store'});
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to load list');
       const keep = selectedValue ?? sel.value;
-      const opts = Array.isArray(data.options) ? data.options : [];
+      const opts = Array.isArray(data.items) ? data.items : (Array.isArray(data.options) ? data.options : []);
       sel.innerHTML = '<option value="">Select</option>';
       opts.forEach(val => {
         const opt = document.createElement('option');
-        opt.value = val;
-        opt.textContent = val;
+        const label = typeof val === 'string' ? val : (val.label || '');
+        opt.value = label;
+        opt.textContent = label;
         sel.appendChild(opt);
       });
       if (keep) {
@@ -980,7 +983,7 @@ include __DIR__ . '/../partials/partials_header.php';
   }
 
   async function fetchFull(type){
-    const url = `/public/ajax/location_options.php?type=${encodeURIComponent(type)}&full=1`;
+    const url = `/ajax/location_options.php?type=${encodeURIComponent(type)}&full=1`;
     const res = await fetch(url, {cache:'no-store'});
     const json = await res.json();
     if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load list');
@@ -1046,12 +1049,13 @@ include __DIR__ . '/../partials/partials_header.php';
     currentType = type;
     const modal = ensureModal();
     if (!modal) {
-      alert('Cannot open form because Bootstrap modal is unavailable.');
+      notify('Cannot open form because Bootstrap modal is unavailable.', 'danger', 'Error');
       return;
     }
     typeField.value = type;
     if (titleEl) titleEl.textContent = 'Add ' + (typeLabels[type] || 'Option');
     form?.reset();
+    clearNotice();
     const showArea = (type === 'sub_zone' || type === 'box');
     const showSub = (type === 'box');
     parentAreaWrap?.classList.toggle('d-none', !showArea);
@@ -1069,11 +1073,41 @@ include __DIR__ . '/../partials/partials_header.php';
 
   clearBtn?.addEventListener('click', () => {
     form?.reset();
+    clearNotice();
     parentAreaSelect && (parentAreaSelect.value = '');
     parentSubSelect && (parentSubSelect.value = '');
     parentSubSelect && (parentSubSelect.disabled = false);
     labelInput?.focus();
   });
+
+  function notify(message, type = 'info', title = null){
+    if (window.globalToast) {
+      window.globalToast(message, type, 3200, title);
+      return;
+    }
+    alert(message);
+  }
+
+  function setNotice(message, type = 'info'){
+    if (!noticeEl) return;
+    noticeEl.textContent = message || '';
+    noticeEl.classList.remove('d-none', 'text-success', 'text-danger', 'text-muted');
+    if (type === 'success') {
+      noticeEl.classList.add('text-success');
+    } else if (type === 'error') {
+      noticeEl.classList.add('text-danger');
+    } else {
+      noticeEl.classList.add('text-muted');
+    }
+    if (!message) noticeEl.classList.add('d-none');
+  }
+
+  function clearNotice(){
+    if (!noticeEl) return;
+    noticeEl.textContent = '';
+    noticeEl.classList.add('d-none');
+    noticeEl.classList.remove('text-success', 'text-danger', 'text-muted');
+  }
 
   async function submitValue(type, label, details){
     try {
@@ -1084,7 +1118,7 @@ include __DIR__ . '/../partials/partials_header.php';
       if (type === 'box' && parentSubSelect && !parentSubWrap?.classList.contains('d-none')) {
         payload.parent_sub_zone = parentSubSelect.value || '';
       }
-      const res = await fetch('/public/ajax/location_options.php', {
+      const res = await fetch('/ajax/location_options.php', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify(payload)
@@ -1099,9 +1133,12 @@ include __DIR__ . '/../partials/partials_header.php';
       } else if (type === 'sub_zone' || type === 'box') {
         await populateParentSub(parentAreaSelect?.value || '', parentSubSelect?.value || '');
       }
-      ensureModal()?.hide();
+      setNotice(`Saved: ${(data.value || label).trim()}.`, 'success');
+      notify('Saved successfully.', 'success', 'Success');
     } catch (err) {
-      alert(err.message || 'Could not save option.');
+      const msg = err?.message || 'Could not save option.';
+      setNotice(msg, 'error');
+      notify(msg, 'danger', 'Error');
     }
   }
 
@@ -1110,22 +1147,26 @@ include __DIR__ . '/../partials/partials_header.php';
     const label = (labelInput?.value ?? '').trim();
     const details = (detailInput?.value ?? '').trim();
     if (!type || !label) {
-      alert('Please enter a value.');
+      setNotice('Please enter a value.', 'error');
+      notify('Please enter a value.', 'warning', 'Notice');
       return;
     }
     if (type === 'sub_zone' && parentAreaSelect && !parentAreaSelect.value) {
-      alert('Please select a zone first.');
+      setNotice('Please select a zone first.', 'error');
+      notify('Please select a zone first.', 'warning', 'Notice');
       parentAreaSelect.focus();
       return;
     }
     if (type === 'box') {
       if (parentAreaSelect && !parentAreaSelect.value) {
-        alert('Please select a zone first.');
+        setNotice('Please select a zone first.', 'error');
+        notify('Please select a zone first.', 'warning', 'Notice');
         parentAreaSelect.focus();
         return;
       }
       if (parentSubSelect && !parentSubSelect.value) {
-        alert('Please select a sub zone.');
+        setNotice('Please select a sub zone.', 'error');
+        notify('Please select a sub zone.', 'warning', 'Notice');
         parentSubSelect.focus();
         return;
       }

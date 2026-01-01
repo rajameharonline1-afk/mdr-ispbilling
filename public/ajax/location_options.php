@@ -16,7 +16,10 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $pdo = db();
 
 function require_manage_perm(): void {
-    if (!acl_can('settings.manage')) {
+    $canManage = acl_can('settings.manage');
+    $canClientAdd = acl_can('add.client');
+    $canClientEdit = acl_can('edit.client') || acl_can('client.edit');
+    if (!($canManage || $canClientAdd || $canClientEdit)) {
         http_response_code(403);
         echo json_encode(['ok'=>false,'error'=>'Permission denied.']);
         exit;
@@ -24,11 +27,18 @@ function require_manage_perm(): void {
 }
 
 if ($method === 'GET') {
-    $type = strtolower((string)($_GET['type'] ?? ''));
+    $rawType = (string)($_GET['type'] ?? '');
+    $type = location_option_sanitize_type($rawType);
     $full = (int)($_GET['full'] ?? 0) === 1;
-    if ($type === '' || !location_option_is_valid($type)) {
-        echo json_encode(['ok'=>false,'error'=>'Invalid type.']);
-        exit;
+    if ($type === '') {
+        $ref = strtolower((string)($_SERVER['HTTP_REFERER'] ?? ''));
+        if (strpos($ref, 'sub_zone') !== false || strpos($ref, 'subzone') !== false) {
+            $type = 'sub_zone';
+        } elseif (strpos($ref, 'box') !== false) {
+            $type = 'box';
+        } else {
+            $type = 'area';
+        }
     }
     $rows = $full ? location_option_list_full($pdo, $type) : location_option_list($pdo, $type);
     echo json_encode(['ok'=>true,'items'=>$rows]);
@@ -55,13 +65,19 @@ if (!$sessionToken || !$token || !hash_equals((string)$sessionToken, (string)$to
 try {
     switch ($method) {
         case 'POST': {
-            $type = strtolower((string)($input['type'] ?? ''));
+            $type = location_option_sanitize_type((string)($input['type'] ?? ''));
             $label = trim((string)($input['label'] ?? ''));
             $details = trim((string)($input['details'] ?? ''));
             $parentArea = $input['parent_area'] ?? null;
             $parentSub  = $input['parent_sub_zone'] ?? null;
-            if ($type === '' || !location_option_is_valid($type)) {
-                throw new RuntimeException('Invalid type.');
+            if ($type === '') {
+                if (!empty($parentSub)) {
+                    $type = 'box';
+                } elseif (!empty($parentArea)) {
+                    $type = 'sub_zone';
+                } else {
+                    $type = 'area';
+                }
             }
             if ($label === '') {
                 throw new RuntimeException('Label is required.');

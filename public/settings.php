@@ -50,8 +50,8 @@ $typeMeta = [
     ],
 ];
 
-$type = strtolower((string)($_GET['type'] ?? $_GET['loc'] ?? 'area'));
-if (!isset($typeMeta[$type])) {
+$type = location_option_sanitize_type((string)($_GET['type'] ?? $_GET['loc'] ?? 'area'));
+if ($type === '' || !isset($typeMeta[$type])) {
     $type = 'area';
 }
 
@@ -69,6 +69,65 @@ $subZones   = array_values(array_map(fn($row) => ['label' => $row['label'], 'par
 
 $_active    = 'settings_location_' . $type;
 $page_title = 'Location Settings - ' . ($typeMeta[$type]['label'] ?? 'Zone');
+
+$postNotice = '';
+$postError = '';
+$fieldError = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canManage) {
+    if (!csrf_verify()) {
+        $postError = 'Invalid CSRF token.';
+    } else {
+        $postType = location_option_sanitize_type((string)($_POST['type'] ?? $type));
+        if ($postType === '') $postType = $type;
+        $id = (int)($_POST['id'] ?? 0);
+        $label = trim((string)($_POST['label'] ?? ''));
+        $details = trim((string)($_POST['details'] ?? ''));
+        $parentArea = trim((string)($_POST['parent_area'] ?? ''));
+        $parentSub = trim((string)($_POST['parent_sub_zone'] ?? ''));
+        if ($label === '') {
+            $postError = 'Name is required.';
+        } else {
+            try {
+                $dupSql = "SELECT id FROM client_location_options WHERE type = :type AND LOWER(label) = LOWER(:label)";
+                $dupParams = [':type' => $postType, ':label' => $label];
+                if ($postType === 'sub_zone') {
+                    $dupSql .= " AND COALESCE(parent_area,'') = :parent_area";
+                    $dupParams[':parent_area'] = $parentArea;
+                } elseif ($postType === 'box') {
+                    $dupSql .= " AND COALESCE(parent_area,'') = :parent_area AND COALESCE(parent_sub_zone,'') = :parent_sub_zone";
+                    $dupParams[':parent_area'] = $parentArea;
+                    $dupParams[':parent_sub_zone'] = $parentSub;
+                }
+                if ($id > 0) {
+                    $dupSql .= " AND id <> :id";
+                    $dupParams[':id'] = $id;
+                }
+                $dupSt = $pdo->prepare($dupSql . " LIMIT 1");
+                $dupSt->execute($dupParams);
+                if ($dupSt->fetchColumn()) {
+                    $postError = 'This entry already exists in the database.';
+                    $fieldError = $postError;
+                }
+                if ($postError === '') {
+                    if ($id > 0) {
+                        $result = location_option_update($pdo, $id, $label, $details, $parentArea ?: null, $parentSub ?: null);
+                    } else {
+                        $result = location_option_store($pdo, $postType, $label, $details, $parentArea ?: null, $postType === 'box' ? ($parentSub ?: null) : null);
+                    }
+                    if (empty($result['ok'])) {
+                        $postError = $result['error'] ?? 'Save failed.';
+                    }
+                }
+                if ($postError === '') {
+                    header('Location: /settings.php?type=' . urlencode($postType) . '&saved=1');
+                    exit;
+                }
+            } catch (Throwable $e) {
+                $postError = $e->getMessage();
+            }
+        }
+    }
+}
 
 include __DIR__ . '/../partials/partials_header.php';
 ?>
@@ -99,6 +158,9 @@ include __DIR__ . '/../partials/partials_header.php';
   </div>
 
   <div id="locStatus" class="alert d-none location-status" role="alert"></div>
+  <?php if ($postError): ?>
+    <div class="alert alert-danger location-status"><?= h($postError) ?></div>
+  <?php endif; ?>
 
   <div class="card shadow-sm location-card">
     <div class="card-body">
@@ -149,34 +211,36 @@ include __DIR__ . '/../partials/partials_header.php';
 <?php if ($canManage): ?>
 <div class="modal fade" id="locOptionModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
-    <form class="modal-content" id="locOptionForm">
+    <form class="modal-content" id="locOptionForm" method="POST" action="/settings.php?type=<?= h($type) ?>">
       <div class="modal-header">
         <h5 class="modal-title" id="locModalTitle">Add Entry</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <input type="hidden" id="locTypeField" value="<?= h($type) ?>">
-        <input type="hidden" id="locIdField">
+        <input type="hidden" id="locTypeField" name="type" value="<?= h($type) ?>">
+        <input type="hidden" id="locIdField" name="id">
+        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
         <div class="row g-3">
           <div class="col-12 d-none" data-field="parent_area">
             <label class="form-label">Zone</label>
-            <select id="parentAreaSelect" class="form-select">
+            <select id="parentAreaSelect" name="parent_area" class="form-select">
               <option value="">Select Zone</option>
             </select>
           </div>
           <div class="col-12 d-none" data-field="parent_sub_zone">
             <label class="form-label">Sub Zone</label>
-            <select id="parentSubZoneSelect" class="form-select">
+            <select id="parentSubZoneSelect" name="parent_sub_zone" class="form-select">
               <option value="">Select Sub Zone</option>
             </select>
           </div>
           <div class="col-12">
             <label class="form-label" id="locNameLabel">Name</label>
-            <input type="text" class="form-control" id="locLabelInput" required maxlength="120">
+            <input type="text" class="form-control" id="locLabelInput" name="label" required maxlength="120">
+            <div id="locDupNotice" class="form-text text-danger<?= $fieldError ? '' : ' d-none' ?>"><?= h($fieldError) ?></div>
           </div>
           <div class="col-12">
             <label class="form-label">Details (optional)</label>
-            <textarea class="form-control" id="locDetailInput" rows="3" placeholder="Notes or identifier"></textarea>
+            <textarea class="form-control" id="locDetailInput" name="details" rows="3" placeholder="Notes or identifier"></textarea>
           </div>
         </div>
       </div>
@@ -194,7 +258,8 @@ include __DIR__ . '/../partials/partials_header.php';
 
 <script>
 (function(){
-  const TYPE = <?= json_encode($type) ?>;
+  const hiddenType = (document.getElementById('locTypeField')?.value || '').trim();
+  const TYPE = (hiddenType || <?= json_encode($type) ?> || 'area').trim() || 'area';
   const meta = <?= json_encode($typeMeta[$type], JSON_UNESCAPED_UNICODE) ?>;
   const CAN_MANAGE = <?= $canManage ? 'true' : 'false' ?>;
   const csrf = <?= json_encode($csrfToken, JSON_UNESCAPED_UNICODE) ?>;
@@ -209,15 +274,38 @@ include __DIR__ . '/../partials/partials_header.php';
   const perPageSel = document.querySelector('[data-loc-perpage]');
   const searchInput = document.querySelector('[data-loc-search]');
   const statusBox = document.getElementById('locStatus');
+  const dupNotice = document.getElementById('locDupNotice');
+  const saveBtn = document.getElementById('locSaveBtn');
 
   const showStatus = (kind, msg) => {
+    const isDelete = kind === 'delete';
+    const toastType = (kind === 'error' || isDelete) ? 'danger' : 'success';
+    const toastTitle = isDelete ? 'Deleted' : null;
+    if (window.globalToast) {
+      window.globalToast(msg, toastType, 3200, toastTitle);
+      return;
+    }
+    if (kind !== 'error' && !isDelete) {
+      clearTimeout(showStatus._timer);
+      showStatus._timer = setTimeout(() => showStatus(kind, msg), 120);
+      return;
+    }
     if (!statusBox) return;
-    statusBox.className = 'alert location-status alert-' + (kind === 'error' ? 'danger' : 'success');
+    statusBox.className = 'alert location-status alert-danger';
     statusBox.textContent = msg;
     statusBox.classList.remove('d-none');
-    clearTimeout(showStatus._timer);
-    showStatus._timer = setTimeout(() => statusBox.classList.add('d-none'), 3500);
+    clearTimeout(showStatus._hideTimer);
+    showStatus._hideTimer = setTimeout(() => statusBox.classList.add('d-none'), 3500);
   };
+
+  <?php if (isset($_GET['saved']) && $_GET['saved'] === '1'): ?>
+    showStatus('ok', 'Saved successfully.');
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('saved');
+      window.history.replaceState({}, document.title, url.toString());
+    } catch (e) {}
+  <?php endif; ?>
 
   const esc = (str) => String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 
@@ -306,6 +394,7 @@ include __DIR__ . '/../partials/partials_header.php';
   });
 
   render();
+  refreshDataset().catch(() => {});
 
   if (!CAN_MANAGE) return;
 
@@ -323,6 +412,37 @@ include __DIR__ . '/../partials/partials_header.php';
   const btnAdd = document.getElementById('btnAddLocation');
   let modalInstance = null;
   let mode = 'add';
+
+  function normalizeLabel(val){
+    return String(val || '').trim().toLowerCase();
+  }
+
+  function currentDupExists(){
+    const label = normalizeLabel(labelInput?.value || '');
+    if (!label) return false;
+    const parentArea = normalizeLabel(parentAreaSelect?.value || '');
+    const parentSub = normalizeLabel(parentSubSelect?.value || '');
+    const currentId = parseInt(idField?.value || '0', 10) || 0;
+    return data.some(row => {
+      if (currentId && String(row.id) === String(currentId)) return false;
+      if (normalizeLabel(row.label) !== label) return false;
+      if (TYPE === 'sub_zone') {
+        return normalizeLabel(row.parent_area) === parentArea;
+      }
+      if (TYPE === 'box') {
+        return normalizeLabel(row.parent_area) === parentArea && normalizeLabel(row.parent_sub_zone) === parentSub;
+      }
+      return true;
+    });
+  }
+
+  function updateDupNotice(){
+    if (!dupNotice) return;
+    const hasDup = currentDupExists();
+    dupNotice.textContent = hasDup ? 'This entry already exists in the database.' : '';
+    dupNotice.classList.toggle('d-none', !hasDup);
+    if (saveBtn) saveBtn.disabled = hasDup;
+  }
 
   const ensureModal = () => {
     if (!modalEl) return null;
@@ -363,7 +483,10 @@ include __DIR__ . '/../partials/partials_header.php';
     if (TYPE === 'box') {
       populateSubZones(parentAreaSelect.value, '');
     }
+    updateDupNotice();
   });
+  parentSubSelect?.addEventListener('change', updateDupNotice);
+  labelInput?.addEventListener('input', updateDupNotice);
 
   clearBtn?.addEventListener('click', () => {
     form?.reset();
@@ -371,6 +494,7 @@ include __DIR__ . '/../partials/partials_header.php';
     if (parentSubSelect) parentSubSelect.value='';
     parentSubSelect && (parentSubSelect.disabled = false);
     labelInput?.focus();
+    updateDupNotice();
   });
 
   function openModal(record){
@@ -378,6 +502,8 @@ include __DIR__ . '/../partials/partials_header.php';
     idField.value = record ? record.id : '';
     labelInput.value = record ? record.label || '' : '';
     detailInput.value = record ? record.details || '' : '';
+    const typeField = document.getElementById('locTypeField');
+    if (typeField) typeField.value = TYPE;
     nameLabel.textContent = meta.columns[0]?.title || 'Name';
     const showArea = (TYPE === 'sub_zone' || TYPE === 'box');
     const showSub = (TYPE === 'box');
@@ -394,27 +520,26 @@ include __DIR__ . '/../partials/partials_header.php';
     labelInput?.focus();
     const title = document.getElementById('locModalTitle');
     if (title) title.textContent = (mode === 'add' ? 'Add ' : 'Edit ') + meta.singular;
+    updateDupNotice();
+  }
+
+  async function fetchFull(type){
+    const res = await fetch(`/ajax/location_options.php?type=${encodeURIComponent(type)}&full=1`, {cache:'no-store'});
+    const json = await res.json();
+    if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load list');
+    return Array.isArray(json.items) ? json.items : [];
   }
 
   async function refreshDataset(){
     try {
-      const res = await fetch(`/public/ajax/location_options.php?type=${encodeURIComponent(TYPE)}&full=1`, {cache:'no-store'});
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load list');
-      data = Array.isArray(json.items) ? json.items : [];
+      data = await fetchFull(TYPE);
       if (TYPE !== 'area') {
-        const zoneRes = await fetch('/public/ajax/location_options.php?type=area&full=1', {cache:'no-store'});
-        const zoneJson = await zoneRes.json();
-        if (zoneRes.ok && zoneJson.ok) {
-          areas = (zoneJson.items || []).map(row => ({label: row.label}));
-        }
+        const zoneRows = await fetchFull('area');
+        areas = zoneRows.map(row => ({label: row.label}));
       }
       if (TYPE === 'box') {
-        const subRes = await fetch('/public/ajax/location_options.php?type=sub_zone&full=1', {cache:'no-store'});
-        const subJson = await subRes.json();
-        if (subRes.ok && subJson.ok) {
-          subZones = (subJson.items || []).map(row => ({label: row.label, parent_area: row.parent_area}));
-        }
+        const subRows = await fetchFull('sub_zone');
+        subZones = subRows.map(row => ({label: row.label, parent_area: row.parent_area}));
       }
       state.page = 1;
       render();
@@ -452,23 +577,64 @@ include __DIR__ . '/../partials/partials_header.php';
     });
   }
 
+  async function deleteOption(id){
+    const res = await fetch('/ajax/location_options.php', {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id, csrf_token: csrf})
+    });
+    const json = await res.json();
+    if (!res.ok || !json.ok) throw new Error(json.error || 'Delete failed.');
+  }
+
+  async function deleteSubTree(parentLabel, type, matchField){
+    const rows = await fetchFull(type);
+    const filtered = rows.filter(row => row[matchField] === parentLabel);
+    for (const row of filtered) {
+      await deleteOption(row.id);
+    }
+  }
+
+  async function hasChildren(record){
+    if (TYPE === 'area') {
+      const [subRows, boxRows] = await Promise.all([fetchFull('sub_zone'), fetchFull('box')]);
+      const hasSub = subRows.some(row => row.parent_area === record.label);
+      const hasBox = boxRows.some(row => row.parent_area === record.label);
+      return hasSub || hasBox;
+    }
+    if (TYPE === 'sub_zone') {
+      const boxRows = await fetchFull('box');
+      return boxRows.some(row => row.parent_sub_zone === record.label);
+    }
+    return false;
+  }
+
   async function handleDelete(id){
     const record = data.find(r => String(r.id) === String(id));
     if (!record) {
       showStatus('error','Entry already removed.');
       return;
     }
+    try {
+      if (await hasChildren(record)) {
+        if (TYPE === 'area') {
+          showStatus('error','Delete sub zones and boxes under this area first.');
+        } else if (TYPE === 'sub_zone') {
+          showStatus('error','Delete boxes under this sub zone first.');
+        } else {
+          showStatus('error','Delete child items first.');
+        }
+        return;
+      }
+    } catch (err) {
+      showStatus('error', err.message || 'Failed to check dependencies.');
+      return;
+    }
     const confirmed = await confirmDelete(record.label);
     if (!confirmed) return;
     try {
-      const res = await fetch('/public/ajax/location_options.php', {
-        method: 'DELETE',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({id, csrf_token: csrf})
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || 'Delete failed.');
-      showStatus('ok', `${record.label} deleted.`);
+      await deleteOption(id);
+      showStatus('delete', 'Delete successfully.');
       await refreshDataset();
     } catch (err) {
       showStatus('error', err.message || 'Delete failed.');
@@ -493,47 +659,37 @@ include __DIR__ . '/../partials/partials_header.php';
   });
 
   form?.addEventListener('submit', evt => {
-    evt.preventDefault();
     const label = (labelInput.value || '').trim();
-    const details = (detailInput.value || '').trim();
     const parentArea = parentAreaSelect && !parentAreaWrap.classList.contains('d-none') ? parentAreaSelect.value.trim() : '';
     const parentSub = parentSubSelect && !parentSubWrap.classList.contains('d-none') ? parentSubSelect.value.trim() : '';
     if (!label) {
+      evt.preventDefault();
       alert('Please enter a name.');
       labelInput.focus();
       return;
     }
     if (TYPE === 'sub_zone' && parentArea === '') {
+      evt.preventDefault();
       alert('Select a zone first.');
       parentAreaSelect.focus();
       return;
     }
     if (TYPE === 'box' && (parentArea === '' || parentSub === '')) {
+      evt.preventDefault();
       alert('Select both zone and sub zone.');
       return;
     }
-    const payload = {csrf_token: csrf, label, details};
-    if (mode === 'add') {
-      payload.type = TYPE;
-    } else {
-      payload.id = parseInt(idField.value, 10) || 0;
+    if (currentDupExists()) {
+      evt.preventDefault();
+      updateDupNotice();
+      labelInput.focus();
+      return;
     }
-    if (TYPE !== 'area' && parentArea) payload.parent_area = parentArea;
-    if (TYPE === 'box' && parentSub) payload.parent_sub_zone = parentSub;
-    const method = mode === 'add' ? 'POST' : 'PATCH';
-    fetch('/public/ajax/location_options.php', {
-      method,
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    })
-    .then(res => res.json().then(json => ({ok: res.ok, json})))
-    .then(async ({ok, json}) => {
-      if (!ok || !json.ok) throw new Error(json.error || 'Save failed.');
-      ensureModal()?.hide();
-      showStatus('ok', `${meta.singular} saved.`);
-      await refreshDataset();
-    })
-    .catch(err => showStatus('error', err.message || 'Save failed.'));
+    saveBtn?.setAttribute('disabled', 'disabled');
+    if (saveBtn) saveBtn.textContent = 'Saving...';
+    if (mode === 'add') {
+      idField.value = '';
+    }
   });
 })();
 </script>

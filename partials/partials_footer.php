@@ -26,6 +26,9 @@
   --toast-w: min(420px, calc(100vw - 2rem));
   --toast-duration: 3500ms;
 
+  position: relative;
+  left: auto;
+  top: auto;
   width: var(--toast-w);
   border-radius: 14px;
   background: var(--toast-bg);

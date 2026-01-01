@@ -54,8 +54,32 @@ function location_option_valid_types(): array {
     return ['area','sub_zone','box'];
 }
 
+function location_option_sanitize_type(string $type): string {
+    $t = strtolower(trim($type));
+    $t = str_replace(["\0", "\n", "\r", "\t"], '', $t);
+    $aliases = [
+        'zone' => 'area',
+        'subzone' => 'sub_zone',
+        'sub-zone' => 'sub_zone',
+        'sub zone' => 'sub_zone',
+        'subzone ' => 'sub_zone',
+    ];
+    $t = $aliases[$t] ?? $t;
+    $t = preg_replace('/[^a-z_\\-\\s]/', '', $t);
+    $t = str_replace(['-', ' '], '_', $t);
+    $t = preg_replace('/_+/', '_', $t);
+    if (str_contains($t, 'sub') && str_contains($t, 'zone')) {
+        $t = 'sub_zone';
+    } elseif (str_contains($t, 'box')) {
+        $t = 'box';
+    } elseif (str_contains($t, 'area') || str_contains($t, 'zone')) {
+        $t = 'area';
+    }
+    return in_array($t, location_option_valid_types(), true) ? $t : '';
+}
+
 function location_option_is_valid(string $type): bool {
-    return in_array($type, location_option_valid_types(), true);
+    return location_option_sanitize_type($type) !== '';
 }
 
 /**
@@ -63,7 +87,8 @@ function location_option_is_valid(string $type): bool {
  * @return array<int,string>
  */
 function location_option_list(PDO $pdo, string $type): array {
-    if (!location_option_is_valid($type)) return [];
+    $type = location_option_sanitize_type($type);
+    if ($type === '') return [];
     location_option_ensure_table($pdo);
     $st = $pdo->prepare("SELECT label FROM client_location_options WHERE type=? ORDER BY label ASC");
     $st->execute([$type]);
@@ -75,7 +100,8 @@ function location_option_list(PDO $pdo, string $type): array {
  * @return array<int,array{id:int,type:string,label:string,details:?string,created_at:?string}>
  */
 function location_option_list_full(PDO $pdo, string $type): array {
-    if (!location_option_is_valid($type)) return [];
+    $type = location_option_sanitize_type($type);
+    if ($type === '') return [];
     location_option_ensure_table($pdo);
     $st = $pdo->prepare("SELECT id,type,label,details,parent_area,parent_sub_zone,created_at FROM client_location_options WHERE type=? ORDER BY label ASC, id ASC");
     $st->execute([$type]);
@@ -104,7 +130,8 @@ function location_option_sanitize_parent(?string $value): ?string {
  */
 function location_option_store(PDO $pdo, string $type, string $label, string $details='', ?string $parent_area=null, ?string $parent_sub_zone=null): array {
     $label = trim($label);
-    if ($label === '' || !location_option_is_valid($type)) {
+    $type = location_option_sanitize_type($type);
+    if ($label === '' || $type === '') {
         return ['ok'=>false,'error'=>'Invalid type or empty label.'];
     }
     location_option_ensure_table($pdo);

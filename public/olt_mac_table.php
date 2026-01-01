@@ -171,6 +171,9 @@ function load_client_lookup(PDO $db, int $oltId): array {
   $clientsById = [];
   $clientCols = [];
   $hasOnuMac = false;
+  $areaCol = '';
+  $subZoneCol = '';
+  $boxCol = '';
 
   $clientParams = [];
   $clientWhere  = '';
@@ -181,9 +184,15 @@ function load_client_lookup(PDO $db, int $oltId): array {
   try{
     $clientCols = $db->query("SHOW COLUMNS FROM clients")->fetchAll(PDO::FETCH_COLUMN);
     $hasOnuMac = in_array('onu_mac', $clientCols, true);
+    foreach (['area','zone','location'] as $c) { if (in_array($c, $clientCols, true)) { $areaCol = $c; break; } }
+    foreach (['sub_zone','subzone','sub_area'] as $c) { if (in_array($c, $clientCols, true)) { $subZoneCol = $c; break; } }
+    foreach (['box','distribution_box','box_name'] as $c) { if (in_array($c, $clientCols, true)) { $boxCol = $c; break; } }
     $selectCols = "c.id, c.name, c.client_code, c.pppoe_id, c.caller_mac, c.router_mac, c.ap_mac";
     if($hasOnuMac) $selectCols .= ", c.onu_mac";
     $selectCols .= ", c.olt_id, c.olt_port, c.olt_onu";
+    if($areaCol !== '') $selectCols .= ", c.`{$areaCol}` AS area_name";
+    if($subZoneCol !== '') $selectCols .= ", c.`{$subZoneCol}` AS sub_zone_name";
+    if($boxCol !== '') $selectCols .= ", c.`{$boxCol}` AS box_name";
     $st = $db->prepare("SELECT {$selectCols} FROM clients c{$clientWhere}");
     $st->execute($clientParams);
     while($r = $st->fetch(PDO::FETCH_ASSOC)){
@@ -194,6 +203,9 @@ function load_client_lookup(PDO $db, int $oltId): array {
         'name' => $r['name'] ?? '',
         'pppoe_id' => $r['pppoe_id'] ?? '',
         'client_code' => $r['client_code'] ?? '',
+        'area' => $r['area_name'] ?? '',
+        'sub_zone' => $r['sub_zone_name'] ?? '',
+        'box' => $r['box_name'] ?? '',
       ];
       $clientOlt = (int)($r['olt_id'] ?? 0);
       $portNorm  = normalize_port_label($r['olt_port'] ?? '');
@@ -279,6 +291,9 @@ function match_client_for_mac_row(array $row, array $lookup): ?array {
         'name' => $r['name'] ?? '',
         'pppoe_id' => $r['pppoe_id'] ?? '',
         'client_code' => $r['client_code'] ?? '',
+        'area' => $r['area_name'] ?? '',
+        'sub_zone' => $r['sub_zone_name'] ?? '',
+        'box' => $r['box_name'] ?? '',
         'match_via' => 'client_binding',
       ];
     }
@@ -843,6 +858,9 @@ if($filterOlt > 0){
                     <tr>
                       <th>ONU ID</th>
                       <th>Client</th>
+                      <th>Area</th>
+                      <th>Sub Zone</th>
+                      <th>Box</th>
                       <th>Description</th>
                       <th>MAC</th>
                       <th>VLAN</th>
@@ -867,6 +885,9 @@ if($filterOlt > 0){
                             <span class="text-muted">—</span>
                           <?php endif; ?>
                         </td>
+                        <td><?= !empty($row['client_meta']) && ($row['client_meta']['area'] ?? '') !== '' ? h($row['client_meta']['area']) : '—' ?></td>
+                        <td><?= !empty($row['client_meta']) && ($row['client_meta']['sub_zone'] ?? '') !== '' ? h($row['client_meta']['sub_zone']) : '—' ?></td>
+                        <td><?= !empty($row['client_meta']) && ($row['client_meta']['box'] ?? '') !== '' ? h($row['client_meta']['box']) : '—' ?></td>
                         <td><span class="desc-text" data-row-id="<?=$row['id'];?>"><?=h($row['description'] !== null && $row['description'] !== '' ? $row['description'] : '—');?></span></td>
                         <td><code class="fw-semibold"><?=h(strtoupper($row['mac']));?></code></td>
                         <?php
@@ -989,55 +1010,55 @@ if($filterOlt > 0){
 }
 .olt-mac-table th:nth-child(1),
 .olt-mac-table td:nth-child(1){
-  width: 9%;
+  width: 10%;
   text-align: center;
 }
 .olt-mac-table th:nth-child(2),
 .olt-mac-table td:nth-child(2){
-  width: 13%;
+  width: 14%;
   text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 .olt-mac-table th:nth-child(3),
 .olt-mac-table td:nth-child(3){
-  width: 15%;
+  width: 8%;
   text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 .olt-mac-table th:nth-child(4),
 .olt-mac-table td:nth-child(4){
-  width: 13%;
+  width: 8%;
   text-align: center;
 }
 .olt-mac-table th:nth-child(5),
 .olt-mac-table td:nth-child(5){
-  width: 6%;
+  width: 8%;
   text-align: center;
 }
 .olt-mac-table th:nth-child(6),
 .olt-mac-table td:nth-child(6){
-  width: 7%;
+  width: 14%;
   text-align: center;
 }
 .olt-mac-table th:nth-child(7),
 .olt-mac-table td:nth-child(7){
-  width: 7%;
+  width: 12%;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  min-width: 90px;
+  min-width: 110px;
 }
 .olt-mac-table th:nth-child(8),
 .olt-mac-table td:nth-child(8){
-  width: 9%;
+  width: 6%;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  min-width: 90px;
+  min-width: 70px;
 }
 .olt-mac-table th:nth-child(9),
 .olt-mac-table td:nth-child(9){
-  width: 13%;
+  width: 7%;
   text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1047,27 +1068,46 @@ if($filterOlt > 0){
   width: 8%;
   text-align: center;
 }
-.olt-mac-table td:nth-child(1),
-.olt-mac-table td:nth-child(4),
-.olt-mac-table td:nth-child(5),
-.olt-mac-table td:nth-child(6),
-.olt-mac-table td:nth-child(7),
-.olt-mac-table td:nth-child(8),
-.olt-mac-table td:nth-child(10){
-  white-space: nowrap;
+.olt-mac-table th:nth-child(11),
+.olt-mac-table td:nth-child(11){
+  width: 9%;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  min-width: 90px;
 }
-.olt-rx-cell{
-  width: 13%;
+.olt-mac-table th:nth-child(12),
+.olt-mac-table td:nth-child(12){
+  width: 12%;
   text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
-  min-width: 100px;
+}
+.olt-mac-table th:nth-child(13),
+.olt-mac-table td:nth-child(13){
+  width: 6%;
+  text-align: center;
+}
+.olt-mac-table td:nth-child(1),
+.olt-mac-table td:nth-child(7),
+.olt-mac-table td:nth-child(8),
+.olt-mac-table td:nth-child(9),
+.olt-mac-table td:nth-child(10),
+.olt-mac-table td:nth-child(11),
+.olt-mac-table td:nth-child(13){
+  white-space: nowrap;
+}
+.olt-rx-cell{
+  width: 9%;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 90px;
 }
 
 @media (max-width: 767.98px){
   .olt-mac-table{
     table-layout: auto;
-    min-width: 860px;
+    min-width: 1120px;
   }
   .olt-mac-table th,
   .olt-mac-table td{
