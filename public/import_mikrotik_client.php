@@ -49,8 +49,11 @@ include __DIR__ . '/../partials/partials_header.php';
             <label class="form-check-label" for="opt_import_package">Import package & bill</label></div>
           <div class="form-check"><input type="checkbox" class="form-check-input" id="opt_save_password">
             <label class="form-check-label" for="opt_save_password">Import PPPoE passwords</label></div>
-          <div class="form-check"><input type="checkbox" class="form-check-input" id="opt_generate_invoice">
-            <label class="form-check-label" for="opt_generate_invoice">Generate first invoice</label></div>
+          <div class="form-check">
+            <input type="hidden" id="opt_generate_invoice" value="1">
+            <input type="checkbox" class="form-check-input" checked disabled>
+            <label class="form-check-label">Generate first invoice</label>
+          </div>
         </div>
         <div class="col-12"><button class="btn btn-primary" type="submit">Load Preview</button></div>
       </div>
@@ -214,7 +217,7 @@ document.getElementById('btnCommit').addEventListener('click',async()=>{
     import_status:document.getElementById('opt_import_status').checked,
     import_package:document.getElementById('opt_import_package').checked,
     save_password:document.getElementById('opt_save_password').checked,
-    generate_invoice:document.getElementById('opt_generate_invoice').checked,
+    generate_invoice:document.getElementById('opt_generate_invoice').value === '1',
     invoice_month:document.getElementById('invoice_month').value
   },rows};
   const res=await fetch('/api/mt_import_clients.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});

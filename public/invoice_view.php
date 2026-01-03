@@ -231,6 +231,7 @@ if ($pdf === 1) {
 
 <div class="invoice-page position-relative">
   <div class="no-print p-3 text-end bg-light border-bottom">
+    <a class="btn btn-outline-secondary btn-sm" href="/public/invoices.php"><i class="bi bi-arrow-left"></i> Back</a>
     <a href="?id=<?php echo $id; ?>" class="btn btn-outline-secondary me-2"><i class="bi bi-arrow-clockwise"></i> Refresh</a>
     <button class="btn btn-primary me-2" onclick="window.print()"><i class="bi bi-printer"></i> Print</button>
     <a class="btn btn-dark" href="?id=<?php echo $id; ?>&pdf=1<?php echo $vat>0 ? '&vat='.urlencode((string)$vat):''; ?>">

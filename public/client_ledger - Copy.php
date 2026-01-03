@@ -126,7 +126,7 @@ $sumInv = 0.0; foreach($invoices as $iv){ $sumInv += (float)($iv[$invAmountCol] 
 $sumPaid = 0.0; $sumDisc = 0.0;
 foreach($payments as $pm){ $sumPaid += (float)($pm['amount'] ?? 0); if ($hasPayDiscount) $sumDisc += (float)($pm['discount'] ?? 0); }
 $discUsed = $isNetInvAmount ? 0.0 : $sumDisc;
-$balanceComputed  = $sumInv - $discUsed - $sumPaid; // +ve = Due, -ve = Advance
+$balanceComputed  = -1 * ($sumInv - $discUsed - $sumPaid); // -ve = Due, +ve = Advance
 $balanceDb = (float)($client['ledger_balance'] ?? 0);
 
 /* ---------- Current URL ---------- */
@@ -134,8 +134,8 @@ $cur_url = $_SERVER['REQUEST_URI'] ?? ('/public/client_ledger.php?client_id='.$c
 
 /* ---------- Badges ---------- */
 function money_badge(float $v): array {
-  $cls = $v>0 ? 'text-danger' : ($v<0 ? 'text-success' : 'text-secondary');
-  $label = ($v>=0?'Due':'Advance').' ৳ '.number_format(abs($v),2);
+  $cls = $v<0 ? 'text-danger' : ($v>0 ? 'text-success' : 'text-secondary');
+  $label = ($v<=0?'Due':'Advance').' ৳ '.number_format(abs($v),2);
   return [$cls,$label];
 }
 [$clsDb,$labelDb]   = money_badge($balanceDb);

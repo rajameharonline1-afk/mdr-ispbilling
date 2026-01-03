@@ -53,6 +53,18 @@ function clip_details_for_export($s){
   $limit = 65536; // 64KB
   return (strlen($s) > $limit) ? (substr($s,0,$limit) . " /* truncated */") : $s;
 }
+function normalize_audit_details($raw){
+  if (!is_string($raw) || $raw === '') return $raw;
+  $data = json_decode($raw, true);
+  if (json_last_error() !== JSON_ERROR_NONE) return $raw;
+  foreach (['new','old','meta','details'] as $k) {
+    if (isset($data[$k]) && is_string($data[$k])) {
+      $inner = json_decode($data[$k], true);
+      if (json_last_error() === JSON_ERROR_NONE) $data[$k] = $inner;
+    }
+  }
+  return $data;
+}
 
 /* ========== Inputs ========== */
 $action  = trim($_GET['action'] ?? '');
@@ -109,14 +121,16 @@ $exprIP       = $colIP      ? "a.`$colIP`"      : "NULL";
 $exprUA       = $colUA      ? "a.`$colUA`"      : "NULL";
 
 /* entity id expression (column → JSON → 0) */
+$jsonClientFromDetails = $colDetails
+  ? "CASE WHEN JSON_VALID(a.`$colDetails`) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(a.`$colDetails`, '$.client_id')) AS UNSIGNED) ELSE NULL END"
+  : "NULL";
+$jsonClientFromNew = $colNewJson
+  ? "CASE WHEN JSON_VALID(a.`$colNewJson`) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(a.`$colNewJson`, '$.client_id')) AS UNSIGNED) ELSE NULL END"
+  : "NULL";
 if ($colEntityId) {
-  $exprEntityId = "a.`$colEntityId`";
-} elseif ($colDetails) {
-  $exprEntityId = "CAST(JSON_UNQUOTE(JSON_EXTRACT(a.`$colDetails`, '$.client_id')) AS UNSIGNED)";
-} elseif ($colNewJson) {
-  $exprEntityId = "CAST(JSON_UNQUOTE(JSON_EXTRACT(a.`$colNewJson`, '$.client_id')) AS UNSIGNED)";
+  $exprEntityId = "COALESCE(NULLIF(a.`$colEntityId`,0), $jsonClientFromDetails, $jsonClientFromNew, 0)";
 } else {
-  $exprEntityId = "0";
+  $exprEntityId = "COALESCE($jsonClientFromDetails, $jsonClientFromNew, 0)";
 }
 
 /* details expression — portability:
@@ -125,7 +139,7 @@ if ($colEntityId) {
 $exprOld = $colOldJson ? "CASE WHEN JSON_VALID(a.`$colOldJson`) THEN a.`$colOldJson` ELSE NULL END" : "NULL";
 $exprNew = $colNewJson ? "CASE WHEN JSON_VALID(a.`$colNewJson`) THEN a.`$colNewJson` ELSE NULL END" : "NULL";
 if ($colDetails) {
-  $exprDetails = "a.`$colDetails`";
+  $exprDetails = "COALESCE(NULLIF(a.`$colDetails`,''), JSON_MERGE_PRESERVE(JSON_OBJECT('old', $exprOld), JSON_OBJECT('new', $exprNew)))";
 } else {
   // নোট: MariaDB-তে JSON_MERGE_PRESERVE নেই; দরকার হলে নিচের লাইনটি JSON_MERGE_PATCH বা COALESCE এ নামিয়ে নিন
   $exprDetails = "JSON_MERGE_PRESERVE(JSON_OBJECT('old', $exprOld), JSON_OBJECT('new', $exprNew))";
@@ -509,8 +523,15 @@ pre.details{ max-height:180px; overflow:auto; background:#f8f9fa; border:1px sol
           if (is_string($pretty) && strlen($pretty) > 65536) {
             $pretty = substr($pretty, 0, 65536) . "\n/* truncated */";
           }
-          $j = json_decode($r['details'] ?? '', true);
-          if (json_last_error() === JSON_ERROR_NONE) $pretty = json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE);
+          $norm = normalize_audit_details($r['details'] ?? '');
+          if (is_array($norm)) {
+            $pretty = json_encode($norm, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+          } else {
+            $j = json_decode($r['details'] ?? '', true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+              $pretty = json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+            }
+          }
           $badge = 'secondary';
           if (($r['action'] ?? '') !== '') {
             $act = strtolower((string)$r['action']);
@@ -552,10 +573,17 @@ pre.details{ max-height:180px; overflow:auto; background:#f8f9fa; border:1px sol
             <td class="small">
               <?php
                 $actor = trim(($r['user_name'] ?? ''));
-                $uid   = (string)($r['user_id'] ?? '');
-                if ($actor !== '' && $uid !== '') echo h($actor) . " (#" . h($uid) . ")";
-                elseif ($uid !== '') echo "#" . h($uid);
-                else echo '-';
+                $uidVal = $r['user_id'] ?? null;
+                $uid = is_numeric($uidVal) ? (int)$uidVal : null;
+                if ($uid === 0) {
+                  echo 'System automatic';
+                } elseif ($actor !== '' && $uid) {
+                  echo h($actor) . " (#" . h((string)$uid) . ")";
+                } elseif ($uid) {
+                  echo "#" . h((string)$uid);
+                } else {
+                  echo '-';
+                }
               ?>
             </td>
             <td>

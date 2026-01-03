@@ -195,8 +195,8 @@ if ($commit) {
 
     $pdo->beginTransaction();
     try {
-        $stPlus  = $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)+? WHERE id=?");
-        $stMinus = $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)-? WHERE id=?");
+        $stPlus  = $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)-? WHERE id=?");
+        $stMinus = $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)+? WHERE id=?");
 
         $stVoid = ($hasVoid || $hasStatus)
             ? $pdo->prepare("UPDATE invoices SET " .

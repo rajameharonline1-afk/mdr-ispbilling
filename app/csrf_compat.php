@@ -21,13 +21,17 @@ function csrf_ensure_token(): string {
   $t = csrf_session_token();
   if (!$t) {
     $t = bin2hex(random_bytes(16));
-    $_SESSION['csrf'] = $t;
   }
+  // (বাংলা) সব কমন কি-তে sync রাখি, যাতে ভিন্ন পেজেও একই টোকেন চলে
+  $_SESSION['csrf'] = $t;
+  $_SESSION['csrf_token'] = $t;
   return $t;
 }
 
 // ফর্ম/রিকোয়েস্ট থেকে আসা টোকেন নাও (যে নামেই আসুক)
 function csrf_request_token(): ?string {
+  $hdr = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+  if (is_string($hdr) && $hdr !== '') return $hdr;
   foreach (_csrf_request_candidates() as $k) {
     if (isset($_POST[$k]) && is_string($_POST[$k]) && $_POST[$k] !== '') return $_POST[$k];
     if (isset($_GET[$k])  && is_string($_GET[$k])  && $_GET[$k]  !== '') return $_GET[$k];

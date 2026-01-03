@@ -11,7 +11,11 @@ function getMikrotikConnection($router_id) {
 
     $API = new RouterosAPI();
     $API->debug = false;
-    if ($API->connect($router['ip_address'], $router['username'], $router['password'], $router['api_port'])) {
+    $ip   = $router['ip_address'] ?? ($router['ip'] ?? ($router['host'] ?? ($router['address'] ?? '')));
+    $user = $router['username'] ?? ($router['user'] ?? '');
+    $pass = $router['password'] ?? ($router['pass'] ?? '');
+    $port = isset($router['api_port']) && $router['api_port'] ? (int)$router['api_port'] : (int)($router['port'] ?? 8728);
+    if ($ip && $user && $pass && $API->connect($ip, $user, $pass, $port)) {
         return $API;
     }
     return false;
@@ -53,6 +57,15 @@ function getPPPoEStats($router_id) {
  * @param array $opts Extra options: ['comment' => '...']
  * @return array ['ok'=>bool,'action'=>'created|updated|noop','error'=>?string]
  */
+function mikrotik_api_error($resp): ?string {
+    if (!is_array($resp)) return null;
+    if (!empty($resp['!trap'][0]['message'])) return (string)$resp['!trap'][0]['message'];
+    if (!empty($resp['!fatal'][0]['message'])) return (string)$resp['!fatal'][0]['message'];
+    if (!empty($resp['!trap'])) return 'MikroTik error';
+    if (!empty($resp['!fatal'])) return 'MikroTik fatal error';
+    return null;
+}
+
 function mikrotik_ensure_pppoe_secret(int $router_id, string $pppoe_id, ?string $password = null, ?string $profile = null, array $opts = []): array {
     $pppoe_id = trim($pppoe_id);
     if ($pppoe_id === '') return ['ok'=>false,'error'=>'PPPoE ID খালি'];
@@ -65,8 +78,14 @@ function mikrotik_ensure_pppoe_secret(int $router_id, string $pppoe_id, ?string 
 
     $api = new RouterosAPI();
     $api->debug = false;
-    $port = isset($router['api_port']) && $router['api_port'] ? (int)$router['api_port'] : 8728;
-    if (!$api->connect($router['ip'], $router['username'], $router['password'], $port)) {
+    $ip   = $router['ip'] ?? ($router['ip_address'] ?? ($router['host'] ?? ($router['address'] ?? '')));
+    $user = $router['username'] ?? ($router['user'] ?? '');
+    $pass = $router['password'] ?? ($router['pass'] ?? '');
+    $port = isset($router['api_port']) && $router['api_port'] ? (int)$router['api_port'] : (int)($router['port'] ?? 8728);
+    if ($ip === '' || $user === '' || $pass === '') {
+        return ['ok'=>false,'error'=>'Router credential incomplete'];
+    }
+    if (!$api->connect($ip, $user, $pass, $port)) {
         return ['ok'=>false,'error'=>'MikroTik API সংযোগ ব্যর্থ'];
     }
 
@@ -87,7 +106,15 @@ function mikrotik_ensure_pppoe_secret(int $router_id, string $pppoe_id, ?string 
             ];
             if ($profile) $params['profile'] = $profile;
             if (!empty($opts['comment'])) $params['comment'] = $opts['comment'];
-            $api->comm('/ppp/secret/add', $params);
+            $resp = $api->comm('/ppp/secret/add', $params);
+            $err = mikrotik_api_error($resp);
+            if ($err && $profile) {
+                // (বাংলা) profile invalid হলে profile ছাড়া retry
+                unset($params['profile']);
+                $resp = $api->comm('/ppp/secret/add', $params);
+                $err = mikrotik_api_error($resp);
+            }
+            if ($err) { $api->disconnect(); return ['ok'=>false,'error'=>$err]; }
             $api->disconnect();
             return ['ok'=>true,'action'=>'created'];
         }
@@ -103,7 +130,15 @@ function mikrotik_ensure_pppoe_secret(int $router_id, string $pppoe_id, ?string 
         if (!empty($opts['comment'])) { $set['comment'] = $opts['comment']; $needUpdate = true; }
 
         if ($needUpdate) {
-            $api->comm('/ppp/secret/set', $set);
+            $resp = $api->comm('/ppp/secret/set', $set);
+            $err = mikrotik_api_error($resp);
+            if ($err && $profile) {
+                // (বাংলা) profile invalid হলে profile ছাড়া retry
+                unset($set['profile']);
+                $resp = $api->comm('/ppp/secret/set', $set);
+                $err = mikrotik_api_error($resp);
+            }
+            if ($err) { $api->disconnect(); return ['ok'=>false,'error'=>$err]; }
             $api->disconnect();
             return ['ok'=>true,'action'=>'updated'];
         } else {

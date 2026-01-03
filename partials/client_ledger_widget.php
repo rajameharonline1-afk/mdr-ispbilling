@@ -8,10 +8,12 @@ if (!isset($pdo) || !isset($client['id'])) { return; }
 $clientId = (int)$client['id'];
 
 /* ---------- schema detect (বাংলা) ইনভয়েস/পেমেন্ট টেবিল স্ট্রাকচার বুঝি ---------- */
-function col_exists_local(PDO $pdo, string $tbl, string $col): bool {
-  $st = $pdo->prepare("SHOW COLUMNS FROM `$tbl` LIKE ?");
-  $st->execute([$col]);
-  return (bool)$st->fetchColumn();
+if (!function_exists('col_exists_local')) {
+  function col_exists_local(PDO $pdo, string $tbl, string $col): bool {
+    $st = $pdo->prepare("SHOW COLUMNS FROM `$tbl` LIKE ?");
+    $st->execute([$col]);
+    return (bool)$st->fetchColumn();
+  }
 }
 
 $has_inv_tbl       = true;  try { $pdo->query("SELECT 1 FROM invoices LIMIT 1"); } catch(Exception $e){ $has_inv_tbl = false; }
@@ -25,10 +27,17 @@ $inv_has_total     = $has_inv_tbl && col_exists_local($pdo,'invoices','total');
 $inv_has_amount    = $has_inv_tbl && col_exists_local($pdo,'invoices','amount');
 $inv_has_payable   = $has_inv_tbl && col_exists_local($pdo,'invoices','payable');
 $inv_has_status    = $has_inv_tbl && col_exists_local($pdo,'invoices','status');
+$inv_has_void      = $has_inv_tbl && col_exists_local($pdo,'invoices','is_void');
+$inv_has_deleted   = $has_inv_tbl && col_exists_local($pdo,'invoices','is_deleted');
+$inv_has_del_at    = $has_inv_tbl && col_exists_local($pdo,'invoices','deleted_at');
 
 $pay_has_date      = $has_pay_tbl && col_exists_local($pdo,'payments','payment_date');
 $pay_has_created   = $has_pay_tbl && col_exists_local($pdo,'payments','created_at');
 $pay_has_amount    = $has_pay_tbl && col_exists_local($pdo,'payments','amount');
+$pay_has_discount  = $has_pay_tbl && col_exists_local($pdo,'payments','discount');
+$pay_has_client_id = $has_pay_tbl && col_exists_local($pdo,'payments','client_id');
+$pay_has_bill_id   = $has_pay_tbl && col_exists_local($pdo,'payments','bill_id');
+$pay_has_invoice_id= $has_pay_tbl && col_exists_local($pdo,'payments','invoice_id');
 
 // (বাংলা) ইনভয়েস গ্রুপিং তারিখ এক্সপ্রেশন
 $invDateExpr = $inv_has_date
@@ -64,10 +73,16 @@ for ($i=11; $i>=0; $i--) {
 
 /* ---------- fetch bills per month (বাংলা) ---------- */
 if ($has_inv_tbl) {
+  $invWhere = [];
+  if ($inv_has_void)    $invWhere[] = "inv.is_void=0";
+  if ($inv_has_deleted) $invWhere[] = "inv.is_deleted=0";
+  if ($inv_has_del_at)  $invWhere[] = "inv.deleted_at IS NULL";
+  $invWhereSql = $invWhere ? (' AND '.implode(' AND ',$invWhere)) : '';
   $sqlB = "SELECT $invDateExpr AS ym, SUM($invPayExpr) AS sum_payable
            FROM invoices inv
            WHERE inv.client_id = :cid
              ".($inv_has_status ? " AND (LOWER(inv.status) IN ('unpaid','partial','due','paid')) " : '')."
+             $invWhereSql
            GROUP BY ym";
   $stB = $pdo->prepare($sqlB);
   $stB->execute([':cid'=>$clientId]);
@@ -81,25 +96,41 @@ if ($has_inv_tbl) {
 
 /* ---------- fetch payments per month (বাংলা) ---------- */
 if ($has_pay_tbl) {
-  $sqlP = "SELECT $payDateExpr AS ym, SUM($payAmtExpr) AS sum_paid
-           FROM payments pm
-           WHERE pm.client_id = :cid
-           GROUP BY ym";
-  $stP = $pdo->prepare($sqlP);
-  $stP->execute([':cid'=>$clientId]);
-  foreach ($stP->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $ym = (string)$row['ym'];
-    if (isset($mapPays[$ym])) {
-      $mapPays[$ym] = (float)$row['sum_paid'];
+  $payNet = $pay_has_discount ? "SUM($payAmtExpr - COALESCE(pm.discount,0))" : "SUM($payAmtExpr)";
+  $payFk = $pay_has_invoice_id ? 'invoice_id' : ($pay_has_bill_id ? 'bill_id' : null);
+  if ($pay_has_client_id) {
+    $sqlP = "SELECT $payDateExpr AS ym, $payNet AS sum_paid
+             FROM payments pm
+             WHERE pm.client_id = :cid
+             GROUP BY ym";
+    $stP = $pdo->prepare($sqlP);
+    $stP->execute([':cid'=>$clientId]);
+  } elseif ($payFk && $has_inv_tbl) {
+    $sqlP = "SELECT $payDateExpr AS ym, $payNet AS sum_paid
+             FROM payments pm
+             JOIN invoices inv ON inv.id = pm.`$payFk`
+             WHERE inv.client_id = :cid
+             GROUP BY ym";
+    $stP = $pdo->prepare($sqlP);
+    $stP->execute([':cid'=>$clientId]);
+  } else {
+    $stP = null;
+  }
+  if ($stP) {
+    foreach ($stP->fetchAll(PDO::FETCH_ASSOC) as $row) {
+      $ym = (string)$row['ym'];
+      if (isset($mapPays[$ym])) {
+        $mapPays[$ym] = (float)$row['sum_paid'];
+      }
     }
   }
 }
 
 /* ---------- compute running ledger (বাংলা) ---------- */
 $running = [];
-$acc = 0.0; // start from 0; প্রতি মাসে বিল - পেমেন্ট যোগ হয়; শেষ মান ≈ বর্তমান লেজার (ধরে নিচ্ছি অতীত থেকে কনসিসটেন্ট)
+$acc = 0.0; // start from 0; প্রতি মাসে পেমেন্ট - বিল যোগ হয় (due negative)
 foreach ($months as $ym) {
-  $delta = ($mapBills[$ym] ?? 0) - ($mapPays[$ym] ?? 0);
+  $delta = ($mapPays[$ym] ?? 0) - ($mapBills[$ym] ?? 0);
   $acc += $delta;
   $running[] = round($acc,2);
 }
@@ -107,7 +138,7 @@ foreach ($months as $ym) {
 /* ---------- present totals ---------- */
 $sum_bills = array_sum($mapBills);
 $sum_pays  = array_sum($mapPays);
-$current_ledger = isset($client['ledger_balance']) ? (float)$client['ledger_balance'] : end($running);
+$current_ledger = end($running);
 ?>
 <div class="card mb-3">
   <div class="card-body">
@@ -116,10 +147,10 @@ $current_ledger = isset($client['ledger_balance']) ? (float)$client['ledger_bala
       <div class="d-flex gap-2">
         <span class="badge bg-dark">Bills: <?php echo number_format($sum_bills,2); ?></span>
         <span class="badge bg-success">Payments: <?php echo number_format($sum_pays,2); ?></span>
-        <?php if ($current_ledger > 0): ?>
-          <span class="badge bg-danger">Ledger (Due): <?php echo number_format($current_ledger,2); ?></span>
-        <?php elseif ($current_ledger < 0): ?>
-          <span class="badge bg-success">Ledger (Advance): <?php echo number_format(abs($current_ledger),2); ?></span>
+        <?php if ($current_ledger < 0): ?>
+          <span class="badge bg-danger">Ledger (Due): <?php echo number_format(abs($current_ledger),2); ?></span>
+        <?php elseif ($current_ledger > 0): ?>
+          <span class="badge bg-success">Ledger (Advance): <?php echo number_format($current_ledger,2); ?></span>
         <?php else: ?>
           <span class="badge bg-secondary">Ledger: 0.00</span>
         <?php endif; ?>

@@ -1,6 +1,6 @@
 <?php
 // /public/due_report.php
-// Purpose: Due Report (clients.ledger_balance > 0) + sorting, filters, pagination, export CSV/XLS
+// Purpose: Due Report (clients.ledger_balance < 0) + sorting, filters, pagination, export CSV/XLS
 // Stack: PHP + PDO + Bootstrap 5; UI English; বাংলা কমেন্ট
 
 require_once __DIR__ . '/../app/require_login.php';
@@ -68,7 +68,7 @@ $dir     = ($dir_raw === 'asc') ? 'ASC' : 'DESC';  // SQL
 $sql_base = "FROM clients c
              LEFT JOIN packages p ON c.package_id = p.id
              LEFT JOIN routers  r ON c.router_id  = r.id
-             WHERE c.is_left = 0 AND c.ledger_balance > 0 ";
+             WHERE c.is_left = 0 AND c.ledger_balance < 0 ";
 $params = [];
 
 // search
@@ -134,7 +134,7 @@ if ($export === 'csv' || $export === 'xls') {
               $r['mobile'],
               $r['join_date'],
               $r['last_payment_date'],
-              $r['ledger_balance'],
+              abs((float)$r['ledger_balance']),
             ]);
         }
         fclose($out);
@@ -160,7 +160,7 @@ if ($export === 'csv' || $export === 'xls') {
             echo '<td>'.h($r['mobile']).'</td>';
             echo '<td>'.h($r['join_date']).'</td>';
             echo '<td>'.h($r['last_payment_date']).'</td>';
-            echo '<td>'.h($r['ledger_balance']).'</td>';
+            echo '<td>'.h(abs((float)$r['ledger_balance'])).'</td>';
             echo '</tr>';
         }
         echo '</table>';
@@ -186,10 +186,10 @@ $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
 /* -------------------- Sum (page + overall) -------------------- */
 $page_due_sum = 0.0;
-foreach ($rows as $r){ $page_due_sum += (float)$r['ledger_balance']; }
+foreach ($rows as $r){ $page_due_sum += abs((float)$r['ledger_balance']); }
 
 // overall sum (respect filters)
-$sts = db()->prepare("SELECT COALESCE(SUM(c.ledger_balance),0) ".$sql_base);
+$sts = db()->prepare("SELECT COALESCE(SUM(-c.ledger_balance),0) ".$sql_base);
 $sts->execute($params);
 $overall_due_sum = (float)$sts->fetchColumn();
 
@@ -357,7 +357,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <td><a class="text-decoration-none" href="tel:<?= h($r['mobile']) ?>"><?= h($r['mobile']) ?></a></td>
             <td class="text-end">
               <?php
-                $due = (float)$r['ledger_balance'];
+                $due = abs((float)$r['ledger_balance']);
                 $cls = 'badge-due';
                 echo '<span class="badge '.$cls.'">৳ '.number_format($due,2).'</span>';
               ?>

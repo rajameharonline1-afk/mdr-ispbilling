@@ -5,8 +5,11 @@
 
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/csrf_compat.php';
 
 function h($s){ return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8'); }
+
+$CSRF = csrf_ensure_token();
 
 // (বাংলা) স্কিমা ডিটেক্টর
 function col_exists(PDO $pdo, string $tbl, string $col): bool {
@@ -114,6 +117,19 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
       ) pay ON pay.iid = i.id";
 
   $where = ["1=1"];
+  // (বাংলা) Soft-deleted/void invoices hide
+  if (col_exists($pdo,'invoices','is_void')) {
+    $where[] = "i.is_void=0";
+  }
+  if (col_exists($pdo,'invoices','is_deleted')) {
+    $where[] = "i.is_deleted=0";
+  }
+  if (col_exists($pdo,'invoices','deleted_at')) {
+    $where[] = "i.deleted_at IS NULL";
+  }
+  if ($has_status) {
+    $where[] = "COALESCE(i.status,'') NOT IN ('void','deleted','cancelled','canceled')";
+  }
 
   // Search (invoice_number থাকলে তাতে; নাহলে id/name/pppoe)
   if ($search !== '') {
@@ -276,6 +292,15 @@ thead th a:hover{ text-decoration:underline; }
 
 <div class="main-content p-3 p-md-4">
   <div class="container-fluid">
+    <?php
+      $flash = $_SESSION['flash'] ?? '';
+      $flash_err = $_SESSION['flash_error'] ?? '';
+      unset($_SESSION['flash'], $_SESSION['flash_error']);
+      if ($flash_err): ?>
+        <div class="alert alert-danger mb-3"><?= h($flash_err) ?></div>
+      <?php elseif ($flash): ?>
+        <div class="alert alert-success mb-3"><?= h($flash) ?></div>
+    <?php endif; ?>
 
     <!-- Header -->
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -283,9 +308,13 @@ thead th a:hover{ text-decoration:underline; }
         <h4 class="mb-1">Invoices</h4>
         <div class="text-muted small">Total: <?= number_format($total_records) ?></div>
       </div>
-      <div class="card card-totals p-2">
-        <div class="small text-muted">Page Total</div>
-        <div class="fw-semibold">৳ <?= number_format($page_total, 2) ?></div>
+
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/public/billing.php?page=1&view=list&tab=all"><i class="bi bi-arrow-left"></i> Back</a>
+       <div class="card card-totals p-2">
+        <a class="small text-muted">Page Total</a>
+        <a class="fw-semibold">৳ <?= number_format($page_total, 2) ?></a>
+      </div>
       </div>
     </div>
 
@@ -473,7 +502,7 @@ thead th a:hover{ text-decoration:underline; }
             </td>
             <td><?= $has_pstart ? h($r['period_start']) : '—' ?></td>
             <td><?= $has_pend   ? h($r['period_end'])   : '—' ?></td>
-            <td class="text-end">৳ <?= number_format((float)($r['amount'] ?? $total_row), 2) ?></td>
+            <td class="text-end">৳ <?= number_format($total_row, 2) ?></td>
             <td class="text-end fw-semibold">৳ <?= number_format($total_row, 2) ?></td>
             <td>
               <?php
@@ -491,6 +520,16 @@ thead th a:hover{ text-decoration:underline; }
                 <a class="btn btn-outline-primary" title="View" href="invoice_view.php?id=<?= (int)$r['id'] ?>">
                   <i class="bi bi-eye"></i>
                 </a>
+                <button
+                  class="btn btn-outline-warning"
+                  title="Edit Amount"
+                  data-bs-toggle="modal"
+                  data-bs-target="#editAmountModal"
+                  data-id="<?= (int)$r['id'] ?>"
+                  data-total="<?= $total_row ?>"
+                >
+                  <i class="bi bi-pencil-square"></i>
+                </button>
                 <a class="btn btn-outline-secondary" title="Client" href="client_view.php?id=<?= (int)$r['client_id'] ?>">
                   <i class="bi bi-person"></i>
                 </a>
@@ -514,6 +553,13 @@ thead th a:hover{ text-decoration:underline; }
                    href="invoice_print.php?id=<?= (int)$r['id'] ?>&pdf=1" target="_blank">
                   <i class="bi bi-file-earmark-arrow-down"></i>
                 </a>
+                <form class="d-inline" method="post" action="invoice_delete.php" onsubmit="return confirm('Delete this invoice?');">
+                  <?= csrf_input_html() ?>
+                  <input type="hidden" name="invoice_id" value="<?= (int)$r['id'] ?>">
+                  <button class="btn btn-outline-danger" title="Delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
               </div>
             </td>
           </tr>
@@ -559,6 +605,33 @@ thead th a:hover{ text-decoration:underline; }
       </nav>
     <?php endif; ?>
 
+  </div>
+</div>
+
+<!-- Edit Amount Modal -->
+<div class="modal fade" id="editAmountModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="invoice_amount_update.php" id="editAmountForm">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit Invoice Amount</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <?= csrf_input_html() ?>
+          <input type="hidden" name="invoice_id" id="edit_invoice_id" value="">
+          <div class="mb-2">
+            <label class="form-label">Amount</label>
+            <input type="number" step="0.01" min="0.01" name="amount" id="edit_amount" class="form-control" required>
+          </div>
+          <div class="form-text">This will update the invoice amount and recalculate ledger.</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Close</button>
+          <button class="btn btn-warning" type="submit"><i class="bi bi-check2-circle"></i> Update</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -628,6 +701,17 @@ thead th a:hover{ text-decoration:underline; }
 <script>
 // Payment modal init + submit (JSON-safe: text fallback)
 (function(){
+  const editModal = document.getElementById('editAmountModal');
+  if (editModal) {
+    editModal.addEventListener('show.bs.modal', event => {
+      const btn = event.relatedTarget;
+      const id = btn.getAttribute('data-id');
+      const total = parseFloat(btn.getAttribute('data-total') || '0');
+      document.getElementById('edit_invoice_id').value = id;
+      document.getElementById('edit_amount').value = total.toFixed(2);
+    });
+  }
+
   const modal = document.getElementById('payModal');
   const form  = document.getElementById('payForm');
 

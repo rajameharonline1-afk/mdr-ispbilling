@@ -50,6 +50,9 @@ function generate_invoices_for(PDO $pdo, array $clientIds, string $ym): array {
   }
   $has_bm   = in_array('billing_month',$cols,true);
   $has_date = in_array('invoice_date',$cols,true);
+  $has_month= in_array('month',$cols,true);
+  $has_year = in_array('year',$cols,true);
+  $has_date2= in_array('date',$cols,true);
   $has_stat = in_array('status',$cols,true);
   $has_void = in_array('is_void',$cols,true);
   $has_desc = in_array('description',$cols,true);
@@ -88,9 +91,9 @@ function generate_invoices_for(PDO $pdo, array $clientIds, string $ym): array {
       if($old = $stGetOld->fetch(PDO::FETCH_ASSOC)){
         $debug['had_old']++;
         if($stVoid) $stVoid->execute([$now, $old['id']]);
-        // ledger -= old total (if known column)
+        // ledger += old total (revert due)
         if(isset($old['total']) && $old['total']!==null){
-          $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)-? WHERE id=?")->execute([(float)$old['total'], $cid]);
+          $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)+? WHERE id=?")->execute([(float)$old['total'], $cid]);
         }
       }
     }
@@ -99,7 +102,10 @@ function generate_invoices_for(PDO $pdo, array $clientIds, string $ym): array {
     $colsIns = ['client_id']; $vals = [$cid];
     if($col_total){ $colsIns[]=$col_total; $vals[]=$amt; }
     if($has_bm){ $colsIns[]='billing_month'; $vals[]=$ym; }
+    if($has_month){ $colsIns[]='month'; $vals[]=(int)substr($ym,5,2); }
+    if($has_year){ $colsIns[]='year'; $vals[]=(int)substr($ym,0,4); }
     if($has_date){ $colsIns[]='invoice_date'; $vals[] = date('Y-m-d'); }
+    if($has_date2 && !$has_date){ $colsIns[]='date'; $vals[] = date('Y-m-d'); }
     if($has_stat){ $colsIns[]='status'; $vals[]='unpaid'; }
     if($has_desc){ $colsIns[]='description'; $vals[]='Auto-generated from Mikrotik import'; }
     $colsIns[]='created_at'; $vals[]=$now;
@@ -109,7 +115,7 @@ function generate_invoices_for(PDO $pdo, array $clientIds, string $ym): array {
     $pdo->prepare("INSERT INTO invoices (".implode(',', $colsIns).") VALUES ($ph)")->execute($vals);
 
     // ledger += amount (using our computed $amt)
-    $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)+? WHERE id=?")->execute([$amt, $cid]);
+    $pdo->prepare("UPDATE clients SET ledger_balance=COALESCE(ledger_balance,0)-? WHERE id=?")->execute([$amt, $cid]);
 
     $created++;
   }
@@ -133,12 +139,20 @@ try{
   $opt_import_mobile=!array_key_exists('import_mobile',$options) || !empty($options['import_mobile']);
   $opt_import_status=!array_key_exists('import_status',$options) || !empty($options['import_status']);
   $opt_import_package=!array_key_exists('import_package',$options) || !empty($options['import_package']);
-  $opt_generate_invoice=!empty($options['generate_invoice']);
+  $opt_generate_invoice=true; // always invoice new clients so balance is updated
   $invoice_month=trim((string)($options['invoice_month']??'')); // YYYY-MM
+  if (!preg_match('/^\d{4}-\d{2}$/', $invoice_month)) {
+    $invoice_month = date('Y-m');
+  }
 
   $pdo=db(); $pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
   $has_pwd_col  = col_exists($pdo,'clients','pppoe_pass') ? 'pppoe_pass' : (col_exists($pdo,'clients','pppoe_password') ? 'pppoe_password' : null);
   $has_code_col = col_exists($pdo,'clients','client_code');
+  $billing_col  = col_exists($pdo,'clients','billing_status') ? 'billing_status' : (col_exists($pdo,'clients','payment_status') ? 'payment_status' : null);
+  $advance_cols = array_values(array_filter(
+    ['advance','advance_balance','advance_amount','prepaid','wallet_advance'],
+    fn($c)=>col_exists($pdo,'clients',$c)
+  ));
   $colInfo = $pdo->query("SHOW COLUMNS FROM `clients` LIKE 'package_id'")->fetch(PDO::FETCH_ASSOC);
   $packageRequired = $colInfo ? (strtoupper((string)($colInfo['Null'] ?? 'YES')) === 'NO') : false;
 
@@ -150,7 +164,7 @@ try{
   $cliRows=$pdo->query("SELECT id,pppoe_id,client_code,name,mobile,package_id,monthly_bill FROM clients")->fetchAll(PDO::FETCH_ASSOC);
   $cliMap=[]; foreach($cliRows as $c){ $cliMap[$c['pppoe_id']]=$c; }
 
-  $created=$updated=$skipped=0; $affectedIds=[]; $now=date('Y-m-d H:i:s');
+  $created=$updated=$skipped=0; $affectedIds=[]; $createdIds=[]; $now=date('Y-m-d H:i:s');
 
   $pdo->beginTransaction();
   foreach($rows as $r){
@@ -181,6 +195,10 @@ try{
       $pdo->prepare("UPDATE clients SET ".implode(',',$set)." WHERE pppoe_id=?")->execute($vals);
       $updated++; $affectedIds[]=(int)$existing['id'];
     } else {
+      if (!$package_id || !$pkg) {
+        $pdo->rollBack();
+        jexit(['ok'=>false,'msg'=>"Package is required for PPPoE ID {$pppoe_id}. Please assign a package and try again."]);
+      }
       if($packageRequired && (!$opt_import_package || !$package_id || !$pkg)){
         $pdo->rollBack();
         jexit(['ok'=>false,'msg'=>"Package is required for PPPoE ID {$pppoe_id}. Please assign a package and try again."]);
@@ -193,17 +211,19 @@ try{
         $client_code,
         $opt_import_name ? $client_name : $pppoe_id,
         ($opt_import_mobile && $mobile!=='' ? $mobile : null),
-        ($opt_import_package ? ($package_id?:null) : null),
+        $package_id,
         $router_id,
         ($opt_import_status ? $status : 'pending'),
-        ($opt_import_package ? $bill : 0),
+        $bill,
         0,$now,$now,$now
       ];
+      if ($billing_col) { $cols[]=$billing_col; $vals[]='unpaid'; }
       if(!$has_code_col){ array_splice($cols,1,1); array_splice($vals,1,1); }
       if($opt_save_password && $has_pwd_col && $password){ $cols[]=$has_pwd_col; $vals[]=$password; }
+      foreach ($advance_cols as $c) { $cols[]=$c; $vals[]=0; }
       $ph=rtrim(str_repeat('?,',count($cols)),',');
       $pdo->prepare("INSERT INTO clients (".implode(',',$cols).") VALUES ($ph)")->execute($vals);
-      $newId=(int)$pdo->lastInsertId(); $created++; $affectedIds[]=$newId;
+      $newId=(int)$pdo->lastInsertId(); $created++; $affectedIds[]=$newId; $createdIds[]=$newId;
       $cliMap[$pppoe_id]=['id'=>$newId,'pppoe_id'=>$pppoe_id];
     }
   }
@@ -211,10 +231,11 @@ try{
 
   // --- invoices
   $inv_created=0; $inv_debug=[];
-  if($opt_generate_invoice && preg_match('/^\d{4}-\d{2}$/',$invoice_month) && $affectedIds){
+  $invoiceIds = array_values(array_unique($affectedIds));
+  if($opt_generate_invoice && $invoiceIds){
     $pdo->beginTransaction();
     try{
-      $res = generate_invoices_for($pdo, array_values(array_unique($affectedIds)), $invoice_month);
+      $res = generate_invoices_for($pdo, $invoiceIds, $invoice_month);
       $inv_created = (int)$res['created']; $inv_debug = $res['debug'];
       $pdo->commit();
     }catch(Throwable $e){ $pdo->rollBack(); $inv_debug=['error'=>$e->getMessage()]; }

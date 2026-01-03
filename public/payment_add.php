@@ -249,7 +249,7 @@ if (!$method_is_post) {
         </div>
         <div class="card-body">
           <div class="mb-3">
-            <span class="badge <?= ((float)$cli['ledger_balance'])>0 ? 'bg-danger' : (((float)$cli['ledger_balance'])<0 ? 'bg-success':'bg-secondary') ?>">
+            <span class="badge <?= ((float)$cli['ledger_balance'])<0 ? 'bg-danger' : (((float)$cli['ledger_balance'])>0 ? 'bg-success':'bg-secondary') ?>">
               Ledger: <?= number_format((float)$cli['ledger_balance'],2) ?>
             </span>
             <div class="form-text">Advance দিলে ledger কমে গিয়ে নেগেটিভ হলে Advance হিসেবে ধরা হবে।</div>
@@ -314,11 +314,7 @@ if (!$method_is_post) {
 
   /* ======= Old Invoice-based GET form (unchanged) ======= */
   if ($invoice_id <= 0) {
-    http_response_code(400);
-    $page_title = 'Add Payment';
-    include __DIR__ . '/../partials/partials_header.php';
-    echo '<div class="container py-4"><div class="alert alert-danger">Invalid invoice_id.</div></div>';
-    include __DIR__ . '/../partials/partials_footer.php';
+    header('Location: /public/billing.php?view=list&tab=all');
     exit;
   }
 
@@ -594,7 +590,11 @@ if ($purpose === 'advance') {
   // তাই "advance" পেমেন্ট (ইনভয়েস ছাড়া) এখানে সাপোর্ট করা হলো না।
   if (col_exists($pdo,'payments','invoice_id') || col_exists($pdo,'payments','bill_id')) {
     rollback_if($pdo);
-    jexit(['ok'=>false,'error'=>'schema_restrict','message'=>'এই ডাটাবেজ স্কিমায় Advance payment অনুমোদিত নয় (invoice/bill প্রয়োজন)।']);
+    if ($is_ajax) {
+      jexit(['ok'=>false,'error'=>'schema_restrict','message'=>'এই ডাটাবেজ স্কিমায় Advance payment অনুমোদিত নয় (invoice/bill প্রয়োজন)।']);
+    }
+    header('Location: /public/billing.php?view=list&tab=all');
+    exit;
   }
   $invCol = '';
   $cols = ['client_id','amount'];
@@ -615,8 +615,8 @@ if ($purpose === 'advance') {
   $pdo->prepare($sql)->execute($params);
   $payment_id = (int)$pdo->lastInsertId();
 
-  // client ledger ↓ amount (discount নেই এই পথে)
-  $pdo->prepare("UPDATE clients SET ledger_balance=ROUND(ledger_balance-?,2)".(col_exists($pdo,'clients','updated_at')?', updated_at=NOW()':'')." WHERE id=?")
+  // client ledger ↑ amount (due is negative)
+  $pdo->prepare("UPDATE clients SET ledger_balance=ROUND(ledger_balance+?,2)".(col_exists($pdo,'clients','updated_at')?', updated_at=NOW()':'')." WHERE id=?")
       ->execute([round($amount,2), $client_id]);
 
   // accounts.balance ↑ amount
@@ -776,8 +776,8 @@ if (col_exists($pdo,'invoices','paid_at') || col_exists($pdo,'invoices','method'
   }
 }
 
-/* ---------- Client ledger decrease (amount + discount) ---------- */
-$pdo->prepare("UPDATE clients SET ledger_balance=ROUND(ledger_balance-?,2)".(col_exists($pdo,'clients','updated_at')?', updated_at=NOW()':'')." WHERE id=?")
+/* ---------- Client ledger increase (amount + discount) ---------- */
+$pdo->prepare("UPDATE clients SET ledger_balance=ROUND(ledger_balance+?,2)".(col_exists($pdo,'clients','updated_at')?', updated_at=NOW()':'')." WHERE id=?")
     ->execute([round($amount + $applied_disc,2), $client_id]);
 
 // Optional client fields
@@ -788,7 +788,7 @@ if (col_exists($pdo,'clients','payment_status')) {
   $stb=$pdo->prepare("SELECT ledger_balance FROM clients WHERE id=?");
   $stb->execute([$client_id]);
   $ledger_now=(float)$stb->fetchColumn();
-  $ps = ($ledger_now<=0.0 ? 'clear' : 'due');
+  $ps = ($ledger_now>=0.0 ? 'clear' : 'due');
   $pdo->prepare("UPDATE clients SET payment_status=? WHERE id=?")->execute([$ps, $client_id]);
 }
 

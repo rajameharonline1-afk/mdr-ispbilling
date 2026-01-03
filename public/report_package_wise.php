@@ -69,7 +69,7 @@ $sql = "
     SUM(CASE WHEN ".($has_status?"c.status='active'":"0")." AND ".($has_left?"COALESCE(c.is_left,0)=0":"1=1")." THEN 1 ELSE 0 END) AS active_clients,
     SUM(CASE WHEN ".($has_online?"c.is_online=1":"0")."  AND ".($has_left?"COALESCE(c.is_left,0)=0":"1=1")." THEN 1 ELSE 0 END) AS online_clients,
     SUM(CASE WHEN ".($has_left?"COALESCE(c.is_left,0)=0":"1=1")." THEN $amtExpr ELSE 0 END) AS expected_monthly,
-    ".($has_ledger ? "SUM(GREATEST(COALESCE(c.ledger_balance,0),0))" : "0")." AS due_total
+    ".($has_ledger ? "SUM(GREATEST(-COALESCE(c.ledger_balance,0),0))" : "0")." AS due_total
   FROM packages p
   LEFT JOIN clients c ON c.package_id = p.id
   WHERE $where

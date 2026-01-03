@@ -248,7 +248,7 @@ try {
 
   // ledger updater
   $updateLedger = $has_ledger
-    ? $pdo->prepare("UPDATE clients SET ledger_balance = ledger_balance + :delta WHERE id = :cid")
+    ? $pdo->prepare("UPDATE clients SET ledger_balance = ledger_balance - :delta WHERE id = :cid")
     : null;
 
   foreach ($clients as $r) {
@@ -263,7 +263,7 @@ try {
     }
     if ($olds && $mode === 'replace') {
       foreach ($olds as $old) {
-        if ($updateLedger) $updateLedger->execute([':delta'=>-1*(float)$old['amt'], ':cid'=>$cid]);
+        if ($updateLedger) $updateLedger->execute([':delta'=>-(float)$old['amt'], ':cid'=>$cid]);
         $voidOld->execute([(int)$old['id']]);
         if (function_exists('audit_log')) {
           audit_log('invoice_void','client',$cid,[

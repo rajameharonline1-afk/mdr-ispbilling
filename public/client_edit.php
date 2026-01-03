@@ -138,6 +138,134 @@ function handle_client_photo_upload(int $client_id, string $pppoe_id, ?string $e
     return $out;
 }
 
+/* ==================== Invoice helpers (expiry-based due) ==================== */
+function invoice_schema(): array {
+    $has = fn($c)=> db_has_column('invoices', $c);
+    $amount_target = $has('total') ? 'total' : ($has('payable') ? 'payable' : ($has('amount') ? 'amount' : null));
+    return [
+        'has_invoice_number' => $has('invoice_number'),
+        'has_status'         => $has('status'),
+        'has_is_void'        => $has('is_void'),
+        'has_created'        => $has('created_at'),
+        'has_updated'        => $has('updated_at'),
+        'has_billing_month'  => $has('billing_month'),
+        'has_invoice_date'   => $has('invoice_date'),
+        'has_due_date'       => $has('due_date'),
+        'has_period_start'   => $has('period_start'),
+        'has_period_end'     => $has('period_end'),
+        'has_month'          => $has('month'),
+        'has_year'           => $has('year'),
+        'has_date'           => $has('date'),
+        'has_remarks'        => $has('remarks'),
+        'has_subtotal'       => $has('subtotal'),
+        'has_total_amount'   => $has('total_amount'),
+        'has_paid_amount'    => $has('paid_amount'),
+        'amount_target'      => $amount_target,
+    ];
+}
+
+function create_due_invoice_for_expiry(int $client_id, float $amount, string $expiry_date, ?int $package_id = null): array {
+    $pdo = db();
+    $sch = invoice_schema();
+    if (!$sch['amount_target']) {
+        return ['ok'=>false, 'message'=>'No suitable amount column (total/payable/amount) in invoices table.'];
+    }
+    if ($amount <= 0) {
+        return ['ok'=>false, 'message'=>'Amount is zero.'];
+    }
+
+    $ym = preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiry_date) ? substr($expiry_date, 0, 7) : date('Y-m');
+    $ym_start = $ym.'-01';
+    $ym_end   = date('Y-m-t', strtotime($ym_start));
+
+    // check existing invoice for that month
+    $rangeExpr = $sch['has_billing_month'] ? "billing_month BETWEEN ? AND ?"
+                : ($sch['has_invoice_date'] ? "DATE(invoice_date) BETWEEN ? AND ?"
+                : ($sch['has_month'] && $sch['has_year'] ? "month = ? AND year = ?"
+                : ($sch['has_created'] ? "DATE(created_at) BETWEEN ? AND ?" : null)));
+    if ($rangeExpr) {
+        $sqlOld = "SELECT id FROM invoices WHERE client_id=? AND $rangeExpr".
+                  ($sch['has_is_void'] ? " AND COALESCE(is_void,0)=0" : "").
+                  ($sch['has_status']  ? " AND status <> 'void' " : "").
+                  " LIMIT 1";
+        $stOld = $pdo->prepare($sqlOld);
+        $params = [$client_id];
+        if ($sch['has_month'] && $sch['has_year'] && !$sch['has_billing_month'] && !$sch['has_invoice_date']) {
+            $params[] = (int)substr($ym,5,2);
+            $params[] = (int)substr($ym,0,4);
+        } else {
+            $params[] = $ym_start;
+            $params[] = $ym_end;
+        }
+        $stOld->execute($params);
+        if ($stOld->fetchColumn()) {
+            return ['ok'=>true, 'skipped'=>true];
+        }
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $cols = ['client_id', $sch['amount_target']];
+        $vals = [':client_id', ':amount'];
+        if ($sch['has_invoice_number']) { $cols[]='invoice_number'; $vals[]=':invoice_number'; }
+        if ($sch['has_billing_month'])  { $cols[]='billing_month';  $vals[]=':billing_month'; }
+        if ($sch['has_month'])          { $cols[]='month';          $vals[]=':month'; }
+        if ($sch['has_year'])           { $cols[]='year';           $vals[]=':year'; }
+        if ($sch['has_invoice_date'])   { $cols[]='invoice_date';   $vals[]=':invoice_date'; }
+        if ($sch['has_due_date'])       { $cols[]='due_date';       $vals[]=':due_date'; }
+        if ($sch['has_period_start'])   { $cols[]='period_start';   $vals[]=':period_start'; }
+        if ($sch['has_period_end'])     { $cols[]='period_end';     $vals[]=':period_end'; }
+        if ($sch['has_date'] && !$sch['has_invoice_date']) { $cols[]='date'; $vals[]=':date'; }
+        if ($sch['has_status'])         { $cols[]='status';         $vals[]="'unpaid'"; }
+        if ($sch['has_remarks'])        { $cols[]='remarks';        $vals[]=':remarks'; }
+        if ($sch['has_subtotal'])       { $cols[]='subtotal';       $vals[]=':subtotal'; }
+        if ($sch['has_total_amount'])   { $cols[]='total_amount';   $vals[]=':total_amount'; }
+        if ($sch['has_paid_amount'])    { $cols[]='paid_amount';    $vals[]=':paid_amount'; }
+        if ($sch['has_created'])        { $cols[]='created_at';     $vals[]='NOW()'; }
+        if ($sch['has_updated'])        { $cols[]='updated_at';     $vals[]='NOW()'; }
+
+        $sqlIns = "INSERT INTO invoices (".implode(',', $cols).") VALUES (".implode(',', $vals).")";
+        $ins = $pdo->prepare($sqlIns);
+        $invNo = null;
+        if ($sch['has_invoice_number']) {
+            $rand = strtoupper(substr(bin2hex(random_bytes(2)),0,4));
+            $invNo = 'INV-'.date('Ym', strtotime($ym_start)).'-'.$client_id.'-'.$rand;
+        }
+        $remarks = $sch['has_remarks'] ? ('Auto created on client edit (pkg='.$package_id.')') : null;
+
+        $ins->bindValue(':client_id', $client_id, PDO::PARAM_INT);
+        $ins->bindValue(':amount', $amount);
+        if ($sch['has_invoice_number']) $ins->bindValue(':invoice_number', $invNo);
+        if ($sch['has_billing_month'])  $ins->bindValue(':billing_month', $ym_start);
+        if ($sch['has_month'])          $ins->bindValue(':month', (int)substr($ym,5,2));
+        if ($sch['has_year'])           $ins->bindValue(':year', (int)substr($ym,0,4));
+        if ($sch['has_invoice_date'])   $ins->bindValue(':invoice_date', $ym_start);
+        if ($sch['has_due_date'])       $ins->bindValue(':due_date', date('Y-m-d', strtotime('+7 days', strtotime($ym_start))));
+        if ($sch['has_period_start'])   $ins->bindValue(':period_start', $ym_start);
+        if ($sch['has_period_end'])     $ins->bindValue(':period_end', $ym_end);
+        if ($sch['has_date'] && !$sch['has_invoice_date']) $ins->bindValue(':date', $ym_start);
+        if ($sch['has_remarks'])        $ins->bindValue(':remarks', $remarks);
+        if ($sch['has_subtotal'])       $ins->bindValue(':subtotal', $amount);
+        if ($sch['has_total_amount'])   $ins->bindValue(':total_amount', $amount);
+        if ($sch['has_paid_amount'])    $ins->bindValue(':paid_amount', 0);
+        $ins->execute();
+
+        if (db_has_column('clients','ledger_balance')) {
+            $pdo->prepare("UPDATE clients SET ledger_balance = ledger_balance - :d WHERE id=:cid")
+               ->execute([':d'=>$amount, ':cid'=>$client_id]);
+        }
+        if (db_has_column('clients','billing_status')) {
+            $pdo->prepare("UPDATE clients SET billing_status='unpaid' WHERE id=?")->execute([$client_id]);
+        }
+
+        $pdo->commit();
+        return ['ok'=>true, 'amount'=>$amount];
+    } catch(Throwable $e){
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        return ['ok'=>false, 'message'=>$e->getMessage()];
+    }
+}
+
 /* --------- load client & lists --------- */
 $client_id = intval($_GET['id'] ?? $_POST['id'] ?? 0);
 if (!$client_id) { header("Location: clients.php"); exit; }
@@ -232,6 +360,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $monthly_bill = is_numeric($_POST['monthly_bill'] ?? null) ? (0+$_POST['monthly_bill']) : (0+$client['monthly_bill']);
     $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? '')));
     $status       = trim($_POST['status'] ?? $client['status']);
+    $prev_expiry  = (string)($client['expiry_date'] ?? '');
 
     if ($name === '')        $errors[] = 'Name is required.';
     if ($area === '')        $errors[] = 'Area is required.';
@@ -323,14 +452,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdoSave->commit();
         $client_id = $new_client_id;
 
-        if ($area !== '') {
-            location_option_store($pdoSave, 'area', $area);
+        // ✅ Audit log: track all changed fields (excluding raw passwords)
+        $oldData = [
+            'id' => $client['id'] ?? null,
+            'name' => $client['name'] ?? null,
+            'mobile' => $client['mobile'] ?? null,
+            'email' => $client['email'] ?? null,
+            'address' => $client['address'] ?? null,
+            'area' => $client['area'] ?? null,
+            'sub_zone' => $client['sub_zone'] ?? null,
+            'box' => $client['box'] ?? null,
+            'pppoe_id' => $client['pppoe_id'] ?? null,
+            'package_id' => $client['package_id'] ?? null,
+            'router_id' => $client['router_id'] ?? null,
+            'monthly_bill' => $client['monthly_bill'] ?? null,
+            'expiry_date' => $client['expiry_date'] ?? null,
+            'status' => $client['status'] ?? null,
+        ];
+        $newData = [
+            'id' => $new_client_id,
+            'name' => $name,
+            'mobile' => $mobile,
+            'email' => $email === '' ? null : $email,
+            'address' => $address === '' ? null : $address,
+            'area' => $area,
+            'sub_zone' => $HAS_SUB_ZONE ? $sub_zone : ($client['sub_zone'] ?? null),
+            'box' => $HAS_BOX ? $box : ($client['box'] ?? null),
+            'pppoe_id' => $pppoe_id,
+            'package_id' => $package_id,
+            'router_id' => $router_id,
+            'monthly_bill' => $monthly_bill,
+            'expiry_date' => $expiry_date ?: null,
+            'status' => $status,
+        ];
+        if ($HAS_PPPOE_PASS && $pppoe_pass !== $prevPppoePass) {
+            $newData['pppoe_pass_set'] = true;
         }
-        if ($HAS_SUB_ZONE && $sub_zone !== '') {
-            location_option_store($pdoSave, 'sub_zone', $sub_zone, '', $area ?: null);
+        $chgOld = [];
+        $chgNew = [];
+        foreach ($newData as $k => $v) {
+            $ov = $oldData[$k] ?? null;
+            if ((string)$ov !== (string)$v) {
+                $chgOld[$k] = $ov;
+                $chgNew[$k] = $v;
+            }
         }
-        if ($HAS_BOX && $box !== '') {
-            location_option_store($pdoSave, 'box', $box, '', $area ?: null, $sub_zone ?: null);
+        if ($chgOld || $chgNew) {
+            audit_log('client', (int)$client_id, 'update', $chgOld, $chgNew);
         }
 
         $old_pkg_id = intval($client['package_id']);           // পুরনো প্যাকেজ আইডি (সেভের আগের)
@@ -372,6 +540,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'router_id'   => (int)($client['router_id'] ?? 0),
                 'router_name' => $client['router_name'] ?? '',
             ]);
+        }
+
+        // (বাংলা) expiry_date অনুযায়ী due invoice create (যদি আগে না থাকে)
+        if ($expiry_date !== '' && $monthly_bill >= 0) {
+            $inv_amount = (float)$monthly_bill;
+            if ($inv_amount <= 0 && $package_id) {
+                try{
+                    $stpAmt = db()->prepare("SELECT price FROM packages WHERE id=?");
+                    $stpAmt->execute([$package_id]);
+                    $inv_amount = (float)($stpAmt->fetchColumn() ?: 0);
+                }catch(Throwable $e){ $inv_amount = 0; }
+            }
+            if ($inv_amount > 0 && $expiry_date !== $prev_expiry) {
+                $invRes = create_due_invoice_for_expiry((int)$client_id, $inv_amount, $expiry_date, $package_id);
+                if (!empty($invRes['ok']) && empty($invRes['skipped'])) {
+                    $successNotes[] = 'Due invoice created.';
+                }
+            }
         }
 
         // Reload fresh client
@@ -800,20 +986,31 @@ document.getElementById('photo')?.addEventListener('change', function(){
   }
 
   async function fetchFull(type){
-    const res = await fetch(`/ajax/location_options.php?type=${encodeURIComponent(type)}&full=1`, {cache:'no-store'});
+    const url = `/ajax/location_options.php?type=${encodeURIComponent(type)}&full=1`;
+    const res = await fetch(url, {cache:'no-store'});
     const json = await res.json();
-    if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load list.');
+    if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load list');
     return Array.isArray(json.items) ? json.items : [];
   }
 
-  async function ensureAreaCache(){ if (!areaCache) areaCache = await fetchFull('area'); return areaCache; }
-  async function ensureSubZoneCache(){ if (!subZoneCache) subZoneCache = await fetchFull('sub_zone'); return subZoneCache; }
+  async function ensureAreaCache(){
+    if (!areaCache) {
+      areaCache = await fetchFull('area');
+    }
+    return areaCache;
+  }
+  async function ensureSubZoneCache(){
+    if (!subZoneCache) {
+      subZoneCache = await fetchFull('sub_zone');
+    }
+    return subZoneCache;
+  }
 
   async function populateParentArea(selectedValue){
     if (!parentAreaSelect) return;
-    const list = await ensureAreaCache();
+    const data = await ensureAreaCache();
     parentAreaSelect.innerHTML = '<option value="">Select Zone</option>';
-    list.forEach(row => {
+    data.forEach(row => {
       const opt = document.createElement('option');
       opt.value = row.label || '';
       opt.textContent = row.label || '';
@@ -824,9 +1021,9 @@ document.getElementById('photo')?.addEventListener('change', function(){
 
   async function populateParentSub(areaValue, selectedValue){
     if (!parentSubSelect) return;
-    const list = await ensureSubZoneCache();
+    const data = await ensureSubZoneCache();
     parentSubSelect.innerHTML = '<option value="">Select Sub Zone</option>';
-    const filtered = areaValue ? list.filter(row => row.parent_area === areaValue) : list;
+    const filtered = areaValue ? data.filter(row => row.parent_area === areaValue) : data;
     filtered.forEach(row => {
       const opt = document.createElement('option');
       opt.value = row.label || '';
@@ -935,7 +1132,10 @@ document.getElementById('photo')?.addEventListener('change', function(){
       subZoneCache = null;
       await refreshSelect(type, data.value || label);
       setNotice(`Saved: ${(data.value || label).trim()}.`, 'success');
-      notify('Saved successfully.', 'success', 'Success');
+      notify('Updated successfully.', 'success', 'Success');
+      const modal = ensureModal();
+      modal?.hide();
+      form?.reset();
     } catch (err) {
       const msg = err?.message || 'Could not save option.';
       setNotice(msg, 'error');

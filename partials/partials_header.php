@@ -448,13 +448,13 @@ if ($__resolved_active !== '') {
                 </button>
                 <ul class="collapse submenu list-unstyled <?php echo $openBilling ? 'show' : ''; ?>" id="billingMenu">
                   <li><a href="/public/billing.php" class="btn btn-menu<?php echo is_active('billing'); ?>"><i class="bi bi-list-check"></i> All Bills</a></li>
-                  <li><a href="/public/due_report_pro.php" class="btn btn-menu<?php echo is_active('due_report_pro'); ?>"><i class="bi bi-exclamation-triangle"></i> Due Bills</a></li>
+                  <!-- <li><a href="/public/due_report_pro.php" class="btn btn-menu<?php echo is_active('due_report_pro'); ?>"><i class="bi bi-exclamation-triangle"></i> Due Bills</a></li>
                   <li><a href="/public/invoices.php?status=paid" class="btn btn-menu<?php echo is_active('invoices_paid'); ?>"><i class="bi bi-check2-circle"></i> Paid Bills</a></li>
                   <li><a href="/public/invoices.php" class="btn btn-menu<?php echo is_active('invoices'); ?>"><i class="bi bi-file-text"></i> Invoices</a></li>
                   <li><a href="/public/invoice_new.php" class="btn btn-menu<?php echo is_active('invoice_new'); ?>"><i class="bi bi-file-earmark-plus"></i> New Invoice</a></li>
                   <li><a href="/public/collections.php?when=today" class="btn btn-menu<?php echo is_active('collections_today'); ?>"><i class="bi bi-calendar-day"></i> Today's Collection</a></li>
                   <li><a href="/public/collections.php" class="btn btn-menu<?php echo is_active('collections'); ?>"><i class="bi bi-calendar2-week"></i> All Collection</a></li>
-                  <li><a href="/public/webhook_payments.php" class="btn btn-menu<?php echo is_active('bkash_webhook'); ?>"><i class="bi bi-broadcast-pin"></i> bKash Webhook</a></li>
+                  <li><a href="/public/webhook_payments.php" class="btn btn-menu<?php echo is_active('bkash_webhook'); ?>"><i class="bi bi-broadcast-pin"></i> bKash Webhook</a></li> -->
                   <!-- <li><a href="/public/process_manual.php" class="btn btn-menu<?php echo is_active('bkash_manual'); ?>"><i class="bi bi-wrench"></i> bKash Manual Map</a></li> -->
                 </ul>
               </li>

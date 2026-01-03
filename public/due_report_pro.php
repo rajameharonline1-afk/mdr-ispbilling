@@ -62,7 +62,12 @@ $offset = ($page - 1) * $limit;
 // NOTE: c.id AS client_id বাদ; i.*-এর মধ্যেই client_id আছে
 $select = "
   SELECT
-    i.*,
+    i.id,
+    i.client_id,
+    ".($has_invnum ? "i.invoice_number" : "NULL AS invoice_number").",
+    ".($has_invdate ? "i.invoice_date" : "NULL AS invoice_date").",
+    ".($has_duedate ? "i.due_date" : "NULL AS due_date").",
+    ".($has_bm ? "i.billing_month" : "NULL AS billing_month").",
     c.name AS client_name,
     c.pppoe_id,
     $derived_total_sql AS derived_total,
@@ -165,6 +170,7 @@ foreach ($rows as &$r) {
   $buckets[$bucket_key]['total'] += $out;
   $buckets[$bucket_key]['count'] += 1;
 }
+unset($r);
 
 // ---- Export CSV (entire filtered dataset)
 if ($export === 'csv') {

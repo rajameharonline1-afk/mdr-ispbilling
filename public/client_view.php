@@ -22,6 +22,13 @@ $csrf = $_SESSION['csrf_token'];
 /* ---------------- Helpers ---------------- */
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function validateClientId($id){ return (is_numeric($id) && (int)$id > 0) ? (int)$id : 0; }
+if (!function_exists('col_exists_local')) {
+  function col_exists_local(PDO $pdo, string $table, string $col): bool {
+    $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
+    $st->execute([$col]);
+    return (bool)$st->fetchColumn();
+  }
+}
 if (!function_exists('onu_numeric')) {
   function onu_numeric(?string $onu): int {
     if ($onu && preg_match('/(\d+)/', $onu, $m)) {
@@ -519,15 +526,63 @@ if (!empty($client['olt_id']) && !empty($client['olt_port']) && !empty($client['
   }
 }
 $onu_mac = $onu_mac ?: ($client['caller_mac'] ?? null);
-$router_mac_display = norm_mac($client['router_mac'] ?? ($client['caller_mac'] ?? ($client['ap_mac'] ?? null)));
+$router_mac_display = norm_mac($client['router_mac'] ?? ($client['caller_mac'] ?? ($client['ap_mac'] ?? ($client['onu_mac'] ?? null))));
 $device_vendor = null;
 if ($router_mac_display && function_exists('mac_vendor_lookup')) {
   $device_vendor = mac_vendor_lookup($router_mac_display);
+}
+if ($router_mac_display && (!$device_vendor || $device_vendor === 'Unknown Vendor')) {
+  try {
+    $hex = strtoupper(preg_replace('/[^0-9A-F]/', '', $router_mac_display));
+    $prefix = substr($hex, 0, 6);
+    if ($prefix && $pdo->query("SHOW TABLES LIKE 'mac_vendors'")->fetchColumn()) {
+      $stv = $pdo->prepare("SELECT vendor FROM mac_vendors WHERE mac_prefix=? LIMIT 1");
+      $stv->execute([$prefix]);
+      $v = $stv->fetchColumn();
+      if ($v) $device_vendor = $v;
+    }
+  } catch (Throwable $e) {
+    // ignore vendor lookup errors
+  }
+}
+
+/* ---------------- MikroTik secret password + status (best-effort) ---------------- */
+$mk_secret_pass = '';
+$mk_secret_found = false;
+$mk_secret_disabled = null;
+try {
+  $rt_ip   = trim((string)($client['router_ip'] ?? ''));
+  $rt_user = trim((string)($client['username'] ?? ''));
+  $rt_pass = (string)($client['password'] ?? '');
+  $rt_port = (int)($client['api_port'] ?? 8728) ?: 8728;
+  if ($rt_ip !== '' && $rt_user !== '' && $rt_pass !== '' && $pppoe_id !== '') {
+    $API = new RouterosAPI();
+    $API->debug = false;
+    if ($API->connect($rt_ip, $rt_user, $rt_pass, $rt_port)) {
+      $secret = $API->comm('/ppp/secret/print', ['?name'=>$pppoe_id, '.proplist'=>'password,disabled']);
+      if (is_array($secret) && isset($secret[0])) {
+        $mk_secret_found = true;
+        if (isset($secret[0]['password'])) {
+          $mk_secret_pass = (string)$secret[0]['password'];
+        }
+        if (array_key_exists('disabled', $secret[0])) {
+          $val = strtolower(trim((string)$secret[0]['disabled']));
+          $mk_secret_disabled = in_array($val, ['true','yes','1','on'], true);
+        }
+      }
+      $API->disconnect();
+    }
+  }
+} catch (Throwable $e) {
+  // ignore MikroTik fetch errors
 }
 
 /* ---------------- Status badges (with Left) ---------------- */
 $stVal  = strtolower(trim($client['status'] ?? 'active'));
 $isLeft = (int)($client['is_left'] ?? 0) === 1;
+if ($mk_secret_found && $mk_secret_disabled !== null) {
+  $stVal = $mk_secret_disabled ? 'inactive' : 'active';
+}
 
 if ($isLeft) { $badge='bg-dark'; $stLabel='Left'; }
 elseif (in_array($stVal, ['inactive','deactive','disabled','expired','blocked'], true)) { $badge='bg-danger';  $stLabel='Inactive'; }
@@ -536,9 +591,39 @@ else { $badge='bg-success'; $stLabel='Active'; }
 
 /* ---------------- Ledger badge color ---------------- */
 $ledger = (float)($client['ledger_balance'] ?? 0);
-if ($ledger > 0) { $ledgerClass='bg-danger';  $ledgerText='Due'; }
-elseif ($ledger < 0){ $ledgerClass='bg-success'; $ledgerText='Advance'; }
+if ($ledger < 0) { $ledgerClass='bg-danger';  $ledgerText='Due'; }
+elseif ($ledger > 0){ $ledgerClass='bg-success'; $ledgerText='Advance'; }
 else { $ledgerClass='bg-secondary'; $ledgerText='Clear'; }
+
+/* ---------------- Invoice balance (match invoices.php) ---------------- */
+$invoice_balance = 0.0;
+try {
+  $invAmountCol = col_exists_local($pdo,'invoices','payable') ? 'payable'
+               : (col_exists_local($pdo,'invoices','net_amount') ? 'net_amount'
+               : (col_exists_local($pdo,'invoices','amount') ? 'amount'
+               : (col_exists_local($pdo,'invoices','total') ? 'total' : 'total')));
+  $payFk = col_exists_local($pdo,'payments','invoice_id') ? 'invoice_id'
+         : (col_exists_local($pdo,'payments','bill_id') ? 'bill_id' : null);
+  $hasPayDiscount = col_exists_local($pdo,'payments','discount');
+  $payNetExpr = $hasPayDiscount
+    ? "COALESCE(SUM(pm.amount - COALESCE(pm.discount,0)),0)"
+    : "COALESCE(SUM(pm.amount),0)";
+  $paidExpr = $payFk ? "(SELECT $payNetExpr FROM payments pm WHERE pm.`$payFk`=i.id)" : "0";
+  $invWhere = [];
+  if (col_exists_local($pdo,'invoices','is_void')) $invWhere[] = "i.is_void=0";
+  if (col_exists_local($pdo,'invoices','is_deleted')) $invWhere[] = "i.is_deleted=0";
+  if (col_exists_local($pdo,'invoices','deleted_at')) $invWhere[] = "i.deleted_at IS NULL";
+  if (col_exists_local($pdo,'invoices','status')) $invWhere[] = "COALESCE(i.status,'') NOT IN ('void','deleted','cancelled','canceled')";
+  $whereSql = $invWhere ? (' AND '.implode(' AND ',$invWhere)) : '';
+  $st = $pdo->prepare("SELECT COALESCE(SUM(GREATEST(0, COALESCE(i.`$invAmountCol`,0) - $paidExpr)),0) FROM invoices i WHERE i.client_id=?".$whereSql);
+  $st->execute([$client_id]);
+  $invoice_balance = (float)$st->fetchColumn();
+} catch (Throwable $e) {
+  $invoice_balance = 0.0;
+}
+$display_balance = $invoice_balance;
+$displayClass = $display_balance > 0 ? 'bg-danger' : 'bg-secondary';
+$displayText  = $display_balance > 0 ? 'Due' : 'Clear';
 
 /* ---------------- Payment link (schema-aware invoice lookup + advance fallback) ---------------- */
 /* বাংলা: return URL সবসময় relative path রাখব—Host header এর উপর ভরসা নয় */
@@ -657,16 +742,9 @@ include __DIR__ . '/../partials/partials_header.php';
       <div class="d-flex flex-column">
         <div class="d-flex align-items-center gap-2">
           <i class="bi bi-person-vcard"></i>
-          <span class="fw-bold"><?= h($client['name']) ?></span>
-          <span class="badge <?= $badge ?>"><?= $stLabel ?></span>
-          <!-- name-side online pill; JS will update -->
-          <span id="name-online" class="badge bg-secondary" style="background-color:#6c757d"><i class="bi bi-wifi"></i> Offline</span>
-        </div>
-        <div class="mt-1">
-          <span class="badge <?= $ledgerClass ?>">Ledger: <?= number_format($ledger,2) ?> (<?= $ledgerText ?>)</span>
-          <?php if (!empty($client['client_code'])): ?>
-            <span class="badge bg-light text-dark border">Code: <?= h($client['client_code']) ?></span>
-          <?php endif; ?>
+          <!-- <span class="fw-bold">Details:<?= h($client['name']) ?></span> -->
+          <span class="fw-bold">Customer Information</span>
+          
         </div>
       </div>
     </div>
@@ -738,7 +816,7 @@ include __DIR__ . '/../partials/partials_header.php';
     <!-- Billing Information -->
     <div class="col-12 col-lg-4">
       <div class="card-block h-100">
-        <div class="card-title">Billing Information</div>
+        <div class="card-title d-flex justify-content-between align-items-center">Billing Information<span class="badge <?= $badge ?>"><?= $stLabel ?></span></div>
         <div class="table-responsive p-2">
           <table class="table table-sm align-middle mb-0 table-kv table-borderless">
             <colgroup><col><col></colgroup>
@@ -764,7 +842,7 @@ include __DIR__ . '/../partials/partials_header.php';
                   <button class="btn btn-outline-secondary btn-sm ms-1" title="Calendar"><i class="bi bi-calendar3"></i></button>
                 </td>
               </tr>
-              <tr><td class="k"><i class="bi bi-wallet2"></i> Balance</td><td class="v"><span class="badge <?= $ledgerClass ?>"><?= number_format($ledger,2) ?> (<?= $ledgerText ?>)</span></td></tr>
+              <tr><td class="k"><i class="bi bi-wallet2"></i> Balance</td><td class="v"><span class="badge <?= $displayClass ?>"><?= number_format($display_balance,2) ?> (<?= $displayText ?>)</span></td></tr>
               <tr><td class="k"><i class="bi bi-person-check"></i>Connect By</td><td class="v"><?= h($client['created_by'] ?? '-') ?></td></tr>
               <tr><td class="k"><i class="bi bi-geo"></i> Location</td><td class="v"><?= h($client['area'] ?: '-') ?></td></tr>
             </tbody>
@@ -825,7 +903,7 @@ include __DIR__ . '/../partials/partials_header.php';
               <tr>
                 <td class="k"><i class="bi bi-key"></i> Password</td>
                 <td class="v mono">
-                  <?php $pp = $client['pppoe_pass'] ?? ($client['pppoe_password'] ?? ''); // (বাংলা) স্কিমা ভিন্নতা গার্ড ?>
+                  <?php $pp = $mk_secret_pass ?: ($client['pppoe_pass'] ?? ($client['pppoe_password'] ?? ($client['ppp_pass'] ?? ''))); // (বাংলা) স্কিমা ভিন্নতা গার্ড ?>
                   <span id="ppp-mask" data-revealed="0"><?= $pp ? str_repeat('•', max(6, strlen($pp))) : '-' ?></span>
                   <?php if ($pp): ?>
                     <button class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
@@ -862,7 +940,7 @@ include __DIR__ . '/../partials/partials_header.php';
               <tr><td class="k"><i class="bi bi-pc-display"></i> IP Address</td><td class="v mono" id="live-ip"><?= h($live_ip) ?></td></tr>
               <tr><td class="k"><i class="bi bi-stopwatch"></i> Uptime</td><td class="v" id="uptime">—</td></tr>
               <tr>
-                <td class="k"><i class="bi bi-activity"></i> Status</td>
+                <td class="k"><i class="bi bi-wifi"></i> Status</td>
                 <td class="v"><span id="live-status" class="badge <?= $is_online?'bg-success':'bg-danger' ?>"><?= $is_online?'Online':'Offline' ?></span></td>
               </tr>
               <tr><td class="k"><i class="bi bi-alarm"></i>Last Logout</td><td class="v" id="last-seen"><?= h($last_seen) ?></td></tr>

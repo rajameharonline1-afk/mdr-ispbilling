@@ -65,6 +65,15 @@ function payments_active_where(PDO $pdo, string $alias='pm'): string {
   if (col_exists($pdo,'payments','status'))     $c[]="COALESCE($alias.status,'') NOT IN ('deleted','void','cancelled')";
   return $c ? (' AND '.implode(' AND ',$c)) : '';
 }
+// (বাংলা) invoices active filter (void/deleted বাদ)
+function invoices_active_where(PDO $pdo, string $alias='i'): string {
+  $c=[];
+  if (col_exists($pdo,'invoices','is_void'))    $c[]="$alias.is_void=0";
+  if (col_exists($pdo,'invoices','is_deleted'))$c[]="$alias.is_deleted=0";
+  if (col_exists($pdo,'invoices','deleted_at'))$c[]="$alias.deleted_at IS NULL";
+  if (col_exists($pdo,'invoices','status'))    $c[]="COALESCE($alias.status,'') NOT IN ('void','deleted','cancelled','canceled')";
+  return $c ? (' AND '.implode(' AND ',$c)) : '';
+}
 // (বাংলা) invoices টেবিলে ডিসকাউন্ট কলাম অটো-ডিটেক্ট
 function find_invoice_discount_col(PDO $pdo): ?string {
   $candidates = [
@@ -133,23 +142,13 @@ $ROUTER_NAME_EXPR = $routerNameParts ? ('COALESCE('.implode(',', $routerNamePart
 $AREA_COL        = pick_col($pdo, 'clients', ['area','zone','location']);
 $SUB_ZONE_COL    = pick_col($pdo, 'clients', ['sub_zone','subzone','sub_area']);
 $BOX_COL         = pick_col($pdo, 'clients', ['box','distribution_box','box_name']);
-$PROTOCOL_COL    = pick_col($pdo, 'clients', ['protocol_type','protocol']);
 $PROFILE_COL     = pick_col($pdo, 'clients', ['profile','pppoe_profile','profile_name','mt_profile']);
-$CLIENT_TYPE_COL = pick_col($pdo, 'clients', ['client_type','customer_type']);
-$CONN_TYPE_COL   = pick_col($pdo, 'clients', ['connection_type','conn_type']);
 $B_STATUS_COL    = pick_col($pdo, 'clients', ['billing_status','payment_status']);
-$M_STATUS_COL    = pick_col($pdo, 'clients', ['mikrotik_status','m_status','mt_status']);
-$CUSTOM_STATUS_COL = pick_col($pdo, 'clients', ['custom_status','status_custom']);
 $hasArea    = ($AREA_COL !== '');
 $hasSubZone = ($SUB_ZONE_COL !== '');
 $hasBox     = ($BOX_COL !== '');
-
-$pkgProfileCols = [];
-if ($PROFILE_COL === '' && $hasPackages) {
-  foreach (['profile','profile_name','pppoe_profile','mt_profile','router_profile'] as $c) {
-    if (col_exists($pdo, 'packages', $c)) $pkgProfileCols[] = $c;
-  }
-}
+$hasLeftCol = col_exists($pdo, 'clients', 'is_left');
+$hasStatusCol = col_exists($pdo, 'clients', 'status');
 
 /* ---------- Inputs ---------- */
 $month    = trim($_GET['month'] ?? date('Y-m'));
@@ -172,13 +171,11 @@ $area       = trim($_GET['area'] ?? '');
 if ($zone === '' && $area !== '') $zone = $area;
 $sub_zone   = trim($_GET['sub_zone'] ?? '');
 $box        = trim($_GET['box'] ?? '');
-$protocol   = trim($_GET['protocol'] ?? '');
-$profile    = trim($_GET['profile'] ?? '');
-$client_type = trim($_GET['client_type'] ?? '');
-$connection_type = trim($_GET['connection_type'] ?? '');
-$b_status   = trim($_GET['b_status'] ?? '');
-$m_status   = trim($_GET['m_status'] ?? '');
-$custom_status = trim($_GET['custom_status'] ?? '');
+$b_status   = strtolower(trim($_GET['b_status'] ?? ''));
+$custom_status = strtolower(trim($_GET['custom_status'] ?? ''));
+if (!in_array($custom_status, ['active','inactive'], true)) {
+  $custom_status = '';
+}
 
 /* Normalize month (সবসময় শুরু/শেষ তারিখ) */
 $monthParam = preg_match('/^\d{4}-\d{2}$/',$month)?$month:date('Y-m');
@@ -204,7 +201,20 @@ if ($useInvoiceDate) {
   $whereMonth = "month=? AND year=?";
 } else {
   $params_base = [];
-  $whereMonth = "1=0";
+  $whereMonth = "1=1";
+}
+
+/* Billing period expression for active/inactive (best-effort) */
+$period_start_sql = $pdo->quote($date_start);
+$period_end_sql   = $pdo->quote($date_end);
+if ($hasInvDate) {
+  $period_expr = "i.invoice_date BETWEEN $period_start_sql AND $period_end_sql";
+} elseif ($hasInvBillMonth) {
+  $period_expr = "i.billing_month BETWEEN $period_start_sql AND $period_end_sql";
+} elseif ($hasInvMonth && $hasInvYear) {
+  $period_expr = "i.month = $mo AND i.year = $yr";
+} else {
+  $period_expr = "i.id IS NOT NULL";
 }
 
 /* ===================== Helper: Max invoice up-to-month-end ===================== */
@@ -220,7 +230,7 @@ if ($useInvoiceDate) {
   $rangeUpTo = "WHERE (year < ?) OR (year = ? AND month <= ?)";
   $params_upto = [$yr, $yr, $mo];
 } else {
-  $rangeUpTo = "WHERE 1=0";
+  $rangeUpTo = "";
   $params_upto = [];
 }
 
@@ -387,23 +397,27 @@ if ($view === 'list') {
   if ($hasArea && $zone !== '') { $filter .= " AND TRIM(LOWER(c.`{$AREA_COL}`)) = TRIM(LOWER(?))"; $params[] = $zone; }
   if ($hasSubZone && $sub_zone !== '') { $filter .= " AND TRIM(LOWER(c.`{$SUB_ZONE_COL}`)) = TRIM(LOWER(?))"; $params[] = $sub_zone; }
   if ($hasBox && $box !== '') { $filter .= " AND TRIM(LOWER(c.`{$BOX_COL}`)) = TRIM(LOWER(?))"; $params[] = $box; }
-  if ($PROTOCOL_COL !== '' && $protocol !== '') { $filter .= " AND TRIM(LOWER(c.`{$PROTOCOL_COL}`)) = TRIM(LOWER(?))"; $params[] = $protocol; }
-  if ($CLIENT_TYPE_COL !== '' && $client_type !== '') { $filter .= " AND TRIM(LOWER(c.`{$CLIENT_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $client_type; }
-  if ($CONN_TYPE_COL !== '' && $connection_type !== '') { $filter .= " AND TRIM(LOWER(c.`{$CONN_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $connection_type; }
-  if ($B_STATUS_COL !== '' && $b_status !== '') { $filter .= " AND TRIM(LOWER(c.`{$B_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $b_status; }
-  if ($M_STATUS_COL !== '' && $m_status !== '') { $filter .= " AND TRIM(LOWER(c.`{$M_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $m_status; }
-  if ($CUSTOM_STATUS_COL !== '' && $custom_status !== '') { $filter .= " AND TRIM(LOWER(c.`{$CUSTOM_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $custom_status; }
-  if ($profile !== '') {
-    if ($PROFILE_COL !== '') {
-      $filter .= " AND TRIM(LOWER(c.`{$PROFILE_COL}`)) = TRIM(LOWER(?))";
-      $params[] = $profile;
-    } elseif (!empty($pkgProfileCols)) {
-      $or = [];
-      foreach ($pkgProfileCols as $col) {
-        $or[] = "TRIM(LOWER(p.`{$col}`)) = TRIM(LOWER(?))";
-        $params[] = $profile;
-      }
-      $filter .= " AND (" . implode(' OR ', $or) . ")";
+  if ($b_status !== '') {
+    if ($b_status === 'left') {
+      $leftParts = [];
+      if ($hasLeftCol) { $leftParts[] = "COALESCE(c.is_left,0)=1"; }
+      if ($hasStatusCol) { $leftParts[] = "LOWER(COALESCE(c.status,'')) IN ('left','terminated')"; }
+      $filter .= $leftParts ? (" AND (" . implode(' OR ', $leftParts) . ")") : " AND 1=0";
+    } elseif ($B_STATUS_COL !== '') {
+      $status_val = ($b_status === 'due') ? 'unpaid' : $b_status;
+      $filter .= " AND TRIM(LOWER(c.`{$B_STATUS_COL}`)) = TRIM(LOWER(?))";
+      $params[] = $status_val;
+    } elseif ($invStatusCol) {
+      $status_val = ($b_status === 'due') ? 'unpaid' : $b_status;
+      $filter .= " AND TRIM(LOWER(i.`{$invStatusCol}`)) = TRIM(LOWER(?))";
+      $params[] = $status_val;
+    }
+  }
+  if ($custom_status !== '') {
+    if ($custom_status === 'active') {
+      $filter .= " AND ($period_expr)";
+    } else {
+      $filter .= " AND (i.id IS NULL OR NOT ($period_expr))";
     }
   }
 }
@@ -451,8 +465,8 @@ if (!$payFk && $hasPayClientId && $payDateCol) {
   if ($hasPayDiscount) $params_cnt = array_merge($params_cnt, [$date_start,$date_end]);
 }
 
-$count_paid =(int)pdo_scalar($pdo,"SELECT COUNT(*) FROM ($innerCnt) x WHERE x.remain<=0.0001", $params_cnt);
-$count_due  =(int)pdo_scalar($pdo,"SELECT COUNT(*) FROM ($innerCnt) x WHERE x.remain>0.0001",  $params_cnt);
+$count_paid = 0;
+$count_due  = 0;
 
 /* Row builder (latest up-to-month-end) */
 $selectMobile = $clientMobileCol ? ", c.`$clientMobileCol` AS mobile" : ", NULL AS mobile";
@@ -463,17 +477,16 @@ $selectIp = col_exists($pdo,'clients','ip_address') ? ", c.ip_address AS ip_addr
 $selectZone = $hasArea ? ", c.`$AREA_COL` AS zone_name" : ", NULL AS zone_name";
 $selectSubZone = $hasSubZone ? ", c.`$SUB_ZONE_COL` AS sub_zone" : ", NULL AS sub_zone";
 $selectBox = $hasBox ? ", c.`$BOX_COL` AS box_name" : ", NULL AS box_name";
-$selectClientType = $CLIENT_TYPE_COL !== '' ? ", c.`$CLIENT_TYPE_COL` AS client_type" : ", NULL AS client_type";
-$selectConnType = $CONN_TYPE_COL !== '' ? ", c.`$CONN_TYPE_COL` AS connection_type" : ", NULL AS connection_type";
-$selectProtocol = $PROTOCOL_COL !== '' ? ", c.`$PROTOCOL_COL` AS protocol_type" : ", NULL AS protocol_type";
+$selectIsLeft = $hasLeftCol ? ", c.is_left AS is_left" : ", NULL AS is_left";
+$selectClientStatus = $hasStatusCol ? ", c.status AS client_status" : ", NULL AS client_status";
+$selectPeriodActive = ", (CASE WHEN $period_expr THEN 1 ELSE 0 END) AS period_active";
 $selectProfile = $PROFILE_COL !== '' ? ", c.`$PROFILE_COL` AS profile_name" : ", NULL AS profile_name";
 $selectExpiry = $EXPIRY_COL !== '' ? ", c.`$EXPIRY_COL` AS expiry_date" : ", NULL AS expiry_date";
 $selectMonthlyBill = $MONTHLY_BILL_COL !== '' ? ", NULLIF(c.`$MONTHLY_BILL_COL`,'') AS monthly_bill" : ", NULL AS monthly_bill";
 $selectBillingStatus = $B_STATUS_COL !== '' ? ", c.`$B_STATUS_COL` AS billing_status" : ($invStatusCol ? ", i.`$invStatusCol` AS billing_status" : ", NULL AS billing_status");
-$selectMikrotikStatus = $M_STATUS_COL !== '' ? ", c.`$M_STATUS_COL` AS mikrotik_status" : (col_exists($pdo,'clients','is_online') ? ", c.is_online AS mikrotik_status" : ", NULL AS mikrotik_status");
 $selectRouter = $ROUTER_NAME_EXPR !== 'NULL' ? ", $ROUTER_NAME_EXPR AS router_name" : ", NULL AS router_name";
 $selectVat = $invoiceVatCol ? ", COALESCE(i.`$invoiceVatCol`,0) AS vat_amount" : ", 0 AS vat_amount";
-$selectAdvance = $ADVANCE_COL !== '' ? ", COALESCE(c.`$ADVANCE_COL`,0) AS advance_amount" : ", GREATEST(0, -1 * COALESCE($clientLedgerExpr,0)) AS advance_amount";
+$selectAdvance = $ADVANCE_COL !== '' ? ", COALESCE(c.`$ADVANCE_COL`,0) AS advance_amount" : ", GREATEST(0, COALESCE($clientLedgerExpr,0)) AS advance_amount";
 
 $lastPayDateExpr = "NULL";
 if ($payDateCol) {
@@ -506,6 +519,24 @@ if ($payFk) {
   } else { $sumDisc = "0"; }
 }
 
+// (বাংলা) Invoice balance per client (match invoices.php logic)
+$payNetExpr = $hasPayDiscount
+  ? "COALESCE(SUM(pm.amount - COALESCE(pm.discount,0)),0)"
+  : "COALESCE(SUM(pm.amount),0)";
+$paidSubExpr = $payFk
+  ? "(SELECT $payNetExpr FROM payments pm WHERE pm.`$payFk`=i2.id".payments_active_where($pdo,'pm').")"
+  : "0";
+$invRemainExpr = "GREATEST(0, COALESCE(i2.`$invAmountCol`,0) - $paidSubExpr)";
+$invActiveWhere = invoices_active_where($pdo,'i2');
+$invoiceBalanceJoin = "
+  LEFT JOIN (
+    SELECT i2.client_id, COALESCE(SUM($invRemainExpr),0) AS inv_balance
+    FROM invoices i2
+    WHERE 1=1 $invActiveWhere
+    GROUP BY i2.client_id
+  ) invbal ON invbal.client_id=c.id
+";
+
 $innerRows = "
   SELECT 
     c.id AS client_id, c.name AS client_name, c.pppoe_id
@@ -517,14 +548,13 @@ $innerRows = "
     $selectZone
     $selectSubZone
     $selectBox
-    $selectClientType
-    $selectConnType
-    $selectProtocol
+    $selectIsLeft
+    $selectClientStatus
+    $selectPeriodActive
     $selectProfile
     $selectExpiry
     $selectMonthlyBill
     $selectBillingStatus
-    $selectMikrotikStatus
     $selectRouter
     $selectVat
     $selectAdvance
@@ -535,20 +565,27 @@ $innerRows = "
     $sumDisc AS discount,
     $sumPaid AS paid_amount,
     $clientLedgerExpr AS ledger_balance,
+    COALESCE(invbal.inv_balance,0) AS inv_balance,
     GREATEST(0, COALESCE(i.`$invAmountCol`,0) - ".($isNetInvAmount?'0':"($sumDisc)")." - ($sumPaid)) AS remain
   FROM clients c
-  JOIN(
+  LEFT JOIN(
     SELECT i1.* FROM invoices i1
     JOIN(SELECT client_id, MAX(id) AS max_id FROM invoices $rangeUpTo GROUP BY client_id) t
       ON t.max_id=i1.id
   ) i ON i.client_id=c.id
+  $invoiceBalanceJoin
   ".($hasPackages ? "LEFT JOIN packages p ON p.id=c.package_id" : "")."
   ".(tbl_exists($pdo,'routers') ? "LEFT JOIN routers r ON r.id=c.router_id" : "")."
   WHERE 1=1 $filter
 ";
 
-$sql_count_clients = "SELECT COUNT(*) FROM ( $innerRows ) x ".
-  ($tab==='paid' ? "WHERE x.remain<=0.0001" : ($tab==='due' ? "WHERE x.remain>0.0001" : ""));
+$tab_where = '';
+if ($tab === 'paid') {
+  $tab_where = "WHERE x.inv_balance<=0.0001";
+} elseif ($tab === 'due') {
+  $tab_where = "WHERE x.inv_balance>0.0001";
+}
+$sql_count_clients = "SELECT COUNT(*) FROM ( $innerRows ) x ".$tab_where;
 $params_rows_base = $params_upto;
 if (!$payFk && $hasPayClientId && $payDateCol) {
   $params_rows_base = array_merge($params_rows_base, [$date_start,$date_end]); // paid
@@ -559,19 +596,23 @@ $stc=$pdo->prepare($sql_count_clients);
 $stc->execute($params_count);
 $total_clients=(int)$stc->fetchColumn();
 
-if ($view === 'list') {
-  $count_total = $total_clients;
-  $count_paid = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM ( $innerRows ) x WHERE x.remain<=0.0001", $params_count);
-  $count_due  = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM ( $innerRows ) x WHERE x.remain>0.0001",  $params_count);
-}
+$count_total = $total_clients;
+$count_paid = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM ( $innerRows ) x WHERE x.inv_balance<=0.0001", $params_count);
+$count_due  = (int)pdo_scalar($pdo, "SELECT COUNT(*) FROM ( $innerRows ) x WHERE x.inv_balance>0.0001",  $params_count);
 
 $pages=max(1,(int)ceil($total_clients/$limit));
 $page=min(max(1,$page),$pages);
 $offset=($page-1)*$limit;
 
 /* Final rows */
+$tab_where_rows = '';
+if ($tab === 'paid') {
+  $tab_where_rows = "WHERE r.inv_balance<=0.0001";
+} elseif ($tab === 'due') {
+  $tab_where_rows = "WHERE r.inv_balance>0.0001";
+}
 $sql_rows = "SELECT * FROM ( $innerRows ) r " .
-  ($tab==='paid' ? "WHERE r.remain<=0.0001" : ($tab==='due' ? "WHERE r.remain>0.0001" : "")) .
+  $tab_where_rows .
   " ORDER BY r.client_name ASC, r.invoice_id DESC LIMIT $limit OFFSET $offset";
 $std=$pdo->prepare($sql_rows);
 $params_rows = array_merge($params_rows_base, $params);
@@ -588,48 +629,18 @@ $routers  = tbl_exists($pdo,'routers') && col_exists($pdo,'routers','id')
 $zones = $hasArea ? distinct_values($pdo, 'clients', $AREA_COL) : [];
 $sub_zones_list = $hasSubZone ? distinct_values($pdo, 'clients', $SUB_ZONE_COL) : [];
 $boxes = $hasBox ? distinct_values($pdo, 'clients', $BOX_COL) : [];
-$protocols = ($PROTOCOL_COL !== '') ? distinct_values($pdo, 'clients', $PROTOCOL_COL) : [];
-$client_types = ($CLIENT_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CLIENT_TYPE_COL) : [];
-$connection_types = ($CONN_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CONN_TYPE_COL) : [];
-$b_statuses = ($B_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $B_STATUS_COL) : [];
-$m_statuses = ($M_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $M_STATUS_COL) : [];
-$custom_statuses = ($CUSTOM_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $CUSTOM_STATUS_COL) : [];
-$profiles = [];
-if ($PROFILE_COL !== '') {
-  $profiles = distinct_values($pdo, 'clients', $PROFILE_COL);
-} elseif (!empty($pkgProfileCols)) {
-  $tmp = [];
-  foreach ($pkgProfileCols as $col) {
-    $tmp = array_merge($tmp, distinct_values($pdo, 'packages', $col));
-  }
-  $profiles = array_values(array_unique($tmp));
-  sort($profiles, SORT_NATURAL | SORT_FLAG_CASE);
-}
+$b_statuses = ['paid','due','partial','left'];
 
 /* ========================== NEW TOTALS ========================== */
-/* (বাংলা) 1) Total Due (Month): এই মাসের ইনভয়েসগুলোর remain যোগফল (search/tab উপেক্ষা) */
-$discForMonthDue = "0";
-if (!$isNetInvAmount) {
-  if ($hasPayDiscount) {
-    $discForMonthDue = "(SELECT COALESCE(SUM(pm2.discount),0) FROM payments pm2 WHERE " . ($payFk ? "pm2.`$payFk`=i.id" : "pm2.client_id=i.client_id") . payments_active_where($pdo,'pm2') . ")";
-  } elseif ($invoiceDiscCol) {
-    $discForMonthDue = "COALESCE(i.`$invoiceDiscCol`,0)";
-  }
-}
-$sql_month_due = "
-  SELECT COALESCE(SUM(GREATEST(0,
-    COALESCE(i.`$invAmountCol`,0)
-    - $discForMonthDue
-    - (SELECT COALESCE(SUM(pm1.amount),0) FROM payments pm1 WHERE ".($payFk?"pm1.`$payFk`=i.id":"pm1.client_id=i.client_id"). payments_active_where($pdo,'pm1') .")
-  )),0)
-  FROM invoices i
-  WHERE i.$whereMonth
-";
-$month_due_total = (float) pdo_scalar($pdo, $sql_month_due, $params_base);
+/* (বাংলা) invoice-based due: sum of remaining across invoices */
+$sql_month_due = "SELECT COALESCE(SUM(r.inv_balance),0) FROM ( $innerRows ) r";
+$stmd = $pdo->prepare($sql_month_due);
+$stmd->execute($params_rows);
+$month_due_total = (float)$stmd->fetchColumn();
 
-/* (বাংলা) 2) Due (Filtered): বর্তমান search/tab ফিল্টার মিলিয়ে সকল ম্যাচিং ক্লায়েন্টের remain যোগফল (pagination ছাড়া) */
-$sql_filtered_due = "SELECT COALESCE(SUM(r.remain),0) FROM ( $innerRows ) r ".
-  ($tab==='paid' ? "WHERE r.remain<=0.0001" : ($tab==='due' ? "WHERE r.remain>0.0001" : ""));
+/* (বাংলা) 2) Due (Filtered): বর্তমান search/tab ফিল্টার মিলিয়ে সকল ম্যাচিং ক্লায়েন্টের ledger-based due যোগফল */
+$sql_filtered_due = "SELECT COALESCE(SUM(r.inv_balance),0) FROM ( $innerRows ) r ".
+  ($tab==='paid' ? "WHERE r.inv_balance<=0.0001" : ($tab==='due' ? "WHERE r.inv_balance>0.0001" : ""));
 $stfd = $pdo->prepare($sql_filtered_due);
 $stfd->execute($params_rows);
 $filtered_due_total = (float)$stfd->fetchColumn();
@@ -637,11 +648,8 @@ $filtered_due_total = (float)$stfd->fetchColumn();
 /* (বাংলা) Page Due */
 $page_due_total=0.0;
 foreach($rows as $r){
-  $invAmount=(float)($r['inv_amount']??0);
-  $paid     =(float)($r['paid_amount']??0);
-  $disc     =(float)($r['discount']??0);
-  $remain   = max(0.0, $invAmount - ($isNetInvAmount?0:$disc) - $paid);
-  $page_due_total += $remain;
+  $inv_balance = (float)($r['inv_balance']??0);
+  if ($inv_balance > 0) $page_due_total += $inv_balance;
 }
 
 /* CSV (List) */
@@ -718,9 +726,10 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
     <div class="seg btn-group mb-3" role="group">
       <a class="btn btn-outline-primary <?= $view==='summary'?'active':'' ?>" href="?<?= h(http_build_query($qs_sum)) ?>"><i class="bi bi-graph-up"></i> Summary</a>
       <a class="btn btn-outline-secondary <?= ($view==='list' && $tab==='all')?'active':'' ?>" href="?<?= h(http_build_query($qs_all)) ?>"><i class="bi bi-list-ul"></i> All</a>
-      <a class="btn btn-outline-success <?= ($view==='list' && $tab==='paid')?'active':'' ?>" href="?<?= h(http_build_query($qs_paid)) ?>"><i class="bi bi-check2-circle"></i> Paid</a>
-      <a class="btn btn-outline-danger  <?= ($view==='list' && $tab==='due')?'active':'' ?>" href="?<?= h(http_build_query($qs_due )) ?>"><i class="bi bi-exclamation-octagon"></i> Due</a>
-      <a href="/public/suspended_clients.php" class="btn btn-outline-danger btn-sm"> 📴 Auto Inactive </a>
+            <a href="/public/collections.php?when=today" class="btn btn-outline-success"><i class="bi bi-calendar-day"></i> Today's Collection</a>
+      <!-- <a class="btn btn-outline-success <?= ($view==='list' && $tab==='paid')?'active':'' ?>" href="?<?= h(http_build_query($qs_paid)) ?>"><i class="bi bi-check2-circle"></i> Paid</a>
+      <a class="btn btn-outline-danger  <?= ($view==='list' && $tab==='due')?'active':'' ?>" href="?<?= h(http_build_query($qs_due )) ?>"><i class="bi bi-exclamation-octagon"></i> Due</a> -->
+      <a href="/public/webhook_payments.php" class="btn btn-outline-danger btn-sm"> 📴 Webhook Payments </a>
       <?php if($view==='list'){ $qs_csv=$qs; $qs_csv['export']='csv'; ?>
         <a class="btn btn-outline-primary btn-sm" href="?<?= h(http_build_query($qs_csv)) ?>"><i class="bi bi-file-earmark-spreadsheet"></i> Export CSV</a>
       <?php } ?>
@@ -771,26 +780,6 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
             </div>
 
             <div class="col-6 col-md-4 col-xl-2">
-              <label class="form-label mb-1 text-uppercase small fw-semibold">Protocol Type</label>
-              <select name="protocol" class="form-select form-select-sm" <?= $PROTOCOL_COL==='' ? 'disabled' : '' ?>>
-                <option value="">Select</option>
-                <?php foreach($protocols as $p): ?>
-                  <option value="<?= h($p) ?>" <?= $protocol===$p?'selected':'' ?>><?= h($p) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-
-            <div class="col-6 col-md-4 col-xl-2">
-              <label class="form-label mb-1 text-uppercase small fw-semibold">Profile</label>
-              <select name="profile" class="form-select form-select-sm" <?= empty($profiles) ? 'disabled' : '' ?>>
-                <option value="">Select</option>
-                <?php foreach($profiles as $p): ?>
-                  <option value="<?= h($p) ?>" <?= $profile===$p?'selected':'' ?>><?= h($p) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-
-            <div class="col-6 col-md-4 col-xl-2">
               <label class="form-label mb-1 text-uppercase small fw-semibold">Zone</label>
               <select name="zone" class="form-select form-select-sm" <?= !$hasArea ? 'disabled' : '' ?>>
                 <option value="">Select</option>
@@ -833,54 +822,24 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
             </div>
 
             <div class="col-6 col-md-4 col-xl-2">
-              <label class="form-label mb-1 text-uppercase small fw-semibold">Client Type</label>
-              <select name="client_type" class="form-select form-select-sm" <?= $CLIENT_TYPE_COL==='' ? 'disabled' : '' ?>>
-                <option value="">Select</option>
-                <?php foreach($client_types as $ct): ?>
-                  <option value="<?= h($ct) ?>" <?= $client_type===$ct?'selected':'' ?>><?= h($ct) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-
-            <div class="col-6 col-md-4 col-xl-2">
-              <label class="form-label mb-1 text-uppercase small fw-semibold">Connection Type</label>
-              <select name="connection_type" class="form-select form-select-sm" <?= $CONN_TYPE_COL==='' ? 'disabled' : '' ?>>
-                <option value="">Select</option>
-                <?php foreach($connection_types as $ct): ?>
-                  <option value="<?= h($ct) ?>" <?= $connection_type===$ct?'selected':'' ?>><?= h($ct) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-
-            <div class="col-6 col-md-4 col-xl-2">
-              <label class="form-label mb-1 text-uppercase small fw-semibold">B.Status</label>
-              <select name="b_status" class="form-select form-select-sm" <?= $B_STATUS_COL==='' ? 'disabled' : '' ?>>
+              <label class="form-label mb-1 text-uppercase small fw-semibold">Billing Status</label>
+              <select name="b_status" class="form-select form-select-sm" <?= ($B_STATUS_COL==='' && !$invStatusCol) ? 'disabled' : '' ?>>
                 <option value="">Select</option>
                 <?php foreach($b_statuses as $bs): ?>
-                  <option value="<?= h($bs) ?>" <?= $b_status===$bs?'selected':'' ?>><?= h($bs) ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-
-            <div class="col-6 col-md-4 col-xl-2">
-              <label class="form-label mb-1 text-uppercase small fw-semibold">M.Status</label>
-              <select name="m_status" class="form-select form-select-sm" <?= $M_STATUS_COL==='' ? 'disabled' : '' ?>>
-                <option value="">Select</option>
-                <?php foreach($m_statuses as $ms): ?>
-                  <option value="<?= h($ms) ?>" <?= $m_status===$ms?'selected':'' ?>><?= h($ms) ?></option>
+                  <option value="<?= h($bs) ?>" <?= $b_status===$bs?'selected':'' ?>><?= h(ucfirst($bs)) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
 
             <div class="col-6 col-md-4 col-xl-2">
               <label class="form-label mb-1 text-uppercase small fw-semibold">Custom Status</label>
-              <select name="custom_status" class="form-select form-select-sm" <?= $CUSTOM_STATUS_COL==='' ? 'disabled' : '' ?>>
+              <select name="custom_status" class="form-select form-select-sm">
                 <option value="">Select</option>
-                <?php foreach($custom_statuses as $cs): ?>
-                  <option value="<?= h($cs) ?>" <?= $custom_status===$cs?'selected':'' ?>><?= h($cs) ?></option>
-                <?php endforeach; ?>
+                <option value="active" <?= $custom_status==='active'?'selected':'' ?>>Active</option>
+                <option value="inactive" <?= $custom_status==='inactive'?'selected':'' ?>>Inactive</option>
               </select>
             </div>
+
           </div>
         </div>
         <?php endif; ?>
@@ -908,10 +867,10 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
       </div>
 
       <div class="row g-3 mb-3">
-        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-primary"><i class="bi bi-receipt"></i></div><div class="hint">Generated</div></div><div class="val text-primary">৳ <?= number_format($z_tot_gen,2) ?></div></div></div>
-        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-success"><i class="bi bi-coin"></i></div><div class="hint">Collection</div></div><div class="val text-success">৳ <?= number_format($z_tot_col,2) ?></div></div></div>
-        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-info"><i class="bi bi-percent"></i></div><div class="hint">Discount</div></div><div class="val text-info">৳ <?= number_format($z_tot_dis,2) ?></div></div></div>
-        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-danger"><i class="bi bi-exclamation-octagon"></i></div><div class="hint">Total Due</div></div><div class="val text-danger">৳ <?= number_format($z_tot_due,2) ?></div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-primary"><i class="bi bi-receipt"></i></div><div class="hint">Generated</div></div><div class="val text-primary"> <?= number_format($z_tot_gen,2) ?></div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-success"><i class="bi bi-coin"></i></div><div class="hint">Collection</div></div><div class="val text-success"> <?= number_format($z_tot_col,2) ?></div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-info"><i class="bi bi-percent"></i></div><div class="hint">Discount</div></div><div class="val text-info"> <?= number_format($z_tot_dis,2) ?></div></div></div>
+        <div class="col-6 col-md-3"><div class="kpi p-3"><div class="d-flex align-items-center gap-2 mb-2"><div class="icon text-danger"><i class="bi bi-exclamation-octagon"></i></div><div class="hint">Total Due</div></div><div class="val text-danger"> <?= number_format($z_tot_due,2) ?></div></div></div>
       </div>
 
       <div class="card border-0 shadow-sm">
@@ -925,7 +884,8 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
               <thead>
                 <tr>
                   <th style="width:56px">SL</th>
-                  <th>Zone / Area</th>
+                  <th>Area</th>
+                  <th>Status</th>
                   <th class="text-end">Generated</th>
                   <th class="text-end">Collection</th>
                   <th class="text-end">Discount</th>
@@ -939,16 +899,19 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
                   <td><?= $sl++ ?></td>
                   <td>
                     <div class="fw-semibold"><?= h($z['zone_name']) ?></div>
+
+                  </td>
+                  <td>
                     <div class="small">
                       <span class="badge bg-success-subtle text-success border badge-pill">Active: <?= (int)$z['active_clients'] ?></span>
                       <span class="badge bg-danger-subtle text-danger border badge-pill ms-1">Inactive: <?= (int)$z['inactive_clients'] ?></span>
                       <span class="text-muted ms-1 small">Total: <?= (int)$z['total_clients'] ?></span>
                     </div>
                   </td>
-                  <td class="text-end fw-semibold">৳ <?= number_format($z['generated'],2) ?></td>
-                  <td class="text-end text-success fw-semibold">৳ <?= number_format($z['collection'],2) ?></td>
-                  <td class="text-end text-primary">৳ <?= number_format($z['discount'],2) ?></td>
-                  <td class="text-end text-danger fw-semibold">৳ <?= number_format($z['due'],2) ?></td>
+                  <td class="text-end fw-semibold"> <?= number_format($z['generated'],2) ?></td>
+                  <td class="text-end text-success fw-semibold"> <?= number_format($z['collection'],2) ?></td>
+                  <td class="text-end text-primary"> <?= number_format($z['discount'],2) ?></td>
+                  <td class="text-end text-danger fw-semibold"> <?= number_format($z['due'],2) ?></td>
                   <td class="text-end">
                     <div class="ratio-wrap">
                       <div class="d-flex justify-content-between small text-muted mb-1">
@@ -960,7 +923,7 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
                   </td>
                 </tr>
                 <?php endforeach; else: ?>
-                  <tr><td colspan="7" class="text-center text-muted">No data.</td></tr>
+                  <tr><td colspan="8" class="text-center text-muted">No data.</td></tr>
                 <?php endif; ?>
               </tbody>
             </table>
@@ -983,11 +946,11 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
       <div class="alert alert-light border d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
         <div class="fw-semibold">
           <i class="bi bi-exclamation-octagon text-danger"></i>
-          Total Due (Month): <span class="text-danger">৳ <?= number_format($month_due_total,2) ?></span>
+          Total Due (Month): <span class="text-danger"> <?= number_format($month_due_total,2) ?></span>
         </div>
         <div class="text-muted">
           <span class="me-3">Due (Filtered): <span class="fw-semibold">৳ <?= number_format($filtered_due_total,2) ?></span></span>
-          <span>Due (This Page): <span class="fw-semibold">৳ <?= number_format($page_due_total,2) ?></span></span>
+          <span>Due (This Page): <span class="fw-semibold"> <?= number_format($page_due_total,2) ?></span></span>
         </div>
       </div>
 
@@ -1022,20 +985,15 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
               <th>Cus. Name</th>
               <th>MobileNumber</th>
               <th>Zone</th>
-              <th>Cus. Type</th>
-              <th>Conn. Type</th>
               <th>Package</th>
-              <th>Speed</th>
               <th>Ex.Date</th>
               <th class="text-end">M.Bill</th>
               <th class="text-end">Received</th>
-              <th class="text-end">VAT</th>
               <th class="text-end">BalanceDue</th>
               <th class="text-end">Advance</th>
               <th>PaymentDate</th>
-              <th>Server</th>
-              <th>M.Status</th>
-              <th>B.Status</th>
+              <th>Billing Status</th>
+              <th>Custom Status</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -1045,43 +1003,64 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
               $paid      = (float)($r['paid_amount']??0);
               $disc      = (float)($r['discount']??0);
               $remain    = max(0.0, $invAmount - ($isNetInvAmount?0:$disc) - $paid);
-              $pay_class = $remain>0.0001?'due':'zero';
               $ledger    = (float)($r['ledger_balance']??0);
+              $inv_balance = (float)($r['inv_balance']??0);
+              $due_balance = $inv_balance > 0 ? $inv_balance : 0.0;
+              $pay_class = $due_balance>0.0001?'due':'zero';
               $advance   = (float)($r['advance_amount'] ?? 0);
               $vat       = (float)($r['vat_amount'] ?? 0);
               $m_bill    = (float)($r['monthly_bill'] ?? 0);
               if ($m_bill <= 0) { $m_bill = $invAmount; }
-              $speed     = trim((string)($r['package_speed'] ?? ''));
-              if ($speed === '') { $speed = trim((string)($r['profile_name'] ?? '')); }
-              if ($speed === '') { $speed = '-'; }
-
               $billing_status = strtolower(trim((string)($r['billing_status'] ?? '')));
               if ($billing_status === '') { $billing_status = strtolower(trim((string)($r['inv_status'] ?? ''))); }
-              $bill_badge = $billing_status==='paid'?'success':($billing_status==='partial'?'warning text-dark':($billing_status==='unpaid'?'danger':'secondary'));
-              $bill_label = $billing_status !== '' ? ucfirst($billing_status) : 'N/A';
-
-              $m_status_raw = $r['mikrotik_status'] ?? '';
-              $m_status_val = is_numeric($m_status_raw) ? (int)$m_status_raw : strtolower(trim((string)$m_status_raw));
-              $m_status_on  = ($m_status_val === 1 || $m_status_val === 'online' || $m_status_val === 'active' || $m_status_val === 'enabled' || $m_status_val === 'up');
-              $m_status_lbl = $m_status_raw === '' ? '-' : ($m_status_on ? 'On' : 'Off');
-              $m_status_badge = $m_status_on ? 'success' : 'secondary';
+              $client_status = strtolower(trim((string)($r['client_status'] ?? '')));
+              $is_left = ((int)($r['is_left'] ?? 0) === 1) || in_array($client_status, ['left','terminated'], true);
+              if ($is_left) {
+                $bill_badge = 'dark';
+                $bill_label = 'Left';
+              } else {
+                if ($billing_status === '') {
+                  if ($remain <= 0.0001) {
+                    $billing_status = 'paid';
+                  } elseif ($paid > 0.0001) {
+                    $billing_status = 'partial';
+                  } else {
+                    $billing_status = 'due';
+                  }
+                } elseif (in_array($billing_status, ['unpaid','clear','cleared'], true)) {
+                  $billing_status = ($billing_status === 'unpaid') ? 'due' : 'paid';
+                } elseif ($billing_status === 'unpaid') {
+                  $billing_status = 'due';
+                }
+                $bill_badge = $billing_status==='paid'?'success':($billing_status==='partial'?'warning text-dark':($billing_status==='due'?'danger':'secondary'));
+                $bill_label = ucfirst($billing_status);
+              }
 
               $exp_date = trim((string)($r['expiry_date'] ?? ''));
               $pay_date = trim((string)($r['last_payment_date'] ?? ''));
               $pay_ts = $pay_date !== '' ? strtotime($pay_date) : false;
               $pay_date_fmt = $pay_ts ? date('M-d-Y', $pay_ts) : '-';
+              $period_active = (int)($r['period_active'] ?? 0);
+              $period_label = $period_active === 1 ? 'Active' : 'Inactive';
+              $period_badge = $period_active === 1 ? 'success' : 'secondary';
 
               $return = $cur_url;
-              $pay_url = 'payment_add.php?invoice_id='.(int)$r['invoice_id'].'&return='.rawurlencode($return);
+              $invoice_id = (int)($r['invoice_id'] ?? 0);
+              if ($invoice_id > 0) {
+                $pay_url = 'payment_add.php?invoice_id='.$invoice_id.'&return='.rawurlencode($return);
+                $pay_title = 'Pay (Full/Partial)';
+              } else {
+                $pay_url = 'invoice_new.php?client_id='.(int)$r['client_id'];
+                $pay_title = 'Create Invoice';
+              }
               $ledger_url = 'client_ledger.php?client_id='.(int)$r['client_id'].'&return='.rawurlencode($cur_url);
             ?>
-            <tr class="<?= $remain<=0.0001 ? 'table-success' : '' ?>">
+            <tr class="<?= $inv_balance<=0.0001 ? 'table-success' : '' ?>">
               <td><input type="checkbox" aria-label="Select"></td>
-              <?php $ccode = trim((string)($r['client_code'] ?? '')); ?>
-              <td><?= $ccode !== '' ? h($ccode) : '#'.(int)$r['client_id'] ?></td>
+              <td><?= (int)$r['client_id'] ?></td>
               <td>
                 <div class="fw-semibold"><?= h($r['pppoe_id'] ?? '') ?></div>
-                <div class="text-muted small"><?= h($r['ip_address'] ?? '-') ?></div>
+                <div class="text-muted small"><?= h($r['ip_address'] ?? '') ?></div>
               </td>
               <td>
                 <div class="fw-semibold"><a class="text-decoration-none" href="client_view.php?id=<?= (int)$r['client_id'] ?>"><?= h($r['client_name']) ?></a></div>
@@ -1089,30 +1068,33 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
               </td>
               <td><?= h($r['mobile'] ?? '-') ?></td>
               <td><?= h($r['zone_name'] ?? '-') ?></td>
-              <td><?= h($r['client_type'] ?? '-') ?></td>
-              <td><?= h($r['connection_type'] ?? '-') ?></td>
               <td><?= h($r['package_name'] ?? '-') ?></td>
-              <td><?= h($speed) ?></td>
               <td><?= h($exp_date) ?></td>
-              <td class="text-end">৳ <?= number_format($m_bill, 2) ?></td>
-              <td class="text-end">৳ <?= number_format($paid, 2) ?></td>
-              <td class="text-end">৳ <?= number_format($vat, 2) ?></td>
-              <td class="text-end payable <?= $pay_class ?>">৳ <?= number_format($remain, 2) ?></td>
-              <td class="text-end">৳ <?= number_format($advance, 2) ?></td>
+              <td class="text-end"> <?= number_format($m_bill, 2) ?></td>
+              <td class="text-end"> <?= number_format($paid, 2) ?></td>
+              <td class="text-end payable <?= $pay_class ?>"> <?= number_format($due_balance, 2) ?></td>
+              <td class="text-end"> <?= number_format($advance, 2) ?></td>
               <td><?= h($pay_date_fmt) ?></td>
-              <td><?= h($r['router_name'] ?? '-') ?></td>
-              <td><span class="badge bg-<?= $m_status_badge ?>"><?= h($m_status_lbl) ?></span></td>
               <td><span class="badge bg-<?= $bill_badge ?>"><?= h($bill_label) ?></span></td>
+              <td><span class="badge bg-<?= $period_badge ?>"><?= h($period_label) ?></span></td>
               <td>
                 <div class="btn-group btn-group-sm">
-                  <a class="btn btn-outline-success" title="Pay (Full/Partial)" href="<?= h($pay_url) ?>"><i class="bi bi-cash-coin"></i> Pay</a>
-                  <a class="btn btn-outline-secondary" title="Invoice" href="invoice_view.php?id=<?= (int)$r['invoice_id'] ?>"><i class="bi bi-receipt"></i></a>
-                  <a class="btn btn-outline-info" title="View Ledger" href="<?= h($ledger_url) ?>"><i class="bi bi-eye"></i></a>
+                  <?php if ($pay_url !== ''): ?>
+                    <a class="btn btn-outline-success" title="<?= h($pay_title) ?>" href="<?= h($pay_url) ?>"><i class="bi bi-cash-coin"></i> Pay</a>
+                  <?php else: ?>
+                    <button class="btn btn-outline-success" title="<?= h($pay_title) ?>" type="button" disabled><i class="bi bi-cash-coin"></i> Pay</button>
+                  <?php endif; ?>
+                  <?php if ($invoice_id > 0): ?>
+                    <a class="btn btn-outline-secondary" title="Invoice" href="invoice_view.php?id=<?= $invoice_id ?>"><i class="bi bi-receipt"></i></a>
+                  <?php else: ?>
+                    <button class="btn btn-outline-secondary" title="Invoice" type="button" disabled><i class="bi bi-receipt"></i></button>
+                  <?php endif; ?>
+                  <!-- <a class="btn btn-outline-info" title="View Ledger" href="<?= h($ledger_url) ?>"><i class="bi bi-eye"></i></a> -->
                 </div>
               </td>
             </tr>
             <?php endforeach; else: ?>
-              <tr><td colspan="21" class="text-center text-muted">No data found for this month.</td></tr>
+              <tr><td colspan="17" class="text-center text-muted">No data found for this month.</td></tr>
             <?php endif; ?>
           </tbody>
         </table>
@@ -1150,7 +1132,7 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
         <div class="mb-2">
           <div class="fw-semibold">Invoice-level Discount</div>
           <div id="inv-disc-row" class="d-flex align-items-center justify-content-between border rounded p-2">
-            <span id="inv-disc-amt">৳ 0.00</span>
+            <span id="inv-disc-amt"> 0.00</span>
             <button id="btn-clear-inv" class="btn btn-outline-danger btn-sm" disabled>
               <i class="bi bi-x-circle"></i> Clear
             </button>
@@ -1218,7 +1200,7 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
 
   async function loadDiscounts(invId){
     discInfo.textContent = 'Loading…';
-    invAmtEl.textContent = '৳ 0.00';
+    invAmtEl.textContent = ' 0.00';
     btnClearInv.disabled = true;
     tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>';
 
@@ -1230,7 +1212,7 @@ if (!$__csrf) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); $__csrf = $
     discInfo.textContent = 'Invoice ID: ' + invId;
 
     const inv = Number(data.invoice_discount || 0);
-    invAmtEl.textContent = '৳ ' + inv.toFixed(2);
+    invAmtEl.textContent = ' ' + inv.toFixed(2);
     btnClearInv.disabled = !(inv > 0.0001);
 
     const pays = Array.isArray(data.payments) ? data.payments : [];

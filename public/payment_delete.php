@@ -121,7 +121,7 @@ function recalc_client_ledger(PDO $pdo, int $client_id, string $invAmountCol, bo
     } else { $sumPaid=0.0; $sumDisc=0.0; }
   }
   $discUsed = $isNetInvAmount ? 0.0 : $sumDisc;
-  $ledger = $sumInv - $discUsed - $sumPaid;
+  $ledger = -1 * ($sumInv - $discUsed - $sumPaid);
 
   // (বাংলা) clients.updated_at থাকলে যোগ করবো
   $set = "`$clientLedgerCol`=?";

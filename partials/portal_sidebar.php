@@ -18,15 +18,15 @@ $avatar_url = ($avatar_url ?? '/assets/images/default-avatar.png');
 $portal = [
   'package'     => $_SESSION['package_name']   ?? 'Home 20 Mbps',
   'next_due'    => $_SESSION['next_due_date']  ?? null,     // '2025-09-10'
-  'ledger'      => $_SESSION['ledger_balance'] ?? 0.00,     // +ve=Due, -ve=Advance
+  'ledger'      => $_SESSION['ledger_balance'] ?? 0.00,     // -ve=Due, +ve=Advance
   'status'      => $_SESSION['service_status'] ?? 'active', // active/suspended
   'pppoe'       => $_SESSION['pppoe_id']       ?? ($_SESSION['username'] ?? ''),
 ];
 
 // (বাংলা) লেজার ব্যাজ রঙ/লেবেল
 $ledger = (float)$portal['ledger'];
-$ledgerBadge = ($ledger > 0.0001) ? 'danger' : (($ledger < -0.0001) ? 'success' : 'secondary');
-$ledgerLabel = ($ledger > 0.0001) ? 'Due' : (($ledger < -0.0001) ? 'Advance' : 'Settled');
+$ledgerBadge = ($ledger < -0.0001) ? 'danger' : (($ledger > 0.0001) ? 'success' : 'secondary');
+$ledgerLabel = ($ledger < -0.0001) ? 'Due' : (($ledger > 0.0001) ? 'Advance' : 'Settled');
 
 // (বাংলা) কানেকশন স্ট্যাটাস
 $online = ($portal['status'] === 'active');

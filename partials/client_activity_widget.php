@@ -30,23 +30,38 @@ foreach (['ts','created_at','logged_at','time','timestamp','event_time'] as $c) 
 if ($tsExpr === null) { $tsExpr = 'al.id'; }
 
 $has_user_id  = $colExists('user_id');
-$has_actor    = $colExists('actor');
 $has_ip       = $colExists('ip');
-$has_details  = $colExists('details');
 $has_entityid = $colExists('entity_id');
 $has_action   = $colExists('action');
-$has_etype    = $colExists('entity_type');
+$has_entity   = $colExists('entity');
+$has_old      = $colExists('old_json');
+$has_new      = $colExists('new_json');
+
+// users join (for actor name)
+$has_users = false;
+$user_name_col = null;
+try {
+  $pdo->query("SELECT 1 FROM users LIMIT 1");
+  $has_users = true;
+} catch (Throwable $e) { $has_users = false; }
+if ($has_users) {
+  foreach (['full_name','name','username','email'] as $c) {
+    $st = $pdo->prepare("SHOW COLUMNS FROM `users` LIKE ?");
+    $st->execute([$c]);
+    if ($st->fetchColumn()) { $user_name_col = $c; break; }
+  }
+}
 
 // SELECT list (safe aliases)
 $selects = [
   "al.id",
   "$tsExpr AS ts",
   $has_user_id ? "al.user_id" : "NULL AS user_id",
-  $has_actor   ? "al.actor"   : "NULL AS actor",
   $has_action  ? "al.action"  : "''   AS action",
-  $has_etype   ? "al.entity_type" : "'' AS entity_type",
+  $has_entity  ? "al.entity"  : "'' AS entity",
   $has_entityid? "al.entity_id"   : "NULL AS entity_id",
-  $has_details ? "al.details" : "NULL AS details",
+  $has_old     ? "al.old_json" : "NULL AS old_json",
+  $has_new     ? "al.new_json" : "NULL AS new_json",
   $has_ip      ? "al.ip"      : "NULL AS ip",
 ];
 
@@ -56,21 +71,17 @@ $params = [];
 
 // client row: if entity_id exists, use it; if entity_type also exists, narrow to 'client'
 if ($has_entityid) {
-  $conds[]  = $has_etype ? "(al.entity_type='client' AND al.entity_id=?)" : "(al.entity_id=?)";
+  $conds[]  = $has_entity ? "(al.entity='client' AND al.entity_id=?)" : "(al.entity_id=?)";
   $params[] = $clientId;
 }
 
 // invoice row: only use details if details column exists;
 // if entity_type exists, add 'invoice' guard; otherwise just details LIKE
-if ($has_details) {
-  $like1 = '%"client_id":'.(string)$clientId.'%';          // numeric
-  $like2 = '%"client_id":"'.(string)$clientId.'"%';        // string
-  $pattern = "(COALESCE(al.details,'') LIKE ? OR COALESCE(al.details,'') LIKE ?)";
-  if ($has_etype) {
-    $conds[] = "(al.entity_type='invoice' AND $pattern)";
-  } else {
-    $conds[] = "($pattern)";
-  }
+if ($has_old || $has_new) {
+  $like1 = '%"client_id":'.(string)$clientId.'%';
+  $like2 = '%"client_id":"'.(string)$clientId.'"%';
+  $pattern = "(COALESCE(al.old_json,'') LIKE ? OR COALESCE(al.new_json,'') LIKE ?)";
+  $conds[] = "($pattern)";
   $params[] = $like1;
   $params[] = $like2;
 }
@@ -78,8 +89,14 @@ if ($has_details) {
 // nothing detectable? show nothing rather than full table
 if (!$conds) { $conds[] = "1=0"; }
 
+$joins = "";
+if ($has_users && $user_name_col) {
+  $selects[] = "u.`$user_name_col` AS user_name";
+  $joins = " LEFT JOIN users u ON u.id = al.user_id ";
+}
 $sql = "SELECT ".implode(", ", $selects)."
         FROM audit_logs al
+        $joins
         WHERE ".implode(" OR ", $conds)."
         ORDER BY ts DESC, al.id DESC
         LIMIT 10";
@@ -119,17 +136,31 @@ $rows = $st->fetchAll(PDO::FETCH_ASSOC);
                    : (in_array($a, ['disable','left','invoice_void'], true) ? 'danger' : 'secondary');
 
             $short = '';
-            if (!empty($r['details'])) {
-              $arr  = json_decode((string)$r['details'], true);
-              $json = $arr ? json_encode($arr, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) : (string)$r['details'];
-              $short = mb_substr($json, 0, 120) . (mb_strlen($json) > 120 ? '…' : '');
+            $details = ['old' => $r['old_json'] ?? null, 'new' => $r['new_json'] ?? null];
+            foreach (['old','new'] as $k) {
+              if (is_string($details[$k])) {
+                $inner = json_decode($details[$k], true);
+                if (json_last_error() === JSON_ERROR_NONE) $details[$k] = $inner;
+              }
             }
+            $json = json_encode($details, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+            $short = mb_substr($json, 0, 120) . (mb_strlen($json) > 120 ? '…' : '');
+
+            $userName = (string)($r['user_name'] ?? '');
+            $uid = isset($r['user_id']) && is_numeric($r['user_id']) ? (int)$r['user_id'] : null;
           ?>
             <tr>
               <td><small class="text-muted"><?php echo h($r['ts']); ?></small></td>
               <td><span class="badge bg-<?php echo $badge; ?>"><?php echo h($r['action'] ?? ''); ?></span></td>
-              <td><small><?php echo h(($r['entity_type'] ?? 'entity').'#'.(string)($r['entity_id'] ?? '')); ?></small></td>
-              <td><small><?php echo h(($r['actor'] ?? '') ?: ('#'.(string)($r['user_id'] ?? ''))); ?></small></td>
+              <td><small><?php echo h(($r['entity'] ?? 'entity').'#'.(string)($r['entity_id'] ?? '')); ?></small></td>
+              <td><small>
+                <?php
+                  if ($uid === 0) echo 'System automatic';
+                  elseif ($userName !== '' && $uid) echo h($userName).' (#'.$uid.')';
+                  elseif ($uid) echo '#'.$uid;
+                  else echo '-';
+                ?>
+              </small></td>
               <td><small><?php echo h($r['ip'] ?? ''); ?></small></td>
               <td><small class="text-muted"><?php echo h($short); ?></small></td>
             </tr>

@@ -301,9 +301,9 @@ try {
   $insertSql = "INSERT INTO invoices (".implode(',', $cols).") VALUES (".implode(',', $vals).")";
   $insertInv = $pdo->prepare($insertSql);
 
-  // (বাংলা) লেজার (null-safe)
+  // (বাংলা) লেজার (null-safe) — due is negative
   $updateLedger = $has_ledger
-    ? $pdo->prepare("UPDATE clients SET ledger_balance = COALESCE(ledger_balance,0) + :delta WHERE id = :cid")
+    ? $pdo->prepare("UPDATE clients SET ledger_balance = COALESCE(ledger_balance,0) - :delta WHERE id = :cid")
     : null;
 
   foreach ($clients as $r) {
@@ -326,7 +326,7 @@ try {
       continue;
     }
 
-    // (বাংলা) পুরনো void + লেজার মাইনাস (replace mode)
+    // (বাংলা) পুরনো void + লেজার যোগ (replace mode)
     if ($exists && $replace) {
       foreach ($oldRows as $old) {
         if ($updateLedger) $updateLedger->execute([':delta'=>-1*(float)$old['amt'], ':cid'=>$cid]);
@@ -367,7 +367,7 @@ try {
     $insertInv->execute();
     $newId = (int)$pdo->lastInsertId();
 
-    // (বাংলা) লেজার += amount
+    // (বাংলা) লেজার -= amount (due increases)
     if ($updateLedger) $updateLedger->execute([':delta'=>$amt, ':cid'=>$cid]);
 
     if ($can_audit) {

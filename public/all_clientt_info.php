@@ -348,7 +348,7 @@ if ($asCsv){
           $on = (string)($r['online'] ?? '');
           $isOn = in_array(strtolower($on),['1','yes','online','up','active'],true) || $on===1;
           $bal = (float)($r['ledger_balance'] ?? 0);
-          $balCls = $bal>0?'danger':($bal<0?'success':'secondary');
+          $balCls = $bal<0?'danger':($bal>0?'success':'secondary');
         ?>
         <tr>
           <?php

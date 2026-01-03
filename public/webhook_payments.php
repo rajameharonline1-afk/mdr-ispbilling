@@ -286,23 +286,20 @@ require_once __DIR__ . '/../partials/partials_header.php';
   .hero-card { background: linear-gradient(135deg, #0d6efd, #0b5ed7); color:#fff; border:0; }
   .table thead th { text-transform: uppercase; font-size: 12px; letter-spacing: .3px; }
   .badge-pill { border-radius: 50rem; }
+  .stat-card{ border:1px solid #e5e7eb; border-radius:.75rem; background:#fff; }
+  .stat-card .hdr{ padding:.65rem .9rem; border-bottom:1px solid #eef1f4; background:#f8f9fa; font-weight:600; }
+  .stat-card .bd{ padding:.9rem; }
+  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 
-<div class="container-fluid py-3">
-  <div class="hero-card card mb-3 shadow-sm">
-    <div class="card-body d-flex flex-wrap align-items-center justify-content-between">
-      <div>
-        <div class="d-flex align-items-center gap-2">
-          <i class="bi bi-broadcast-pin fs-4"></i>
-          <h4 class="mb-0">Webhook Payments</h4>
-        </div>
-        <small class="opacity-75">Realtime bKash webhook receipts and manual settlement.</small>
-      </div>
-      <div class="btn-group">
-        <a class="btn btn-outline-light btn-sm" href="/public/webhook_payments.php"><i class="bi bi-arrow-repeat me-1"></i>Refresh</a>
-        <a class="btn btn-light btn-sm" href="/public/bkash_rtn_dashboard.php"><i class="bi bi-graph-up-arrow me-1"></i>RTN Dashboard</a>
-        <a class="btn btn-outline-light btn-sm" href="/public/process_manual.php"><i class="bi bi-wrench me-1"></i>Manual Pending</a>
-      </div>
+<div class="container-fluid py-3 text-start">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h5 class="m-0"><img src="/assets/images/BKash-Icon-Logo.wine.png" alt="BKash Logo" width="50" height="40"> Webhook Payments</h5>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/public/webhook_payments.php"><i class="bi bi-arrow-repeat me-1"></i>Refresh</a>
+        <a class="btn btn-secondary btn-sm" href="/public/bkash_rtn_dashboard.php"><i class="bi bi-graph-up-arrow me-1"></i>RTN Dashboard</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/public/process_manual.php"><i class="bi bi-wrench me-1"></i>Manual Pending</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php"><i class="bi bi-arrow-left"></i> Back</a>
     </div>
   </div>
 

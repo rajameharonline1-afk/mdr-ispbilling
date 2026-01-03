@@ -41,7 +41,7 @@ $pppoe_id    = (string)($client['pppoe_id'] ?? '');
 $client_name = (string)($client['name'] ?? 'Client');
 
 /* ===================== Ledger Balance ===================== */
-// (বাংলা) +ve = Due, -ve = Advance, 0 = Paid
+// (বাংলা) -ve = Due, +ve = Advance, 0 = Paid
 $ledger_balance = 0.00;
 if ($client_id) {
   $st = db()->prepare("SELECT COALESCE(ledger_balance,0) FROM clients WHERE id=?");
@@ -49,13 +49,13 @@ if ($client_id) {
   $ledger_balance = (float)$st->fetchColumn();
 }
 function ledgerBadgeClass(float $v): string {
-  if ($v > 0.0001) return 'bg-danger';
-  if ($v < -0.0001) return 'bg-success';
+  if ($v < -0.0001) return 'bg-danger';
+  if ($v > 0.0001) return 'bg-success';
   return 'bg-secondary';
 }
 function ledgerLabel(float $v): string {
-  if ($v > 0.0001) return 'Due';
-  if ($v < -0.0001) return 'Advance';
+  if ($v < -0.0001) return 'Due';
+  if ($v > 0.0001) return 'Advance';
   return 'Paid';
 }
 

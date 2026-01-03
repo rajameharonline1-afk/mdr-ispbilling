@@ -5,6 +5,16 @@
 
 declare(strict_types=1);
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
+// (বাংলা) CSRF token sync: keep both csrf & csrf_token aligned
+if (empty($_SESSION['csrf']) && !empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf'] = $_SESSION['csrf_token'];
+} elseif (empty($_SESSION['csrf_token']) && !empty($_SESSION['csrf'])) {
+    $_SESSION['csrf_token'] = $_SESSION['csrf'];
+} elseif (empty($_SESSION['csrf']) && empty($_SESSION['csrf_token'])) {
+    $t = bin2hex(random_bytes(16));
+    $_SESSION['csrf'] = $t;
+    $_SESSION['csrf_token'] = $t;
+}
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';

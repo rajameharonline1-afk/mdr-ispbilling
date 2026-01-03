@@ -27,7 +27,8 @@ function can_manage_accounts(): bool {
 // ---------- CSRF ----------
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 $csrf = (string)($_POST['csrf_token'] ?? '');
-if (!$csrf || !hash_equals($_SESSION['csrf_token'] ?? '', $csrf)) {
+$session_csrf = (string)($_SESSION['csrf_token'] ?? ($_SESSION['csrf'] ?? ''));
+if (!$csrf || !$session_csrf || !hash_equals($session_csrf, $csrf)) {
   http_response_code(400);
   $_SESSION['flash'] = 'Invalid CSRF token.';
   header('Location: /public/accounts_manage.php');

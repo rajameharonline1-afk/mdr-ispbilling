@@ -77,7 +77,7 @@ function recalc_client(PDO $pdo, int $client_id, string $invAmountCol, bool $isN
     } else { $sumPaid=0.0; $sumDisc=0.0; }
   }
   $discUsed=$isNetInvAmount?0.0:$sumDisc;
-  $ledger = $sumInv - $discUsed - $sumPaid;
+  $ledger = -1 * ($sumInv - $discUsed - $sumPaid);
   $u=$pdo->prepare("UPDATE clients SET `$clientLedgerCol`=?, updated_at=NOW() WHERE id=?");
   $u->execute([$ledger,$client_id]);
 }

@@ -1,6 +1,6 @@
 <?php
 // /public/due_analytics.php
-// Purpose: Visualize Due (ledger_balance > 0) by Router and Area
+// Purpose: Visualize Due (ledger_balance < 0) by Router and Area
 // Features: router-wise bar, area-wise top-20 bar, router×area color-matrix
 // Notes: UI English; কমেন্টগুলো বাংলায়
 
@@ -20,12 +20,12 @@ $area     = trim($_GET['area'] ?? '');
 $minDue   = trim($_GET['min_due'] ?? ''); // ঐচ্ছিক
 $maxDue   = trim($_GET['max_due'] ?? '');
 
-$where=["c.ledger_balance > 0"]; $params=[];
+$where=["c.ledger_balance < 0"]; $params=[];
 if ($routerId>0){ $where[]="c.router_id = ?";  $params[]=$routerId; }
 if ($packageId>0){$where[]="c.package_id = ?"; $params[]=$packageId; }
 if ($area!==''){ $where[]="c.area = ?";        $params[]=$area; }
-if ($minDue!=='' && is_numeric($minDue)){ $where[]="c.ledger_balance >= ?"; $params[]=(float)$minDue; }
-if ($maxDue!=='' && is_numeric($maxDue)){ $where[]="c.ledger_balance <= ?"; $params[]=(float)$maxDue; }
+if ($minDue!=='' && is_numeric($minDue)){ $where[]="(-c.ledger_balance) >= ?"; $params[]=(float)$minDue; }
+if ($maxDue!=='' && is_numeric($maxDue)){ $where[]="(-c.ledger_balance) <= ?"; $params[]=(float)$maxDue; }
 $where_sql = 'WHERE '.implode(' AND ', $where);
 
 // (বাংলা) preload dropdown
@@ -34,7 +34,7 @@ $packages= $pdo->query("SELECT id,name FROM packages ORDER BY name")->fetchAll(P
 $areas   = $pdo->query("SELECT DISTINCT area FROM clients WHERE area<>'' ORDER BY area LIMIT 200")->fetchAll(PDO::FETCH_COLUMN);
 
 // Router-wise due
-$sqlR = "SELECT r.name AS router, SUM(c.ledger_balance) AS due
+$sqlR = "SELECT r.name AS router, SUM(-c.ledger_balance) AS due
          FROM clients c LEFT JOIN routers r ON r.id=c.router_id
          $where_sql
          GROUP BY r.name
@@ -44,7 +44,7 @@ $stR = $pdo->prepare($sqlR); $stR->execute($params);
 $rowsR = $stR->fetchAll(PDO::FETCH_ASSOC);
 
 // Area-wise due (top 20)
-$sqlA = "SELECT c.area AS area, SUM(c.ledger_balance) AS due
+$sqlA = "SELECT c.area AS area, SUM(-c.ledger_balance) AS due
          FROM clients c
          $where_sql
          GROUP BY c.area
@@ -62,10 +62,10 @@ $matrix = [];
 if ($topRouters && $topAreas) {
   $inR = implode(',', array_fill(0, count($topRouters), '?'));
   $inA = implode(',', array_fill(0, count($topAreas),   '?'));
-  $sqlM = "SELECT r.name AS router, c.area AS area, SUM(c.ledger_balance) AS due
+  $sqlM = "SELECT r.name AS router, c.area AS area, SUM(-c.ledger_balance) AS due
            FROM clients c
            LEFT JOIN routers r ON r.id=c.router_id
-           WHERE c.ledger_balance > 0
+           WHERE c.ledger_balance < 0
              AND r.name IN ($inR)
              AND c.area IN ($inA)
            GROUP BY r.name, c.area";
@@ -77,7 +77,7 @@ if ($topRouters && $topAreas) {
 }
 
 // stats
-$sqlS = "SELECT COUNT(*) AS cnt, SUM(c.ledger_balance) AS total_due, AVG(c.ledger_balance) AS avg_due, MAX(c.ledger_balance) AS max_due
+$sqlS = "SELECT COUNT(*) AS cnt, SUM(-c.ledger_balance) AS total_due, AVG(-c.ledger_balance) AS avg_due, MAX(-c.ledger_balance) AS max_due
          FROM clients c $where_sql";
 $stS=$pdo->prepare($sqlS); $stS->execute($params);
 $stat=$stS->fetch(PDO::FETCH_ASSOC) ?: ['cnt'=>0,'total_due'=>0,'avg_due'=>0,'max_due'=>0];

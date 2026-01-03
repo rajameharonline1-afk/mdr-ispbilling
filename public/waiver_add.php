@@ -69,12 +69,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pdo = db();
     $pdo->beginTransaction();
     try {
-      // (বাংলা) Due (ledger_balance > 0) হলে ডিফল্টে ক্যাপ; exceed চেক থাকলে ক্যাপ নয়
+      // (বাংলা) Due (ledger_balance < 0) হলে ডিফল্টে ক্যাপ; exceed চেক থাকলে ক্যাপ নয়
       $apply_amount = $amount;
       if ($clients_has_ledger) {
         $current_ledger = (float)($client['ledger_balance'] ?? 0);
         if (!$allow_exceed) {
-          $due = max(0, $current_ledger);
+          $due = max(0, -$current_ledger);
           if ($apply_amount > $due) $apply_amount = $due; // ক্যাপ
         }
       }
@@ -97,9 +97,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $stmt = $pdo->prepare($sql);
       $stmt->execute($vals);
 
-      // (বাংলা) Ledger update: ledger_balance -= apply_amount
+      // (বাংলা) Ledger update: ledger_balance += apply_amount (due is negative)
       if ($clients_has_ledger && $apply_amount > 0) {
-        $st2 = $pdo->prepare("UPDATE clients SET ledger_balance = COALESCE(ledger_balance,0) - ? WHERE id=?");
+        $st2 = $pdo->prepare("UPDATE clients SET ledger_balance = COALESCE(ledger_balance,0) + ? WHERE id=?");
         $st2->execute([$apply_amount, (int)$client['id']]);
       }
 

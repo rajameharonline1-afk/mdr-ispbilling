@@ -94,6 +94,7 @@ $legacyAccountNotNull  = $legacyAccountStr ? !col_nullable($pdo,'expenses',$lega
 $legacyCategoryNotNull = $legacyCategoryStr ? !col_nullable($pdo,'expenses',$legacyCategoryStr) : false;
 
 $createdBy = pick_col_or_null($pdo,'expenses',['created_by','user_id','added_by']);
+$extraDateCol = col_exists($pdo,'expenses','date') ? 'date' : null;
 
 /* dropdown data */
 $accounts = $pdo->query("SELECT id,name,type FROM expense_accounts WHERE is_active=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
@@ -140,6 +141,9 @@ if($_SERVER['REQUEST_METHOD']==='POST'){
 
     // date & amount (must)
     $cols[]="`$dateCol`";   $ph[]='?'; $vals[]=$paid_at;
+    if ($extraDateCol && $extraDateCol !== $dateCol) {
+      $cols[]="`$extraDateCol`"; $ph[]='?'; $vals[]=$d ?: date('Y-m-d');
+    }
     $cols[]="`$amountCol`"; $ph[]='?'; $vals[]=round($amount,2);
 
     // ids

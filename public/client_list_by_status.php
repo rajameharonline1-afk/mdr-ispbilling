@@ -429,7 +429,7 @@ include __DIR__ . '/../partials/partials_header.php';
               <td class="d-none d-xl-table-cell">
                 <?php
                   $lb = (float)($r['ledger_balance'] ?? 0);
-                  $bcls = $lb > 0 ? 'bg-danger' : ($lb < 0 ? 'bg-success' : 'bg-secondary');
+                  $bcls = $lb < 0 ? 'bg-danger' : ($lb > 0 ? 'bg-success' : 'bg-secondary');
                 ?>
                 <span class="badge <?= $bcls ?>"><?= number_format($lb, 2) ?></span>
               </td>

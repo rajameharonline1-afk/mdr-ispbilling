@@ -25,7 +25,7 @@ $pdo = db();
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 // ---------- Build filter ----------
-$where = "COALESCE(c.is_left,0)=0 AND COALESCE(c.ledger_balance,0) > 0";
+$where = "COALESCE(c.is_left,0)=0 AND COALESCE(c.ledger_balance,0) < 0";
 $args  = [];
 if ($router_id > 0) { $where .= " AND c.router_id = ?"; $args[] = $router_id; }
 if ($area !== '')   { $where .= " AND c.area = ?";      $args[] = $area; }
@@ -37,7 +37,7 @@ $sql = "
 SELECT c.id, c.name, c.$col_mobile AS mobile, c.ledger_balance
 FROM clients c
 WHERE $where
-ORDER BY c.ledger_balance DESC
+ORDER BY c.ledger_balance ASC
 LIMIT $limit
 ";
 $rows = $pdo->prepare($sql);
@@ -50,7 +50,7 @@ if (!$list) { echo "No due clients.\n"; exit; }
 // (বাংলা) প্রয়োজনমতো ছোট রাখুন—বাংলা ইউনিকোড ঠিকমতো সাপোর্ট করুন
 function render_msg(array $c, string $ym): string {
   // উদাহরণ: Discovery Internet: আপনার বকেয়া 650 TK (2025-08)। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।
-  $due = number_format((float)$c['ledger_balance'], 0, '.', '');
+  $due = number_format(abs((float)$c['ledger_balance']), 0, '.', '');
   return "Discovery Internet: আপনার বকেয়া {$due} TK ({$ym})। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।";
 }
 
@@ -68,7 +68,7 @@ foreach ($list as $c) {
 
   $msg   = render_msg($c, $ym);
   // (বাংলা) dedupe: ক্লায়েন্ট + মাস + পরিমাণ (ইচ্ছা করলে শুধু ক্লায়েন্ট+মাস রাখুন)
-  $dedupe = 'due:' . $c['id'] . ':' . $ym . ':' . (int)$c['ledger_balance'];
+  $dedupe = 'due:' . $c['id'] . ':' . $ym . ':' . (int)abs((float)$c['ledger_balance']);
 
   if ($dry) { $queued++; continue; }
 
@@ -78,7 +78,7 @@ foreach ($list as $c) {
       ':mobile'    => $mobile,
       ':message'   => $msg,
       ':dedupe'    => $dedupe,
-      ':payload'   => json_encode(['ym'=>$ym, 'due'=>(float)$c['ledger_balance']], JSON_UNESCAPED_UNICODE),
+      ':payload'   => json_encode(['ym'=>$ym, 'due'=>abs((float)$c['ledger_balance'])], JSON_UNESCAPED_UNICODE),
     ]);
     $queued++;
   } catch (Throwable $e) {

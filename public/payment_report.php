@@ -65,9 +65,10 @@ $groups = $sg->fetchAll(PDO::FETCH_ASSOC);
 include __DIR__ . '/../partials/partials_header.php';
 ?>
 <div class="container-fluid py-3">
-  <div class="d-flex align-items-center justify-content-between mb-3">
+  <div class="mb-3 d-flex justify-content-between align-items-center">
     <h4 class="mb-0">Payments Report</h4>
     <div class="d-flex gap-2">
+      <a class="btn btn-outline-dark btn-sm" href="/public/billing.php?page=1&view=list&tab=all"><i class="bi bi-arrow-left"></i> Back</a>
       <a class="btn btn-outline-dark btn-sm" target="_blank" rel="noopener"
          href="/public/payment_report_export.php?<?= h(http_build_query($_GET)) ?>">
         <i class="bi bi-download"></i> Export CSV
@@ -115,25 +116,6 @@ include __DIR__ . '/../partials/partials_header.php';
     </div>
   </div>
 
-  <!-- Group by day -->
-  <?php if($groups): ?>
-  <div class="table-responsive mb-3">
-    <table class="table table-sm table-striped align-middle">
-      <thead class="table-light">
-        <tr><th>Date</th><th class="text-end">Count</th><th class="text-end">Amount</th></tr>
-      </thead>
-      <tbody>
-        <?php foreach($groups as $g): ?>
-        <tr>
-          <td class="mono"><?= h($g['d']) ?></td>
-          <td class="text-end"><?= (int)$g['n'] ?></td>
-          <td class="text-end"><?= number_format((float)$g['s'],2) ?></td>
-        </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-  <?php endif; ?>
 
   <!-- Rows -->
   <div class="table-responsive">

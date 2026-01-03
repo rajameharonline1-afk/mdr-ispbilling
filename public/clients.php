@@ -30,9 +30,6 @@ $hasExpire  = in_array('expiry_date', $clientCols, true);
 $AREA_COL       = pick_col($clientCols, ['area','zone','location']);
 $SUB_ZONE_COL   = pick_col($clientCols, ['sub_zone','subzone','sub_area']);
 $BOX_COL        = pick_col($clientCols, ['box','distribution_box','box_name']);
-$PROTOCOL_COL   = pick_col($clientCols, ['protocol_type','protocol']);
-$PROFILE_COL    = pick_col($clientCols, ['profile','pppoe_profile','profile_name','mt_profile']);
-$CLIENT_TYPE_COL= pick_col($clientCols, ['client_type','customer_type']);
 $CONN_TYPE_COL  = pick_col($clientCols, ['connection_type','conn_type']);
 $B_STATUS_COL   = pick_col($clientCols, ['billing_status','payment_status']);
 $M_STATUS_COL   = pick_col($clientCols, ['mikrotik_status','m_status','mt_status']);
@@ -48,11 +45,6 @@ try { $pkgCols = $pdo->query("SHOW COLUMNS FROM packages")->fetchAll(PDO::FETCH_
 $pkgNameParts = [];
 foreach (['name','title','package_name'] as $c) { if (in_array($c,$pkgCols,true)) $pkgNameParts[] = "p.`$c`"; }
 $PKG_NAME_EXPR = $pkgNameParts ? ('COALESCE('.implode(',', $pkgNameParts).')') : 'NULL';
-
-$pkgProfileCols = array_values(array_filter(
-  ['profile','profile_name','pppoe_profile','mt_profile','router_profile'],
-  fn($c) => in_array($c, $pkgCols, true)
-));
 
 $rtCols = [];
 try { $rtCols = $pdo->query("SHOW COLUMNS FROM routers")->fetchAll(PDO::FETCH_COLUMN); } catch (Throwable $e) {}
@@ -82,13 +74,10 @@ if ($zone === '' && $area !== '') $zone = $area;
 
 $sub_zone   = trim($_GET['sub_zone'] ?? '');
 $box        = trim($_GET['box'] ?? '');
-$protocol   = trim($_GET['protocol'] ?? '');
-$profile    = trim($_GET['profile'] ?? '');
-$client_type = trim($_GET['client_type'] ?? '');
 $connection_type = trim($_GET['connection_type'] ?? '');
 $b_status   = trim($_GET['b_status'] ?? '');
-$m_status   = trim($_GET['m_status'] ?? '');
-$custom_status = trim($_GET['custom_status'] ?? '');
+$m_status   = strtolower(trim($_GET['m_status'] ?? ''));
+$custom_status = strtolower(trim($_GET['custom_status'] ?? ''));
 
 $join_from  = trim($_GET['join_from'] ?? '');
 $join_to    = trim($_GET['join_to']   ?? '');
@@ -108,12 +97,12 @@ if (!preg_match($re_date, $to_date))   $to_date   = '';
 if (!preg_match($re_date, $exp_from))  $exp_from  = '';
 if (!preg_match($re_date, $exp_to))    $exp_to    = '';
 
-if ($CUSTOM_STATUS_COL === '') {
-  if ($custom_status !== '' && in_array($custom_status, $allowedStatus, true)) {
-    $status = $custom_status;
-  } elseif ($custom_status !== '') {
-    $custom_status = '';
-  }
+if (!in_array($custom_status, ['online','offline'], true)) {
+  $custom_status = '';
+}
+if ($custom_status !== '') {
+  $status = $custom_status;
+  $live = 1; // Ensure online/offline uses live overlay from MikroTik.
 }
 if ($custom_status === '' && $status !== '') {
   $custom_status = $status;
@@ -121,6 +110,7 @@ if ($custom_status === '' && $status !== '') {
 
 /* ---- Sorting (?sort=name&dir=asc) ---- */
 $sort   = strtolower($_GET['sort'] ?? 'id');
+$explicit_sort = !empty($_GET['sort']);
 $dirRaw = strtolower($_GET['dir']  ?? 'desc');
 $dirRaw = in_array($dirRaw, ['asc','desc'], true) ? $dirRaw : 'desc';
 
@@ -178,13 +168,14 @@ if ($hasLeft) {
 }
 
 /* Status quick filters (DB-level only) */
+$force_live_online_filter = ($custom_status === 'online' || $custom_status === 'offline');
 if ($status === 'active') {
     $sql_base .= " AND c.status = 'active'";
 } elseif ($status === 'inactive') {
     $sql_base .= " AND c.status = 'inactive'";
-} elseif ($status === 'online' && $hasOnline) {
+} elseif ($status === 'online' && $hasOnline && !$force_live_online_filter) {
     $sql_base .= " AND c.is_online = 1";
-} elseif ($status === 'offline' && $hasOnline) {
+} elseif ($status === 'offline' && $hasOnline && !$force_live_online_filter) {
     $sql_base .= " AND c.is_online = 0";
 }
 
@@ -201,26 +192,17 @@ if ($router_id  > 0) { $sql_base .= " AND c.router_id  = ?";  $params[] = $route
 if ($hasArea && $zone !== '') { $sql_base .= " AND c.`{$AREA_COL}` = ?"; $params[] = $zone; }
 if ($hasSubZone && $sub_zone !== '') { $sql_base .= " AND c.`{$SUB_ZONE_COL}` = ?"; $params[] = $sub_zone; }
 if ($hasBox && $box !== '') { $sql_base .= " AND c.`{$BOX_COL}` = ?"; $params[] = $box; }
-if ($PROTOCOL_COL !== '' && $protocol !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$PROTOCOL_COL}`)) = TRIM(LOWER(?))"; $params[] = $protocol; }
-if ($CLIENT_TYPE_COL !== '' && $client_type !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$CLIENT_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $client_type; }
 if ($CONN_TYPE_COL !== '' && $connection_type !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$CONN_TYPE_COL}`)) = TRIM(LOWER(?))"; $params[] = $connection_type; }
 if ($B_STATUS_COL !== '' && $b_status !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$B_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $b_status; }
-if ($M_STATUS_COL !== '' && $m_status !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$M_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $m_status; }
-if ($CUSTOM_STATUS_COL !== '' && $custom_status !== '') { $sql_base .= " AND TRIM(LOWER(c.`{$CUSTOM_STATUS_COL}`)) = TRIM(LOWER(?))"; $params[] = $custom_status; }
-
-if ($profile !== '') {
-  if ($PROFILE_COL !== '') {
-    $sql_base .= " AND TRIM(LOWER(c.`{$PROFILE_COL}`)) = TRIM(LOWER(?))";
-    $params[] = $profile;
-  } elseif (!empty($pkgProfileCols)) {
-    $or = [];
-    foreach ($pkgProfileCols as $col) {
-      $or[] = "TRIM(LOWER(p.`{$col}`)) = TRIM(LOWER(?))";
-      $params[] = $profile;
-    }
-    $sql_base .= " AND (" . implode(' OR ', $or) . ")";
-  }
+if ($m_status === 'enabled') {
+  $sql_base .= " AND c.status = 'active'";
+} elseif ($m_status === 'disabled') {
+  $sql_base .= " AND c.status = 'inactive'";
+} elseif ($M_STATUS_COL !== '' && $m_status !== '') {
+  $sql_base .= " AND TRIM(LOWER(c.`{$M_STATUS_COL}`)) = TRIM(LOWER(?))";
+  $params[] = $m_status;
 }
+// Custom Status dropdown only represents online/offline; filter via status logic instead.
 
 /* বাংলা নোট: ইনডেক্স বাঁচাতে DATE() এড়াই; DATETIME ধরে বাউন্ড সেট */
 if ($hasJoin) {
@@ -308,7 +290,7 @@ if ($live && count($clients) > 0) {
     }
     unset($c);
 
-    if (!$hasOnline && ($status === 'online' || $status === 'offline')) {
+    if (($status === 'online' || $status === 'offline') && ($force_live_online_filter || !$hasOnline)) {
         $want = ($status === 'online') ? 1 : 0;
         $clients = array_values(array_filter($clients, fn($c) => (int)($c['_live_online'] ?? 0) === $want));
         $total_records = count($clients);
@@ -336,29 +318,13 @@ if (!function_exists('distinct_values')) {
 $zones = $hasArea ? distinct_values($pdo, 'clients', $AREA_COL) : [];
 $sub_zones_list = $hasSubZone ? distinct_values($pdo, 'clients', $SUB_ZONE_COL) : [];
 $boxes = $hasBox ? distinct_values($pdo, 'clients', $BOX_COL) : [];
-$protocols = ($PROTOCOL_COL !== '') ? distinct_values($pdo, 'clients', $PROTOCOL_COL) : [];
-$client_types = ($CLIENT_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CLIENT_TYPE_COL) : [];
 $connection_types = ($CONN_TYPE_COL !== '') ? distinct_values($pdo, 'clients', $CONN_TYPE_COL) : [];
 $b_statuses = ($B_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $B_STATUS_COL) : [];
-$m_statuses = ($M_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $M_STATUS_COL) : [];
-$custom_statuses = ($CUSTOM_STATUS_COL !== '') ? distinct_values($pdo, 'clients', $CUSTOM_STATUS_COL) : [];
-
-$profiles = [];
-if ($PROFILE_COL !== '') {
-  $profiles = distinct_values($pdo, 'clients', $PROFILE_COL);
-} elseif (!empty($pkgProfileCols)) {
-  $tmp = [];
-  foreach ($pkgProfileCols as $col) {
-    $tmp = array_merge($tmp, distinct_values($pdo, 'packages', $col));
-  }
-  $profiles = array_values(array_unique($tmp));
-  sort($profiles, SORT_NATURAL | SORT_FLAG_CASE);
-}
 
 /* UI: adv filter active? */
 $adv_active = (
   $package_id>0 || $router_id>0 || ($hasArea && $zone!=='') || ($hasSubZone && $sub_zone!=='') || ($hasBox && $box!=='') ||
-  $protocol!=='' || $profile!=='' || $client_type!=='' || $connection_type!=='' ||
+  $connection_type!=='' ||
   $b_status!=='' || $m_status!=='' || $custom_status!=='' ||
   ($hasJoin && ($join_from!=='' || $join_to!=='')) || ($hasExpire && ($exp_from!=='' || $exp_to!=='')) ||
   $from_date!=='' || $to_date!==''
@@ -439,26 +405,6 @@ require __DIR__ . '/../partials/partials_header.php';
           </div>
 
           <div class="col-6 col-md-4 col-xl-2">
-            <label class="form-label mb-1 text-uppercase small fw-semibold">Protocol Type</label>
-            <select name="protocol" class="form-select form-select-sm" <?= $PROTOCOL_COL==='' ? 'disabled' : '' ?>>
-              <option value="">Select</option>
-              <?php foreach($protocols as $p): ?>
-                <option value="<?= htmlspecialchars($p) ?>" <?= $protocol===$p?'selected':'' ?>><?= htmlspecialchars($p) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <div class="col-6 col-md-4 col-xl-2">
-            <label class="form-label mb-1 text-uppercase small fw-semibold">Profile</label>
-            <select name="profile" class="form-select form-select-sm" <?= empty($profiles) ? 'disabled' : '' ?>>
-              <option value="">Select</option>
-              <?php foreach($profiles as $p): ?>
-                <option value="<?= htmlspecialchars($p) ?>" <?= $profile===$p?'selected':'' ?>><?= htmlspecialchars($p) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <div class="col-6 col-md-4 col-xl-2">
             <label class="form-label mb-1 text-uppercase small fw-semibold">Zone</label>
             <select name="zone" class="form-select form-select-sm" <?= !$hasArea ? 'disabled' : '' ?>>
               <option value="">Select</option>
@@ -501,16 +447,6 @@ require __DIR__ . '/../partials/partials_header.php';
           </div>
 
           <div class="col-6 col-md-4 col-xl-2">
-            <label class="form-label mb-1 text-uppercase small fw-semibold">Client Type</label>
-            <select name="client_type" class="form-select form-select-sm" <?= $CLIENT_TYPE_COL==='' ? 'disabled' : '' ?>>
-              <option value="">Select</option>
-              <?php foreach($client_types as $ct): ?>
-                <option value="<?= htmlspecialchars($ct) ?>" <?= $client_type===$ct?'selected':'' ?>><?= htmlspecialchars($ct) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <div class="col-6 col-md-4 col-xl-2">
             <label class="form-label mb-1 text-uppercase small fw-semibold">Connection Type</label>
             <select name="connection_type" class="form-select form-select-sm" <?= $CONN_TYPE_COL==='' ? 'disabled' : '' ?>>
               <option value="">Select</option>
@@ -532,11 +468,10 @@ require __DIR__ . '/../partials/partials_header.php';
 
           <div class="col-6 col-md-4 col-xl-2">
             <label class="form-label mb-1 text-uppercase small fw-semibold">M.Status</label>
-            <select name="m_status" class="form-select form-select-sm" <?= $M_STATUS_COL==='' ? 'disabled' : '' ?>>
+            <select name="m_status" class="form-select form-select-sm">
               <option value="">Select</option>
-              <?php foreach($m_statuses as $ms): ?>
-                <option value="<?= htmlspecialchars($ms) ?>" <?= $m_status===$ms?'selected':'' ?>><?= htmlspecialchars($ms) ?></option>
-              <?php endforeach; ?>
+              <option value="enabled" <?= $m_status==='enabled'?'selected':'' ?>>Enabled</option>
+              <option value="disabled" <?= $m_status==='disabled'?'selected':'' ?>>Disabled</option>
             </select>
           </div>
 
@@ -544,19 +479,11 @@ require __DIR__ . '/../partials/partials_header.php';
             <label class="form-label mb-1 text-uppercase small fw-semibold">Custom Status</label>
             <select name="custom_status" class="form-select form-select-sm">
               <?php
-                $status_opts = [''=>'Select','active'=>'Active','inactive'=>'Inactive'];
-                if ($hasOnline || $live) { $status_opts['online']='Online'; $status_opts['offline']='Offline'; }
+                $status_opts = [''=>'Select','online'=>'Online','offline'=>'Offline'];
               ?>
-              <?php if ($CUSTOM_STATUS_COL !== ''): ?>
-                <option value="">Select</option>
-                <?php foreach($custom_statuses as $cs): ?>
-                  <option value="<?= htmlspecialchars($cs) ?>" <?= $custom_status===$cs?'selected':'' ?>><?= htmlspecialchars($cs) ?></option>
-                <?php endforeach; ?>
-              <?php else: ?>
-                <?php foreach($status_opts as $k=>$v): ?>
-                  <option value="<?= htmlspecialchars($k) ?>" <?= $custom_status===$k?'selected':'' ?>><?= htmlspecialchars($v) ?></option>
-                <?php endforeach; ?>
-              <?php endif; ?>
+              <?php foreach($status_opts as $k=>$v): ?>
+                <option value="<?= htmlspecialchars($k) ?>" <?= $custom_status===$k?'selected':'' ?>><?= htmlspecialchars($v) ?></option>
+              <?php endforeach; ?>
             </select>
           </div>
 
@@ -581,7 +508,7 @@ require __DIR__ . '/../partials/partials_header.php';
           <?php
             $base = $_GET;
             unset($base['status'],$base['custom_status'],$base['search'],$base['package_id'],$base['router_id'],$base['area'],$base['zone'],
-                  $base['sub_zone'],$base['box'],$base['protocol'],$base['profile'],$base['client_type'],$base['connection_type'],
+                  $base['sub_zone'],$base['box'],$base['connection_type'],
                   $base['b_status'],$base['m_status'],$base['from_date'],$base['to_date'],$base['join_from'],$base['join_to'],
                   $base['exp_from'],$base['exp_to'],$base['page']);
             $reset_qs = http_build_query($base);
@@ -601,9 +528,6 @@ require __DIR__ . '/../partials/partials_header.php';
           if ($hasArea && $zone!=='')       $badges[] = 'Zone: '.htmlspecialchars($zone);
           if ($hasSubZone && $sub_zone!=='') $badges[] = 'Sub Zone: '.htmlspecialchars($sub_zone);
           if ($hasBox && $box!=='')          $badges[] = 'Box: '.htmlspecialchars($box);
-          if ($protocol!=='')               $badges[] = 'Protocol: '.htmlspecialchars($protocol);
-          if ($profile!=='')                $badges[] = 'Profile: '.htmlspecialchars($profile);
-          if ($client_type!=='')            $badges[] = 'Client Type: '.htmlspecialchars($client_type);
           if ($connection_type!=='')        $badges[] = 'Conn Type: '.htmlspecialchars($connection_type);
           if ($b_status!=='')               $badges[] = 'B.Status: '.htmlspecialchars($b_status);
           if ($m_status!=='')               $badges[] = 'M.Status: '.htmlspecialchars($m_status);
@@ -648,6 +572,9 @@ require __DIR__ . '/../partials/partials_header.php';
     <a class="btn btn-outline-secondary btn-sm" href="export_clients.php?<?= $export_qs ?>">
       <i class="bi bi-filetype-csv"></i> Export CSV
     </a>
+    <a class="btn btn-primary btn-sm ms-auto" href="client_add.php">
+      <i class="bi bi-person-plus"></i> Add Client
+    </a>
   </div>
 
   <!-- Table -->
@@ -667,7 +594,7 @@ require __DIR__ . '/../partials/partials_header.php';
           <?php if ($showOnlineCol): ?><th><?= $hasOnline ? sort_link('online','Online') : 'Online' ?></th><?php endif; ?>
           <?php if ($hasJoin): ?><th><?= sort_link('join',   'Join Date') ?></th><?php endif; ?>
           <?php if ($hasExpire): ?><th><?= sort_link('expiry','Expiry') ?></th><?php endif; ?>
-          <th><?= sort_link('balance','Balance') ?></th>
+          <!-- <th><?= sort_link('balance','Balance') ?></th> -->
           <th>Action</th>
         </tr>
       </thead>
@@ -681,7 +608,16 @@ require __DIR__ . '/../partials/partials_header.php';
           </td>
           <td data-label="Client ID" class="text-monospace"><?= (int)$client['id']; ?></td>
 
-          <td data-label="Name"><?= htmlspecialchars($client['name']); ?></td>
+          <td data-label="Name">
+            <?= htmlspecialchars($client['name']); ?>
+            <?php
+              $sub_label = $client[$SUB_ZONE_COL] ?? ($client['sub_zone'] ?? '');
+              $box_label = $client[$BOX_COL] ?? ($client['box_name'] ?? '');
+            ?>
+            <div class="text-muted small">
+              <?= h($sub_label ?? '') ?><?= ($box_label ?? '') !== '' ? ' • '.h($box_label) : '' ?>
+            </div>
+          </td>
 
           <?php if ($hasArea): ?>
           <td data-label="Area"><?= htmlspecialchars($client[$AREA_COL] ?? ''); ?></td>
@@ -732,7 +668,7 @@ require __DIR__ . '/../partials/partials_header.php';
           <td data-label="Expiry"><?= htmlspecialchars($client['expiry_date'] ?? ''); ?></td>
           <?php endif; ?>
 
-          <td data-label="Balance"><?= number_format((float)($client['ledger_balance'] ?? 0), 0, '.', ',') ?></td>
+          <!-- <td data-label="Balance"><?= number_format((float)($client['ledger_balance'] ?? 0), 0, '.', ',') ?></td> -->
 
           <td data-label="Action">
             <div class="btn-group btn-group-sm" role="group">

@@ -52,6 +52,9 @@ if (empty($_SESSION['csrf_token'])) {
   $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 $CSRF = $_SESSION['csrf_token'];
+if (empty($_SESSION['csrf'])) {
+  $_SESSION['csrf'] = $CSRF;
+}
 
 /* -------------- flash -------------- */
 $flash = $_SESSION['flash'] ?? '';

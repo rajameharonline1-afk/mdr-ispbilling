@@ -10,6 +10,7 @@ date_default_timezone_set('Asia/Dhaka');
 
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/routeros_api.class.php';
+require_once __DIR__ . '/../app/audit.php';
 
 /* ================= Config ================= */
 // (বাংলা) disable করলে active থেকেও কিক করবে—true রাখাই ভালো
@@ -30,7 +31,7 @@ function tbl_exists(PDO $pdo, string $tbl): bool {
     try { $pdo->query("SELECT 1 FROM `$tbl` LIMIT 1"); return true; }
     catch (Throwable $e) { return false; }
 }
-function audit_log(PDO $pdo, string $action, array $meta = []): void {
+function audit_log_legacy(PDO $pdo, string $action, array $meta = []): void {
     // (বাংলা) audit_logs / audit — যেটা আছে স্কিমা-সেফ ভাবে লিখি; না থাকলে স্কিপ
     $table = tbl_exists($pdo, 'audit_logs') ? 'audit_logs' : (tbl_exists($pdo,'audit') ? 'audit' : '');
     if (!$table) return;
@@ -143,17 +144,17 @@ $due_sql = "
 SELECT c.id, c.name, c.pppoe_id, c.router_id, COALESCE(c.ledger_balance,0) AS due
 ".($has_status ? ", c.status" : "")."
 FROM clients c
-WHERE $where AND COALESCE(c.ledger_balance,0) > ?
-ORDER BY c.ledger_balance DESC
+WHERE $where AND COALESCE(c.ledger_balance,0) < ?
+ORDER BY c.ledger_balance ASC
 LIMIT $batch
 ";
-$due_args = array_merge($args, [$due_limit]);
+$due_args = array_merge($args, [0 - $due_limit]);
 
 $enable_sql = "
 SELECT c.id, c.name, c.pppoe_id, c.router_id, COALESCE(c.ledger_balance,0) AS due
 ".($has_status ? ", c.status" : "")."
 FROM clients c
-WHERE $where AND COALESCE(c.ledger_balance,0) <= 0
+WHERE $where AND COALESCE(c.ledger_balance,0) >= 0
 ".($has_suspend_flag ? " AND COALESCE(c.suspend_by_billing,0)=1" : "")."
 ORDER BY c.id ASC
 LIMIT $batch
@@ -164,7 +165,6 @@ $st1 = $pdo->prepare($due_sql);    $st1->execute($due_args); $to_suspend = $st1-
 $st2 = $pdo->prepare($enable_sql); $st2->execute($args);     $to_enable  = $st2->fetchAll(PDO::FETCH_ASSOC);
 
 if (!$to_suspend && !$to_enable) {
-    header('Content-Type: text/plain; charset=utf-8');
     echo "[".date('Y-m-d H:i:s')."] Nothing to do (filters applied). due_limit={$due_limit}, router_id={$router_id}, area='{$area}', batch={$batch}, dry={$dry}\n";
     exit;
 }
@@ -222,12 +222,21 @@ foreach ($g_suspend as $rid => $rows) {
                 $pdo->prepare("UPDATE clients SET status='inactive', updated_at=NOW() WHERE id=?")->execute([(int)$c['id']]);
             }
 
-            audit_log($pdo, 'pppoe_suspend_due', [
-                'client_id'=>(int)$c['id'],
-                'pppoe_id'=>$pppoe,
-                'router_id'=>(int)$rid,
-                'ledger'=>(float)$c['due']
-            ]);
+            if (function_exists('audit_log')) {
+                audit_log('client', (int)$c['id'], 'pppoe_suspend_due', null, [
+                    'client_id'=>(int)$c['id'],
+                    'pppoe_id'=>$pppoe,
+                    'router_id'=>(int)$rid,
+                    'ledger'=>(float)$c['due']
+                ]);
+            } else {
+                audit_log_legacy($pdo, 'pppoe_suspend_due', [
+                    'client_id'=>(int)$c['id'],
+                    'pppoe_id'=>$pppoe,
+                    'router_id'=>(int)$rid,
+                    'ledger'=>(float)$c['due']
+                ]);
+            }
             echo "[".date('Y-m-d H:i:s')."] DISABLED {$pppoe} due={$c['due']} (router={$rid})\n";
             if ($DISCONNECT_ACTIVE_SESSION && $res['kicked']>0) {
                 echo "[".date('Y-m-d H:i:s')."] KICKED {$res['kicked']} active session(s) {$pppoe}\n";
@@ -259,12 +268,21 @@ foreach ($g_enable as $rid => $rows) {
                 $summary['enabled']++;
                 $summary['routers'][$rid]['enable'] = ($summary['routers'][$rid]['enable'] ?? 0) + 1;
 
-                audit_log($pdo, 'pppoe_enable_after_payment', [
-                    'client_id'=>(int)$c['id'],
-                    'pppoe_id'=>$pppoe,
-                    'router_id'=>(int)$rid,
-                    'ledger'=>(float)$c['due']
-                ]);
+                if (function_exists('audit_log')) {
+                    audit_log('client', (int)$c['id'], 'pppoe_enable_after_payment', null, [
+                        'client_id'=>(int)$c['id'],
+                        'pppoe_id'=>$pppoe,
+                        'router_id'=>(int)$rid,
+                        'ledger'=>(float)$c['due']
+                    ]);
+                } else {
+                    audit_log_legacy($pdo, 'pppoe_enable_after_payment', [
+                        'client_id'=>(int)$c['id'],
+                        'pppoe_id'=>$pppoe,
+                        'router_id'=>(int)$rid,
+                        'ledger'=>(float)$c['due']
+                    ]);
+                }
                 echo "[".date('Y-m-d H:i:s')."] ENABLED {$pppoe} due={$c['due']} (router={$rid})\n";
             }
         } catch (Throwable $e) {
@@ -279,7 +297,6 @@ foreach ($apis as $rid => $api) {
 }
 
 // ---------- Output ----------
-header('Content-Type: text/plain; charset=utf-8');
 echo "Auto Suspend/Enable Summary\n";
 echo "due_limit={$due_limit}, router_id={$router_id}, area='{$area}', batch={$batch}, dry={$dry}\n";
 echo "suspended={$summary['suspended']}, kicked={$summary['kicked']}, enabled={$summary['enabled']}, skipped={$summary['skipped']}\n";

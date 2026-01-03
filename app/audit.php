@@ -110,11 +110,12 @@ function audit_client_ip(): string {
   return '';
 }
 
-/* ---------- main logger ---------- */
-function audit_log(string $entity, ?int $entity_id, string $action, array $old=null, array $new=null): void {
+/* ---------- main logger (flexible signatures) ---------- */
+function _audit_write(string $entity, ?int $entity_id, string $action, $old=null, $new=null): void {
   $pdo = audit_db(); audit_bootstrap();
 
   $uid = audit_current_user_id();
+  if ($uid === null || $uid <= 0) $uid = 0;
   $ip  = audit_client_ip();
   $ua  = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
 
@@ -133,4 +134,72 @@ function audit_log(string $entity, ?int $entity_id, string $action, array $old=n
     $ip,
     $ua
   ]);
+}
+
+function _audit_int($v): ?int {
+  if ($v === null || $v === '') return null;
+  return is_numeric($v) ? (int)$v : null;
+}
+
+function _audit_guess_entity(string $action): string {
+  $a = strtolower($action);
+  foreach ([
+    'client'   => ['client','pppoe','ppp'],
+    'payment'  => ['payment','pay'],
+    'invoice'  => ['invoice','bill'],
+    'expense'  => ['expense'],
+    'employee' => ['employee','hr'],
+    'user'     => ['user','role','permission'],
+    'router'   => ['router'],
+  ] as $entity => $keys) {
+    foreach ($keys as $k) if (str_contains($a, $k)) return $entity;
+  }
+  return 'system';
+}
+
+function audit_log(...$args): void {
+  $entity = 'system';
+  $entity_id = null;
+  $action = '';
+  $old = null;
+  $new = null;
+
+  $argc = count($args);
+  if ($argc >= 3) {
+    // (entity, entity_id, action, old?, new?)
+    if (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
+      $entity = $args[0];
+      $entity_id = _audit_int($args[1]);
+      $action = $args[2];
+      $old = $args[3] ?? null;
+      $new = $args[4] ?? null;
+    // (action, entity, entity_id, meta)
+    } elseif (is_string($args[0]) && is_string($args[1]) && (is_numeric($args[2]) || $args[2] === null)) {
+      $action = $args[0];
+      $entity = $args[1];
+      $entity_id = _audit_int($args[2]);
+      $new = $args[3] ?? null;
+    // (user_id, entity_id, action, meta)
+    } elseif (is_numeric($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
+      $entity_id = _audit_int($args[1]);
+      $action = $args[2];
+      $entity = _audit_guess_entity($action);
+      $new = $args[3] ?? null;
+    } else {
+      $action = is_string($args[0]) ? $args[0] : 'event';
+      $new = $args[1] ?? null;
+    }
+  } elseif ($argc === 2 && is_string($args[0]) && is_array($args[1])) {
+    // (action, meta)
+    $action = $args[0];
+    $new = $args[1];
+  }
+
+  if ($action === '') return;
+  _audit_write($entity, $entity_id, $action, $old, $new);
+}
+
+// Simple wrapper used by older code: audit(action, entity, entity_id, meta)
+function audit(string $action, string $entity='system', ?int $entity_id=null, array $meta=[]): void {
+  _audit_write($entity, $entity_id, $action, null, $meta);
 }

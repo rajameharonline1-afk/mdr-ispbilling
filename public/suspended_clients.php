@@ -3,7 +3,7 @@
 // Purpose: Nicely designed list + summary of auto-suspended clients
 // Style: Procedural PHP + PDO; Code English, comments in Bangla
 // Notes:
-// - Schema-aware: prefers clients.suspend_by_billing=1; falls back to (status='inactive' AND ledger_balance>0)
+// - Schema-aware: prefers clients.suspend_by_billing=1; falls back to (status='inactive' AND ledger_balance<0)
 // - Optional columns used if exist: suspend_by_billing, suspended_at, status, is_left
 // - Sorting via ?sort=&dir= (ASC|DESC), Pagination via ?page=&per_page=
 // - Filters: router, area, search (name/pppoe/mobile), date range (if suspended_at exists)
@@ -77,7 +77,7 @@ $where[] = "c.router_id IS NOT NULL";
 if ($has_sbf) {
   $where[] = "COALESCE(c.suspend_by_billing,0)=1";
 } else {
-  $clause = "COALESCE(c.ledger_balance,0)>0";
+  $clause = "COALESCE(c.ledger_balance,0)<0";
   if ($has_status) $clause .= " AND c.status='inactive'";
   $where[] = $clause;
 }
@@ -334,9 +334,9 @@ if (!try_include_partial($ROOT.'/partials/partials_header.php')) {
               <td><?=h($r['router_name'])?></td>
               <td><?=h($r['area'])?></td>
               <td>
-                <?php $due = (float)$r['due']; ?>
-                <span class="badge rounded-pill <?= $due>0?'text-bg-danger':'text-bg-success' ?>">
-                  <?= number_format($due, 2) ?>
+                <?php $due = (float)$r['due']; $due_abs = abs($due); ?>
+                <span class="badge rounded-pill <?= $due<0?'text-bg-danger':'text-bg-success' ?>">
+                  <?= number_format($due_abs, 2) ?>
                 </span>
               </td>
               <?php if ($has_status): ?>
@@ -351,7 +351,7 @@ if (!try_include_partial($ROOT.'/partials/partials_header.php')) {
 
                 <?php
                   // (বাংলা) Enable Now বাটন—flag থাকলে সরাসরি, নচেৎ fallback logic
-                  $can_enable = $has_sbf ? true : ($has_status && strtolower((string)$r['status'])==='inactive' && ((float)$r['due'])>0);
+                  $can_enable = $has_sbf ? true : ($has_status && strtolower((string)$r['status'])==='inactive' && ((float)$r['due'])<0);
                   if ($can_enable):
                 ?>
                   <button

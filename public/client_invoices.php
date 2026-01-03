@@ -144,7 +144,7 @@ include __DIR__ . '/../partials/partials_header.php';
   <!-- Client header -->
   <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
     <h5 class="mb-0"><i class="bi bi-receipt"></i> Invoices — <?= h($c['name']) ?> <span class="text-muted small">(#<?= (int)$c['id'] ?>)</span></h5>
-    <?php $lb=(float)$c['ledger_balance']; $lcls=$lb>0?'pos':($lb<0?'neg':''); ?>
+    <?php $lb=(float)$c['ledger_balance']; $lcls=$lb<0?'pos':($lb>0?'neg':''); ?>
     <span class="badge badge-ledger <?= $lcls ?>">Ledger: <?= number_format($lb,2) ?></span>
     <div class="ms-auto d-flex gap-2">
       <a class="btn btn-sm btn-outline-secondary" href="client_view.php?id=<?= (int)$c['id'] ?>"><i class="bi bi-person"></i> Client</a>

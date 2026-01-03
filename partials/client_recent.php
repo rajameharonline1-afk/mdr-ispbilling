@@ -61,13 +61,18 @@ $inv_has_idate     = $has_invoices && col_exists($pdo, 'invoices', 'invoice_date
 $inv_has_created   = $has_invoices && col_exists($pdo, 'invoices', 'created_at');
 
 $inv_date_col   = $inv_has_idate ? 'invoice_date' : ($inv_has_created ? 'created_at' : 'id');
-$inv_amt_expr   = $inv_has_total ? 'total' : ($inv_has_amount ? 'amount' : ($inv_has_payable ? 'payable' : '0'));
+$inv_amt_expr   = "COALESCE(".
+  ($inv_has_total ? "i.total," : "").
+  ($inv_has_payable ? "i.payable," : "").
+  ($inv_has_amount ? "i.amount," : "").
+  "0)";
 $inv_month_expr = $inv_has_bm ? 'billing_month'
                 : (($inv_has_year && $inv_has_month) ? "CONCAT(LPAD(`year`,4,'0'),'-',LPAD(`month`,2,'0'))" : "NULL");
 
 /* ---------- Payments schema detect ---------- */
 $has_payments      = tbl_exists($pdo, 'payments');
 $pay_has_bill_id   = $has_payments && col_exists($pdo, 'payments', 'bill_id');
+$pay_has_invoice_id= $has_payments && col_exists($pdo, 'payments', 'invoice_id');
 $pay_has_client_id = $has_payments && col_exists($pdo, 'payments', 'client_id');
 $pay_has_amount    = $has_payments && col_exists($pdo, 'payments', 'amount');
 $pay_has_method    = $has_payments && col_exists($pdo, 'payments', 'method');
@@ -80,11 +85,20 @@ $pay_date_col      = $pay_has_paid_at ? 'p.paid_at' : ($pay_has_created ? 'p.cre
 /* ---------- Recent Invoices ---------- */
 $recent_invoices = [];
 if ($client_id && $has_invoices && $inv_has_client_id) {
+  $pay_fk = $pay_has_invoice_id ? 'invoice_id' : ($pay_has_bill_id ? 'bill_id' : null);
+  $pay_sum = $pay_fk
+    ? "(SELECT COALESCE(SUM(pm.amount - ".($pay_has_discount ? "COALESCE(pm.discount,0)" : "0")."),0) FROM payments pm WHERE pm.`$pay_fk`=i.id)"
+    : "0";
+  $computed_status = "CASE
+    WHEN $pay_sum <= 0 THEN 'unpaid'
+    WHEN $pay_sum >= ($inv_amt_expr) THEN 'paid'
+    ELSE 'partial' END";
   $sql = "
     SELECT i.id,
            ".($inv_has_number ? "i.invoice_number," : "NULL AS invoice_number,")."
            {$inv_amt_expr} AS total_amount,
            ".($inv_has_status ? "i.status," : "NULL AS status,")."
+           $computed_status AS computed_status,
            {$inv_month_expr} AS bill_month,
            i.{$inv_date_col} AS inv_date
     FROM invoices i
@@ -100,6 +114,7 @@ if ($client_id && $has_invoices && $inv_has_client_id) {
 /* ---------- Recent Payments ---------- */
 $recent_payments = [];
 if ($client_id && $has_payments && $pay_has_amount) {
+  $pay_fk = $pay_has_invoice_id ? 'invoice_id' : ($pay_has_bill_id ? 'bill_id' : null);
   if ($pay_has_client_id) {
     $sql = "
       SELECT p.id,
@@ -108,10 +123,11 @@ if ($client_id && $has_payments && $pay_has_amount) {
              ".($pay_has_discount ? "p.discount," : "0 AS discount,")."
              ".($pay_has_method ? "p.method," : "NULL AS method,")."
              ".($pay_has_txn ? "p.txn_id," : "NULL AS txn_id,")."
-             ".($pay_has_bill_id ? "p.bill_id," : "NULL AS bill_id,")."
+             ".($pay_fk ? "p.`$pay_fk` AS bill_id," : "NULL AS bill_id,")."
              NULL AS bill_month,
-             NULL AS invoice_number
+             ".($pay_fk && $has_invoices && $inv_has_number ? "i.invoice_number" : "NULL")." AS invoice_number
       FROM payments p
+      ".($pay_fk && $has_invoices ? "LEFT JOIN invoices i ON i.id = p.`$pay_fk`" : "")."
       WHERE p.client_id = ?
       ORDER BY {$pay_date_col} DESC, p.id DESC
       LIMIT 5
@@ -119,7 +135,7 @@ if ($client_id && $has_payments && $pay_has_amount) {
     $st = $pdo->prepare($sql);
     $st->execute([$client_id]);
     $recent_payments = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-  } elseif ($pay_has_bill_id && $has_invoices) {
+  } elseif ($pay_fk && $has_invoices) {
     $sql = "
       SELECT p.id,
              p.".($pay_has_paid_at ? "paid_at" : ($pay_has_created ? "created_at" : "id"))." AS pay_date,
@@ -127,11 +143,11 @@ if ($client_id && $has_payments && $pay_has_amount) {
              ".($pay_has_discount ? "p.discount," : "0 AS discount,")."
              ".($pay_has_method ? "p.method," : "NULL AS method,")."
              ".($pay_has_txn ? "p.txn_id," : "NULL AS txn_id,")."
-             p.bill_id,
+             p.`$pay_fk` AS bill_id,
              {$inv_month_expr} AS bill_month,
              ".($inv_has_number ? "i.invoice_number" : "NULL")." AS invoice_number
       FROM payments p
-      INNER JOIN invoices i ON i.id = p.bill_id
+      INNER JOIN invoices i ON i.id = p.`$pay_fk`
       WHERE i.client_id = ?
       ORDER BY {$pay_date_col} DESC, p.id DESC
       LIMIT 5
@@ -151,11 +167,27 @@ $st_badge = function($status){
   return $status ? '<span class="badge text-bg-secondary">'.h($status).'</span>' : '';
 };
 
+$invoice_balance = null;
+if ($client_id && $has_invoices && $inv_has_client_id) {
+  $pay_fk = $pay_has_invoice_id ? 'invoice_id' : ($pay_has_bill_id ? 'bill_id' : null);
+  $pay_sum = $pay_fk
+    ? "(SELECT COALESCE(SUM(pm.amount - ".($pay_has_discount ? "COALESCE(pm.discount,0)" : "0")."),0) FROM payments pm WHERE pm.`$pay_fk`=i.id)"
+    : "0";
+  $invWhere = [];
+  if (col_exists($pdo,'invoices','is_void')) $invWhere[] = "i.is_void=0";
+  if (col_exists($pdo,'invoices','is_deleted')) $invWhere[] = "i.is_deleted=0";
+  if (col_exists($pdo,'invoices','deleted_at')) $invWhere[] = "i.deleted_at IS NULL";
+  if (col_exists($pdo,'invoices','status')) $invWhere[] = "COALESCE(i.status,'') NOT IN ('void','deleted','cancelled','canceled')";
+  $whereSql = $invWhere ? (' AND '.implode(' AND ', $invWhere)) : '';
+  $st = $pdo->prepare("SELECT COALESCE(SUM(GREATEST(0, $inv_amt_expr - $pay_sum)),0) FROM invoices i WHERE i.client_id=?".$whereSql);
+  $st->execute([$client_id]);
+  $invoice_balance = (float)$st->fetchColumn();
+}
 $ledgerBadge = function($v){
   if (!is_numeric($v)) return '';
-  $v = (float)$v; // +ve=Due, -ve=Advance
-  $cls = $v > 0 ? 'text-bg-danger' : ($v < 0 ? 'text-bg-success' : 'text-bg-secondary');
-  $label = $v > 0 ? 'Due' : ($v < 0 ? 'Advance' : 'Settled');
+  $v = (float)$v;
+  $cls = $v > 0 ? 'text-bg-danger' : 'text-bg-secondary';
+  $label = $v > 0 ? 'Due' : 'Settled';
   return '<span class="badge '.$cls.'">Ledger: '.$label.' '.fm(abs($v)).'</span>';
 };
 
@@ -167,8 +199,8 @@ $ledgerBadge = function($v){
       <div class="card-header d-flex align-items-center justify-content-between">
         <div class="d-flex align-items-center gap-2">
           <strong>Recent Invoices</strong>
-          <?php if ($ledger !== null): ?>
-            <span class="ms-2"><?php echo $ledgerBadge($ledger); ?></span>
+          <?php if ($invoice_balance !== null): ?>
+            <span class="ms-2"><?php echo $ledgerBadge($invoice_balance); ?></span>
           <?php endif; ?>
         </div>
         <div class="d-flex gap-2">
@@ -191,17 +223,29 @@ $ledgerBadge = function($v){
             </thead>
             <tbody>
             <?php if ($recent_invoices): foreach ($recent_invoices as $row):
-              $monthLbl = $row['bill_month'] ?: '';
+              $monthLbl = (string)($row['bill_month'] ?? '');
               $dateLbl  = $row['inv_date'] ? date('Y-m-d', strtotime((string)$row['inv_date'])) : '';
+              if ($monthLbl !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $monthLbl)) {
+                $monthLbl = date('Y-m', strtotime($monthLbl));
+              } elseif ($monthLbl === '' && $dateLbl) {
+                $monthLbl = date('Y-m', strtotime($dateLbl));
+              }
               $left     = $monthLbl ? h($monthLbl) : ($dateLbl ?: '-');
               $invNo    = $row['invoice_number'] ?: ('#'.(int)$row['id']);
               $amount   = (float)($row['total_amount'] ?? 0);
+              $status   = (string)($row['status'] ?? '');
+              $computed = (string)($row['computed_status'] ?? '');
+              if ($status === '' || in_array(strtolower($status), ['clear','cleared'], true)) {
+                $status = $computed;
+              }
+              $status = strtolower($status);
+              if ($status === 'due' || $status === 'unpaid') $status = 'unpaid';
             ?>
               <tr>
                 <td><?php echo $left, ($monthLbl && $dateLbl) ? ' <small class="text-muted">('.h($dateLbl).')</small>' : ''; ?></td>
                 <td><?php echo h($invNo); ?></td>
                 <td class="text-end"><?php echo fm($amount); ?></td>
-                <td><?php echo $st_badge($row['status'] ?? null); ?></td>
+                <td><?php echo $st_badge($status); ?></td>
                 <td class="text-center">
                   <a class="btn btn-sm btn-outline-secondary" href="/public/invoices.php?focus_id=<?php echo (int)$row['id']; ?>">View</a>
                 </td>
@@ -308,7 +352,7 @@ $ledgerBadge = function($v){
           <textarea class="form-control" rows="2" name="notes" placeholder="Optional notes"></textarea>
         </div>
         <div class="small text-muted">
-          On submit: payment → recompute invoice → ledger -= amount (already implemented in your system).
+          On submit: payment → recompute invoice → ledger += amount (already implemented in your system).
         </div>
       </div>
       <div class="modal-footer justify-content-between">

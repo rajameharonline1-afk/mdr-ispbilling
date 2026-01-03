@@ -24,9 +24,7 @@ function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function audit_client(string $action, int $client_id, array $details = []): void {
     if (!function_exists('audit_log')) return;
     try {
-        audit_log($action, 'client', $client_id, $details);
-    } catch (TypeError $e) {
-        try { audit_log($action, $client_id, $details); } catch (Throwable $e2) {}
+        audit_log('client', $client_id, $action, null, $details);
     } catch (Throwable $e) { /* ignore */ }
 }
 
@@ -155,7 +153,7 @@ function create_first_invoice(int $client_id, float $amount, ?int $package_id = 
                 foreach($olds as $o){
                     if ($has_ledger) {
                         $pdo->prepare("UPDATE clients SET ledger_balance = ledger_balance + :d WHERE id=:cid")
-                           ->execute([':d'=> -1*(float)$o['amt'], ':cid'=>$client_id]);
+                           ->execute([':d'=> (float)$o['amt'], ':cid'=>$client_id]);
                     }
                     $void->execute([(int)$o['id']]);
                     audit_client('invoice_void', $client_id, ['invoice_id'=>(int)$o['id']]);
@@ -207,7 +205,7 @@ function create_first_invoice(int $client_id, float $amount, ?int $package_id = 
 
         // (বাংলা) লেজার += amount
         if ($has_ledger) {
-            $pdo->prepare("UPDATE clients SET ledger_balance = ledger_balance + :d WHERE id=:cid")
+            $pdo->prepare("UPDATE clients SET ledger_balance = ledger_balance - :d WHERE id=:cid")
                ->execute([':d'=>$amount, ':cid'=>$client_id]);
         }
 
@@ -392,8 +390,16 @@ $HAS_NID         = db_has_column('clients','nid');
 $HAS_DOB         = db_has_column('clients','dob');
 $HAS_PHOTO_URL   = db_has_column('clients','photo_url');
 $HAS_PPPOE_PASS  = db_has_column('clients','pppoe_pass');
+$HAS_PPPOE_PASSWORD = db_has_column('clients','pppoe_password');
 $HAS_UPDATED_AT  = db_has_column('clients','updated_at');
 $HAS_CREATED_AT  = db_has_column('clients','created_at');
+$BILLING_STATUS_COL = db_has_column('clients','billing_status')
+  ? 'billing_status'
+  : (db_has_column('clients','payment_status') ? 'payment_status' : '');
+$ADVANCE_COLS = array_values(array_filter(
+  ['advance','advance_balance','advance_amount','prepaid','wallet_advance'],
+  fn($c) => db_has_column('clients', $c)
+));
 
 // Preload dropdown data (ম্যাপড তালিকা)
 $pdoOptions      = db();
@@ -427,13 +433,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $dob          = trim($_POST['dob'] ?? '');
     $pppoe_id     = trim($_POST['pppoe_id'] ?? '');
     $pppoe_pass   = trim($_POST['pppoe_pass'] ?? '');
+    $ppp_profile  = trim($_POST['ppp_profile'] ?? '');
     $package_id   = (int)($_POST['package_id'] ?? 0);
     $router_id    = (int)($_POST['router_id']  ?? 0);
     $selectedPackage = null;
     $monthly_bill = isset($_POST['monthly_bill']) && is_numeric($_POST['monthly_bill']) ? (float)$_POST['monthly_bill'] : 0.0;
     $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ''));
     $status       = trim($_POST['status'] ?? 'active');
-    $auto_invoice = isset($_POST['auto_invoice']) ? 1 : 0; // checkbox
+    $auto_invoice = 1; // always generate first invoice on client add
 
     // (বাংলা) ভ্যালিডেশন
     if ($name === '')        $errors[] = 'Name is required.';
@@ -475,8 +482,20 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $errors[] = 'Selected package is invalid.';
         }
     }
+    $package_price = 0.0;
+    if ($selectedPackage && is_numeric($selectedPackage['price'] ?? null)) {
+        $package_price = (float)$selectedPackage['price'];
+        if ($package_price > 0) {
+            $monthly_bill = $package_price;
+            $_POST['monthly_bill'] = (string)$monthly_bill;
+        }
+    }
     if (!$router_id && $selectedPackage && !empty($selectedPackage['router_id'])) {
         $router_id = (int)$selectedPackage['router_id'];
+        $_POST['router_id'] = (string)$router_id;
+    }
+    if (!$router_id && count($routers) === 1) {
+        $router_id = (int)$routers[0]['id'];
         $_POST['router_id'] = (string)$router_id;
     }
 
@@ -507,11 +526,24 @@ if (!$errors) {
             if ($HAS_JOIN_DATE)   { $cols[]='join_date';    $vals[]=':join_date';    $params[':join_date']= $join_date ?: date('Y-m-d'); }
             if ($HAS_NID)         { $cols[]='nid';          $vals[]=':nid';          $params[':nid']= ($nid==='')? null : $nid; }
             if ($HAS_DOB)         { $cols[]='dob';          $vals[]=':dob';          $params[':dob']= ($dob==='')? null : $dob; }
-            if ($HAS_PPPOE_PASS)  { $cols[]='pppoe_pass';   $vals[]=':pppoe_pass';   $params[':pppoe_pass']= ($pppoe_pass==='')? null : $pppoe_pass; }
+            if ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD)  {
+                $pppoe_store = ($pppoe_pass === '') ? $pppoe_id : $pppoe_pass;
+                if ($HAS_PPPOE_PASS) {
+                    $cols[]='pppoe_pass';   $vals[]=':pppoe_pass';   $params[':pppoe_pass']= $pppoe_store;
+                } else {
+                    $cols[]='pppoe_password';   $vals[]=':pppoe_pass';   $params[':pppoe_pass']= $pppoe_store;
+                }
+            }
             if ($HAS_PHOTO_URL)   { $cols[]='photo_url';    $vals[]=':photo_url';    $params[':photo_url']= $photo_url; }
             if ($expiry_date!==''){ $cols[]='expiry_date';  $vals[]=':expiry_date';  $params[':expiry_date']= $expiry_date; }
             if ($HAS_CREATED_AT)  { $cols[]='created_at';   $vals[]='NOW()'; }
             if ($HAS_UPDATED_AT)  { $cols[]='updated_at';   $vals[]='NOW()'; }
+            if ($BILLING_STATUS_COL !== '') { $cols[]=$BILLING_STATUS_COL; $vals[]=':billing_status'; $params[':billing_status']='unpaid'; }
+            foreach ($ADVANCE_COLS as $c) {
+                $cols[] = $c;
+                $vals[] = ':adv_'.$c;
+                $params[':adv_'.$c] = 0;
+            }
 
             $sql = "INSERT INTO clients (".implode(',', $cols).") VALUES (".implode(',', $vals).")";
             $ins = $pdo->prepare($sql);
@@ -519,10 +551,10 @@ if (!$errors) {
             $new_id = (int)$pdo->lastInsertId();
 
             if ($router_id && $pppoe_id) {
-                $profileName = $selectedPackage ? package_ppp_profile_name($selectedPackage) : null;
+                $profileName = ($ppp_profile !== '') ? $ppp_profile : ($selectedPackage ? package_ppp_profile_name($selectedPackage) : null);
                 $commentParts = array_filter([$name, $mobile], function($v){ return !empty($v); });
                 $comment = $commentParts ? implode(' | ', $commentParts) : '';
-                $pppPass = ($pppoe_pass === '') ? null : $pppoe_pass;
+                $pppPass = ($pppoe_pass === '') ? $pppoe_id : $pppoe_pass;
                 $secret = mikrotik_ensure_pppoe_secret((int)$router_id, $pppoe_id, $pppPass, $profileName, ['comment'=>$comment]);
                 if (!$secret['ok']) {
                     throw new RuntimeException('MikroTik sync failed: '.$secret['error']);
@@ -540,15 +572,6 @@ if (!$errors) {
             }
 
             $pdo->commit();
-            if ($area !== '') {
-                location_option_store($pdo, 'area', $area);
-            }
-            if ($HAS_SUB_ZONE && $sub_zone !== '') {
-                location_option_store($pdo, 'sub_zone', $sub_zone, '', $area ?: null);
-            }
-            if ($HAS_BOX && $box !== '') {
-                location_option_store($pdo, 'box', $box, '', $area ?: null, $sub_zone ?: null);
-            }
             $notice = 'Client created successfully.';
             if ($mtSyncNote === 'created') {
                 $notice .= ' (PPP secret added)';
@@ -571,8 +594,9 @@ if (!$errors) {
         }
 
         // (বাংলা) সেভ সফল হলে এবং অটো-ইনভয়েস চাইলে — বর্তমান মাসের বিল বানাও
-        if ($new_id && !$errors && $auto_invoice && $monthly_bill > 0) {
-            $new_invoice = create_first_invoice($new_id, (float)$monthly_bill, $package_id);
+        $invoice_amount = ($package_price > 0) ? $package_price : $monthly_bill;
+        if ($new_id && !$errors && $auto_invoice && $invoice_amount > 0) {
+            $new_invoice = create_first_invoice($new_id, (float)$invoice_amount, $package_id);
             if (!$new_invoice['ok']) {
                 $notice .= ' (Invoice skipped: '.$new_invoice['message'].')';
             } else {
@@ -603,10 +627,15 @@ include __DIR__ . '/../partials/partials_header.php';
   <div class="mb-3 d-flex justify-content-between align-items-center">
     <h6 class="mb-0"><i class="bi bi-person-plus"></i> Add Client</h6>
     <div class="d-flex gap-2">
+      <!-- <button type="submit" form="client-add-form" class="btn btn-primary btn-sm">
+        <i class="bi bi-save2"></i> Create Client
+      </button> -->
+      <button type="submit" form="client-add-form" class="btn btn-outline-secondary btn-sm" >Save</button>
       <?php if ($new_id): ?>
         <a class="btn btn-light btn-sm" href="/public/client_view.php?id=<?= (int)$new_id ?>"><i class="bi bi-eye"></i> View</a>
       <?php endif; ?>
-      <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php"><i class="bi bi-arrow-left"></i> Back</a></div>
+      <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php"><i class="bi bi-arrow-left"></i> Back</a>
+    </div>
   </div>
 
   <?php if ($errors): ?>
@@ -622,19 +651,49 @@ include __DIR__ . '/../partials/partials_header.php';
     </div>
   <?php endif; ?>
 
-  <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+  <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate id="client-add-form">
     <input type="hidden" name="csrf" value="<?= h($csrf_form) ?>">
     <div class="row g-3">
       <!-- Account -->
       <div class="col-12 col-lg-4">
         <div class="card-block h-100">
-          <div class="card-title">Account</div>
+          <div class="card-title">
+            <span style="font-weight: 700;font-size: 14px;font-weight: 700;"><i class="far fa-user icon-gap"></i> Personal Information</span>
+            <br>
+            <span style="font-size: 14px;">Fill Up All Required(<span style="color: red;font-weight: 300;">*</span>) Field Data</span>
+          </div>
           <div class="p-3">
 		  
             <div class="mb-2">
-              <label class="form-label req">Name</label>
-              <input type="text" name="name" class="form-control form-control-sm" value="<?= h($_POST['name'] ?? '') ?>" required>
+              <label class="form-label req">Customer Name</label>
+              <input type="text" name="name" class="form-control form-control-sm" placeholder="" value="<?= h($_POST['name'] ?? '') ?>" required>
             </div>
+
+            <div class="mb-2">
+              <label class="form-label req">Mobile Number</label>
+              <input type="text" name="mobile" pattern="\d{11}" maxlength="11" inputmode="numeric" class="form-control form-control-sm" value="<?= h($_POST['mobile'] ?? '') ?>" required>
+              <!-- <div class="form-text small">Enter 11-digit mobile number (digits only).</div> -->
+            </div>
+
+            
+            <div class="mb-2">
+              <label class="form-label">Email Address</label>
+              <input type="email" name="email" class="form-control form-control-sm" value="<?= h($_POST['email'] ?? '') ?>">
+            </div>
+            <?php if ($HAS_NID): ?>
+            <div class="mb-2">
+              <label class="form-label">NID No.</label>
+              <input type="text" name="nid" class="form-control form-control-sm" value="<?= h($_POST['nid'] ?? '') ?>">
+            </div>
+            <?php endif; ?>
+            <?php if ($HAS_DOB): ?>
+            <div class="mb-2">
+              <label class="form-label">DOB</label>
+              <input type="date" name="dob" class="form-control form-control-sm" value="<?= h($_POST['dob'] ?? '') ?>">
+            </div>
+            <?php endif; ?>
+
+
             <?php if ($HAS_CLIENT_CODE): ?>
             <div class="mb-2">
               <label class="form-label req">Client Code</label>
@@ -700,28 +759,6 @@ include __DIR__ . '/../partials/partials_header.php';
               <textarea name="address" class="form-control form-control-sm" rows="2"><?= h($_POST['address'] ?? '') ?></textarea>
             </div>
 
-            <div class="mb-2">
-              <label class="form-label req">Mobile</label>
-              <input type="text" name="mobile" pattern="\d{11}" maxlength="11" inputmode="numeric" class="form-control form-control-sm" value="<?= h($_POST['mobile'] ?? '') ?>" required>
-              <!-- <div class="form-text small">Enter 11-digit mobile number (digits only).</div> -->
-            </div>
-
-            <div class="mb-2">
-              <label class="form-label">Email</label>
-              <input type="email" name="email" class="form-control form-control-sm" value="<?= h($_POST['email'] ?? '') ?>">
-            </div>
-            <?php if ($HAS_NID): ?>
-            <div class="mb-2">
-              <label class="form-label">NID No.</label>
-              <input type="text" name="nid" class="form-control form-control-sm" value="<?= h($_POST['nid'] ?? '') ?>">
-            </div>
-            <?php endif; ?>
-            <?php if ($HAS_DOB): ?>
-            <div class="mb-2">
-              <label class="form-label">DOB</label>
-              <input type="date" name="dob" class="form-control form-control-sm" value="<?= h($_POST['dob'] ?? '') ?>">
-            </div>
-            <?php endif; ?>
           </div>
         </div>
       </div>
@@ -729,7 +766,12 @@ include __DIR__ . '/../partials/partials_header.php';
       <!-- Billing -->
       <div class="col-12 col-lg-4">
         <div class="card-block h-100">
-          <div class="card-title">Billing</div>
+          <div class="card-title">
+            <span style="font-weight: 700;font-size: 14px;font-weight: 700;"><i class="far fa-list-alt"></i> Billing Information</span>
+            <br>
+            <span style="font-size: 14px;">Fill Up All Required(<span style="color: red;font-weight: 300;">*</span>) Field Data</span>
+          </div>
+
           <div class="p-3">
             <div class="mb-2">
               <label class="form-label req">Package</label>
@@ -798,37 +840,54 @@ include __DIR__ . '/../partials/partials_header.php';
       <!-- Server / PPP + Photo -->
       <div class="col-12 col-lg-4">
         <div class="card-block h-100">
-          <div class="card-title">Server / PPP</div>
+          <div class="card-title"><span style="font-weight: 700;font-weight: 700;"><i class="fas fa-wifi icon-gap"></i> Service Information</span>
+          <br>
+          <span style="font-size: 14px;">Fill Up All Required(<span style="color: red;font-weight: 700;">*</span>) Field Data</span>
+        </div>
           <div class="p-3">
             <div class="mb-2">
-              <label class="form-label">Router</label>
+              <label class="form-label req">PPPoE Server</label>
               <select name="router_id" class="form-select form-select-sm">
-                <option value="">-- Select --</option>
+                <option value="">Select</option>
                 <?php foreach ($routers as $r): ?>
-                  <option value="<?= (int)$r['id'] ?>" <?= (isset($_POST['router_id']) && (int)$_POST['router_id']===(int)$r['id'])?'selected':'' ?>>
+                  <option value="<?= (int)$r['id'] ?>" <?= (isset($_POST['router_id']) && (int)$_POST['router_id']===(int)$r['id'])?'selected':'' ?>required>
                     <?= h($r['name']) ?>
                   </option>
                 <?php endforeach; ?>
               </select>
+              <div id="router_id" class="form-text small"></div>
             </div>
 
             <div class="mb-2">
-              <label class="form-label req">PPPoE Username</label>
+              <label class="form-label req">Username</label>
               <input type="text" name="pppoe_id" class="form-control form-control-sm mono" value="<?= h($_POST['pppoe_id'] ?? '') ?>" required>
+              <div id="pppoe_status" class="form-text small"></div>
             </div>
 
-            <?php if ($HAS_PPPOE_PASS): ?>
+            <?php if ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD): ?>
             <div class="mb-2">
-              <label class="form-label">PPPoE Password</label>
-              <input type="text" name="pppoe_pass" class="form-control form-control-sm mono" value="<?= h($_POST['pppoe_pass'] ?? '') ?>">
+              <label class="form-label req">Password</label>
+              <input type="text" name="pppoe_pass" class="form-control form-control-sm mono" value="<?= h($_POST['pppoe_pass'] ?? '') ?>"required>
+            <div id="pppoe_pass" class="form-text small"></div>
             </div>
             <?php endif; ?>
 
+            <div class="mb-2">
+              <label class="form-label req">Profile</label>
+              <select name="ppp_profile" id="ppp_profile" class="form-select form-select-sm">
+                <option value="">Select</option>
+                <?php if (!empty($_POST['ppp_profile'])): ?>
+                  <option value="<?= h($_POST['ppp_profile']) ?>" selected><?= h($_POST['ppp_profile']) ?></option>
+                <?php endif; ?>
+              </select>
+              <div id="ppp_profile" class="form-text small"></div>
+            </div>
+
             <div class="card mt-3">
-              <div class="card-header fw-bold">Profile Photo</div>
+              <div class="card-header fw-bold">Photo (optional)</div>
               <div class="card-body">
-                <input type="file" name="photo" id="photo" accept="image/*" class="form-control form-control-sm" <?= $HAS_PHOTO_URL?'':'disabled' ?>>
-                <div class="form-text small">Supported: JPG, PNG, WebP • Max 3MB • Filename will be PPPoE-ID</div>
+                <input type="file" name="photo" id="photo" accept="image/*" class="form-control form-control-sm" <?= $HAS_PHOTO_URL?'':'disabled' ?>required>
+                <div class="form-text small">Supported: JPG, PNG • Max 3MB • Filename will be PPPoE-ID</div>
               </div>
             </div>
 
@@ -837,9 +896,7 @@ include __DIR__ . '/../partials/partials_header.php';
       </div>
     </div>
 
-    <div class="d-flex justify-content-end mt-3">
-      <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save2"></i> Create Client</button>
-    </div>
+    <div class="d-flex justify-content-end mt-3"></div>
   </form>
 </div>
 
@@ -894,6 +951,8 @@ include __DIR__ . '/../partials/partials_header.php';
   const pkgSel = document.getElementById('package_id');
   const bill   = document.getElementById('monthly_bill');
   const routerSel = document.querySelector('select[name="router_id"]');
+  const pppoeInput = document.querySelector('input[name="pppoe_id"]');
+  const pppoeStatus = document.getElementById('pppoe_status');
   let routerTouched = false;
 
   routerSel?.addEventListener('change', () => { routerTouched = true; });
@@ -923,6 +982,78 @@ include __DIR__ . '/../partials/partials_header.php';
   if (pkgSel) {
     updateFromPackage({forceRouter:true});
   }
+
+  const pppSelect = document.getElementById('ppp_profile');
+  async function loadProfiles(routerId) {
+    if (!pppSelect) return;
+    const curVal = pppSelect.value || '';
+    pppSelect.innerHTML = '';
+    const baseOpt = document.createElement('option');
+    baseOpt.value = '';
+    baseOpt.textContent = 'Use package profile';
+    pppSelect.appendChild(baseOpt);
+    if (!routerId) return;
+    try {
+      const res = await fetch('../app/ppp_profiles.php?router_id=' + encodeURIComponent(routerId));
+      const data = await res.json();
+      if (data && data.status === 'success' && Array.isArray(data.profiles)) {
+        data.profiles.forEach((name) => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          pppSelect.appendChild(opt);
+        });
+        if (curVal) {
+          pppSelect.value = curVal;
+        }
+      }
+    } catch (e) {
+      // ignore profile fetch errors
+    }
+  }
+  if (routerSel) {
+    routerSel.addEventListener('change', () => loadProfiles(routerSel.value));
+    if (routerSel.value) loadProfiles(routerSel.value);
+  }
+
+  let checkTimer = null;
+  function setPppoeStatus(msg, cls) {
+    if (!pppoeStatus) return;
+    pppoeStatus.className = 'form-text small ' + (cls || '');
+    pppoeStatus.textContent = msg || '';
+  }
+  async function checkPppoeSecret() {
+    if (!pppoeInput || !routerSel) return;
+    const name = (pppoeInput.value || '').trim();
+    const rid = routerSel.value;
+    if (!rid || !name) {
+      setPppoeStatus('', '');
+      return;
+    }
+    setPppoeStatus('Checking...', 'text-muted');
+    try {
+      const res = await fetch('../api/pppoe_secret_check.php?router_id=' + encodeURIComponent(rid) + '&pppoe_id=' + encodeURIComponent(name));
+      const data = await res.json();
+      if (data && data.status === 'success') {
+        if (data.exists) {
+          setPppoeStatus('Already Exists...❌', 'text-danger');
+        } else {
+          setPppoeStatus('Available ✔', 'text-success');
+        }
+      } else {
+        setPppoeStatus('Check failed', 'text-danger');
+      }
+    } catch (e) {
+      setPppoeStatus('Check failed', 'text-danger');
+    }
+  }
+  function debounceCheck() {
+    if (checkTimer) clearTimeout(checkTimer);
+    checkTimer = setTimeout(checkPppoeSecret, 400);
+  }
+  pppoeInput?.addEventListener('input', debounceCheck);
+  pppoeInput?.addEventListener('blur', checkPppoeSecret);
+  routerSel?.addEventListener('change', debounceCheck);
 })();
 </script>
 
@@ -1135,6 +1266,9 @@ include __DIR__ . '/../partials/partials_header.php';
       }
       setNotice(`Saved: ${(data.value || label).trim()}.`, 'success');
       notify('Saved successfully.', 'success', 'Success');
+      const modal = ensureModal();
+      modal?.hide();
+      form?.reset();
     } catch (err) {
       const msg = err?.message || 'Could not save option.';
       setNotice(msg, 'error');

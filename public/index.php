@@ -57,7 +57,7 @@ $auto_suspended = 0;
 if (col_exists($pdo,'clients','suspend_by_billing')) {
   $auto_suspended = (int)q_scalar($pdo,"SELECT COUNT(*) FROM clients WHERE suspend_by_billing=1");
 } else {
-  $cond_due = $has_ledger_balance ? "COALESCE(ledger_balance,0)>0" : "1=1";
+  $cond_due = $has_ledger_balance ? "COALESCE(ledger_balance,0)<0" : "1=1";
   $auto_suspended = (int)q_scalar($pdo,"SELECT COUNT(*) FROM clients WHERE $cond_due AND COALESCE(status,'')='inactive'");
 }
 
@@ -83,11 +83,11 @@ $today_inactive = ($has_updated_at&&$has_status)? (int)q_scalar($pdo,"SELECT COU
 $total_due=0.0; $total_adv=0.0; $net_balance_now=0.0;
 if ($has_ledger_balance){
   $st=$pdo->query("SELECT
-    SUM(CASE WHEN ledger_balance>0 THEN ledger_balance ELSE 0 END),
-    SUM(CASE WHEN ledger_balance<0 THEN -ledger_balance ELSE 0 END)
+    SUM(CASE WHEN ledger_balance<0 THEN -ledger_balance ELSE 0 END),
+    SUM(CASE WHEN ledger_balance>0 THEN ledger_balance ELSE 0 END)
   FROM clients ".($has_is_left?"WHERE is_left=0":""));
   [$d,$a]=$st->fetch(PDO::FETCH_NUM) ?: [0,0];
-  $total_due=(float)$d; $total_adv=(float)$a; $net_balance_now=$total_due-$total_adv;
+  $total_due=(float)$d; $total_adv=(float)$a; $net_balance_now=$total_adv-$total_due;
 }
 
 // Top KPI calcs

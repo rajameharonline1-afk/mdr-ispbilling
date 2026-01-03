@@ -2,8 +2,8 @@
 // /api/auto_control_client.php
 // Purpose: Re-check ONE client by clients.ledger_balance and auto enable/suspend on MikroTik.
 // Action:
-//   - ledger_balance > 0  ➜ disable PPP secret (+kick active)
-//   - ledger_balance <= 0 ➜ enable PPP secret
+//   - ledger_balance < 0  ➜ disable PPP secret (+kick active)
+//   - ledger_balance >= 0 ➜ enable PPP secret
 // Bengali comments; code & labels in English.
 
 declare(strict_types=1);
@@ -91,10 +91,10 @@ $secret_id   = $sec[0]['.id'];
 $is_disabled = (isset($sec[0]['disabled']) && ($sec[0]['disabled']==='true' || $sec[0]['disabled']==='yes'));
 
 /* ---------- Decision by ledger_balance ---------- */
-// (বাংলা) +ve = Due, -ve/0 = Advance/Clear
+// (বাংলা) -ve = Due, +ve/0 = Advance/Clear
 $due = (float)($c['ledger_balance'] ?? 0.0);
 
-if ($due > 0) {
+if ($due < 0) {
   // (বাংলা) Disable if needed
   if (!$is_disabled) {
     $API->comm('/ppp/secret/set', ['.id'=>$secret_id, 'disabled'=>'yes']);

@@ -1896,3 +1896,1074 @@ Done. Processed clients: 3
 - Client #21828 (R3545003): CLEAR -> ENABLE
   - Secret already enabled
 Done. Processed clients: 3
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 3
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 3
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 3
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 3
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+  - Active session removed
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+  - Active session removed
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21826 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21827 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21828 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+  - Active session removed
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21834 (5551): CLEAR -> ENABLE
+  - PPPoE secret not found: 5551
+Done. Processed clients: 1
+[!] No clients found.
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21841 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21842 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21842 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21842 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21844 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21845 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21847 (test1): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21847 (test1): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 2
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21847 (test1): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21848 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21849 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 4
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21846 (test): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21847 (test1): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21848 (R3545001): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21849 (R3545555): CLEAR -> ENABLE
+  - Secret already enabled
+- Client #21852 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 5
+[!] No clients found.
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): CLEAR -> ENABLE
+  - Secret already enabled
+Done. Processed clients: 1
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+=== Router #11 @ 157.10.243.105:1122  ===
+- Client #21853 (R3545003): DUE -> SUSPEND
+  - Secret disabled
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
+
+Fatal error: Uncaught PDOException: SQLSTATE[01000]: Warning: 1265 Data truncated for column 'status' at row 1 in /var/www/isp_billing/cron/auto_suspend.php:228
+Stack trace:
+#0 /var/www/isp_billing/cron/auto_suspend.php(228): PDOStatement->execute()
+#1 /var/www/isp_billing/cron/auto_suspend.php(319): update_client_local_flags()
+#2 {main}
+  thrown in /var/www/isp_billing/cron/auto_suspend.php on line 228
