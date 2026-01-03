@@ -47,6 +47,37 @@ function ensure_option_present(array $options, string $value): array {
     return $options;
 }
 
+function build_mt_comment(array $data): string {
+    $code = trim((string)($data['client_code'] ?? ''));
+    if ($code === '' && !empty($data['pppoe_id'])) {
+        $digits = preg_replace('/\D+/', '', (string)$data['pppoe_id']);
+        if ($digits !== '') $code = substr($digits, -4);
+    }
+    $map = [
+        'client_code' => 'Client Code',
+        'name' => 'Client Name',
+        'mobile' => 'Contact Number',
+        'area' => 'Zone Name',
+        'address' => 'Present Address',
+        'join_date' => 'Joining Date',
+        'package_name' => 'Package Name',
+        'monthly_bill' => 'Monthly Bill',
+        'expiry_date' => 'Bill Expiry Date',
+    ];
+    $lines = [];
+    foreach ($map as $k => $label) {
+        $val = $k === 'client_code' ? $code : trim((string)($data[$k] ?? ''));
+        $lines[] = $label.': '.$val;
+    }
+    return implode(' | ', $lines);
+}
+
+function client_code_from_pppoe(string $pppoe_id): string {
+    $digits = preg_replace('/\D+/', '', $pppoe_id);
+    if ($digits === '') return '';
+    return substr($digits, -4);
+}
+
 /**
  * Save uploaded photo using PPPoE ID as filename: <pppoe-id>.<ext>
  * Overwrites any existing same-name file.
@@ -381,8 +412,6 @@ try {
 
 /* ==================== Optional columns present? ==================== */
 $HAS_CLIENT_CODE = db_has_column('clients','client_code');
-// Client code field deprecated; hide from UI and skip persistence
-$HAS_CLIENT_CODE = false;
 $HAS_SUB_ZONE    = db_has_column('clients','sub_zone');
 $HAS_BOX         = db_has_column('clients','box');
 $HAS_JOIN_DATE   = db_has_column('clients','join_date');
@@ -441,6 +470,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ''));
     $status       = trim($_POST['status'] ?? 'active');
     $auto_invoice = 1; // always generate first invoice on client add
+
+    if ($HAS_CLIENT_CODE && $client_code === '') {
+        $client_code = client_code_from_pppoe($pppoe_id);
+    }
 
     // (বাংলা) ভ্যালিডেশন
     if ($name === '')        $errors[] = 'Name is required.';
@@ -552,8 +585,19 @@ if (!$errors) {
 
             if ($router_id && $pppoe_id) {
                 $profileName = ($ppp_profile !== '') ? $ppp_profile : ($selectedPackage ? package_ppp_profile_name($selectedPackage) : null);
-                $commentParts = array_filter([$name, $mobile], function($v){ return !empty($v); });
-                $comment = $commentParts ? implode(' | ', $commentParts) : '';
+                $pkgName = $selectedPackage['name'] ?? '';
+                $comment = build_mt_comment([
+                    'client_code' => $client_code,
+                    'pppoe_id' => $pppoe_id,
+                    'name' => $name,
+                    'mobile' => $mobile,
+                    'area' => $area,
+                    'address' => $address,
+                    'join_date' => $join_date ?: date('Y-m-d'),
+                    'package_name' => $pkgName,
+                    'monthly_bill' => (string)$monthly_bill,
+                    'expiry_date' => (string)$expiry_date,
+                ]);
                 $pppPass = ($pppoe_pass === '') ? $pppoe_id : $pppoe_pass;
                 $secret = mikrotik_ensure_pppoe_secret((int)$router_id, $pppoe_id, $pppPass, $profileName, ['comment'=>$comment]);
                 if (!$secret['ok']) {
