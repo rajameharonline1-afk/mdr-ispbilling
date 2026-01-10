@@ -29,6 +29,37 @@ function ensure_option_present(array $options, string $value): array {
     return $options;
 }
 
+function build_mt_comment(array $data): string {
+    $code = trim((string)($data['client_code'] ?? ''));
+    if ($code === '' && !empty($data['pppoe_id'])) {
+        $digits = preg_replace('/\D+/', '', (string)$data['pppoe_id']);
+        if ($digits !== '') $code = substr($digits, -4);
+    }
+    $map = [
+        'client_code' => 'Client Code',
+        'name' => 'Client Name',
+        'mobile' => 'Contact Number',
+        'area' => 'Zone Name',
+        'address' => 'Present Address',
+        'join_date' => 'Joining Date',
+        'package_name' => 'Package Name',
+        'monthly_bill' => 'Monthly Bill',
+        'expiry_date' => 'Bill Expiry Date',
+    ];
+    $lines = [];
+    foreach ($map as $k => $label) {
+        $val = $k === 'client_code' ? $code : trim((string)($data[$k] ?? ''));
+        $lines[] = $label.': '.$val;
+    }
+    return implode(' | ', $lines);
+}
+
+function client_code_from_pppoe(string $pppoe_id): string {
+    $digits = preg_replace('/\D+/', '', $pppoe_id);
+    if ($digits === '') return '';
+    return substr($digits, -4);
+}
+
 function mikrotik_fetch_pppoe_password(array $client): ?string {
     $pppoe = trim((string)($client['pppoe_id'] ?? ''));
     $ip = trim((string)($client['router_ip'] ?? ''));
@@ -294,12 +325,14 @@ try {
 
 /* --------- optional columns present? --------- */
 $SHOW_CLIENT_CODE = false; // client_code deprecated
+$HAS_CLIENT_CODE = db_has_column('clients','client_code');
 $HAS_SUB_ZONE    = db_has_column('clients','sub_zone');
 $HAS_BOX         = db_has_column('clients','box');
 $HAS_NID         = db_has_column('clients','nid');
 $HAS_DOB         = db_has_column('clients','dob');
 $HAS_PHOTO_URL   = db_has_column('clients','photo_url');
 $HAS_PPPOE_PASS  = db_has_column('clients','pppoe_pass');
+$HAS_JOIN_DATE   = db_has_column('clients','join_date');
 $HAS_UPDATED_AT  = db_has_column('clients','updated_at');
 
 $pdoOptions      = db();
@@ -331,7 +364,8 @@ function normalize_day_only_date(string $raw): string {
         if ($day > $daysInMonth) $day = $daysInMonth;
         return sprintf('%04d-%02d-%02d', $year, $month, $day);
     }
-    return $raw;
+    $ts = strtotime($raw);
+    return $ts ? date('Y-m-d', $ts) : '';
 }
 
 /* --------- process save --------- */
@@ -340,7 +374,7 @@ $notice = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $successNotes = [];
-    $new_client_id = intval($_POST['client_id_new'] ?? $client_id);
+    $new_client_id = $client_id;
     $prevRouterId   = (int)($client['router_id'] ?? 0);
     $prevPppoeId    = (string)($client['pppoe_id'] ?? '');
     $prevPppoePass  = $HAS_PPPOE_PASS ? (string)($client['pppoe_pass'] ?? '') : null;
@@ -361,6 +395,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? '')));
     $status       = trim($_POST['status'] ?? $client['status']);
     $prev_expiry  = (string)($client['expiry_date'] ?? '');
+    $join_date    = trim($_POST['join_date'] ?? ($client['join_date'] ?? ''));
+    $client_code  = $HAS_CLIENT_CODE ? trim((string)($_POST['client_code'] ?? ($client['client_code'] ?? ''))) : '';
+    if ($HAS_CLIENT_CODE && $client_code === '') {
+        $client_code = client_code_from_pppoe($pppoe_id);
+    }
 
     if ($name === '')        $errors[] = 'Name is required.';
     if ($area === '')        $errors[] = 'Area is required.';
@@ -371,15 +410,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($pppoe_id === '')    $errors[] = 'PPPoE username is required.';
     if ($package_id <= 0)    $errors[] = 'Please select a package.';
     if ($monthly_bill < 0)   $errors[] = 'Monthly bill is invalid.';
-    if ($new_client_id <= 0) $errors[] = 'Client ID must be a positive number.';
-
-    if (!$errors && $new_client_id !== $client_id) {
-        $stmtChk = db()->prepare("SELECT COUNT(*) FROM clients WHERE id = ?");
-        $stmtChk->execute([$new_client_id]);
-        if ($stmtChk->fetchColumn() > 0) {
-            $errors[] = 'Client ID already exists.';
-        }
-    }
 
     // duplicate mobile / PPPoE checks skipped per requirement
 
@@ -416,6 +446,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ':monthly_bill'=>$monthly_bill, ':expiry_date'=>$expiry_date ?: null, ':status'=>$status,
             ':id'=>$client_id
         ];
+        if ($HAS_CLIENT_CODE && $client_code !== '') { $sets[] = 'client_code = :client_code'; $params[':client_code'] = $client_code; }
         if ($HAS_SUB_ZONE)    { $sets[] = 'sub_zone = :sub_zone';      $params[':sub_zone'] = $sub_zone; }
         if ($HAS_BOX)         { $sets[] = 'box = :box';                $params[':box'] = $box; }
         if ($HAS_NID)         { $sets[] = 'nid = :nid';                $params[':nid'] = $nid === '' ? null : $nid; }
@@ -428,22 +459,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdoSave->beginTransaction();
         $pdoSave->exec("SET FOREIGN_KEY_CHECKS=0");
 
-        if ($new_client_id !== $client_id) {
-            // Update all tables that have client_id column
-            $tblStmt = $pdoSave->prepare("SELECT TABLE_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND column_name = 'client_id'");
-            $tblStmt->execute();
-            $tables = $tblStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
-            foreach ($tables as $tbl) {
-                if ($tbl === 'clients') continue;
-                $pdoSave->prepare("UPDATE `$tbl` SET client_id = :new WHERE client_id = :old")->execute([
-                    ':new' => $new_client_id,
-                    ':old' => $client_id,
-                ]);
-            }
-            $sets[] = 'id = :new_id';
-            $params[':new_id'] = $new_client_id;
-        }
-
         $sqlUp = "UPDATE clients SET ".implode(',', $sets)." WHERE id = :id";
         $u = $pdoSave->prepare($sqlUp);
         $u->execute($params);
@@ -455,6 +470,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ✅ Audit log: track all changed fields (excluding raw passwords)
         $oldData = [
             'id' => $client['id'] ?? null,
+            'client_code' => $client['client_code'] ?? null,
             'name' => $client['name'] ?? null,
             'mobile' => $client['mobile'] ?? null,
             'email' => $client['email'] ?? null,
@@ -471,6 +487,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
         $newData = [
             'id' => $new_client_id,
+            'client_code' => $client_code !== '' ? $client_code : null,
             'name' => $name,
             'mobile' => $mobile,
             'email' => $email === '' ? null : $email,
@@ -506,8 +523,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pppoeChanged  = $pppoe_id !== $prevPppoeId;
         $passChanged   = $HAS_PPPOE_PASS && $pppoe_pass !== $prevPppoePass;
         $packageChanged = $package_id && $package_id !== $old_pkg_id;
+        $commentFields = ['name','mobile','area','address','package_id','monthly_bill','expiry_date'];
+        $commentChanged = false;
+        foreach ($commentFields as $field) {
+            if (array_key_exists($field, $chgNew)) { $commentChanged = true; break; }
+        }
 
-        $needsSecretSync = $router_id && $pppoe_id !== '' && ($routerChanged || $pppoeChanged || $passChanged || $packageChanged || !$prevRouterId);
+        $needsSecretSync = $router_id && $pppoe_id !== '' && ($routerChanged || $pppoeChanged || $passChanged || $packageChanged || $commentChanged || !$prevRouterId);
         $pkg = null;
         if (($needsSecretSync || $packageChanged) && $package_id) {
             $stp = db()->prepare("SELECT id, name, profile, profile_name FROM packages WHERE id=?");
@@ -517,8 +539,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($needsSecretSync) {
             $profileName = $pkg ? package_ppp_profile_name($pkg) : null;
-            $commentParts = array_filter([$name, $mobile], function($v){ return trim((string)$v) !== ''; });
-            $comment = $commentParts ? implode(' | ', $commentParts) : '';
+            $pkgName = $pkg['name'] ?? ($client['package_name'] ?? '');
+            if ($pkgName === '' && $package_id) {
+                try {
+                    $stmtPkgName = db()->prepare("SELECT name FROM packages WHERE id=?");
+                    $stmtPkgName->execute([$package_id]);
+                    $pkgName = (string)($stmtPkgName->fetchColumn() ?: '');
+                } catch (Throwable $e) {
+                    $pkgName = $pkgName;
+                }
+            }
+            $comment = build_mt_comment([
+                'client_code' => $client['client_code'] ?? '',
+                'pppoe_id' => $pppoe_id,
+                'name' => $name,
+                'mobile' => $mobile,
+                'area' => $area,
+                'address' => $address,
+                'join_date' => $HAS_JOIN_DATE ? $join_date : '',
+                'package_name' => $pkgName,
+                'monthly_bill' => (string)$monthly_bill,
+                'expiry_date' => (string)$expiry_date,
+            ]);
             $syncPass = $HAS_PPPOE_PASS ? ($pppoe_pass === '' ? null : $pppoe_pass) : null;
             $secret = mikrotik_ensure_pppoe_secret((int)$router_id, $pppoe_id, $syncPass, $profileName, ['comment'=>$comment]);
             if (!$secret['ok']) {
@@ -635,25 +677,20 @@ include __DIR__ . '/../partials/partials_header.php';
         <div class="card-block h-100">
           <div class="card-title d-flex justify-content-between align-items-center">
             <span>Account</span>
-            <span class="text-muted small">Client ID: <span class="mono">#<?= (int)$client_id; ?></span></span>
+            <span class="text-muted small">Client Code: <span class="mono">#<?= h($client['client_code'] ?? client_code_from_pppoe((string)($client['pppoe_id'] ?? ''))); ?></span></span>
           </div>
           <div class="p-3">
+            <?php if ($HAS_CLIENT_CODE): ?>
             <div class="mb-2">
-              <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="toggleClientId">
-                <label class="form-check-label" for="toggleClientId">Change Client ID</label>
-              </div>
-              <div id="clientIdWrap" class="d-none mt-2">
-                <input type="number"
-                       name="client_id_new"
-                       id="client_id_new"
-                       class="form-control form-control-sm"
-                       value="<?= (int)($client_id ?? $client['id']) ?>"
-                       min="1"
-                       readonly>
-                <div class="form-text small">Changing this updates all linked records.</div>
-              </div>
+              <label class="form-label req">Client Code</label>
+              <input type="text"
+                     name="client_code"
+                     class="form-control form-control-sm"
+                     value="<?= h($_POST['client_code'] ?? ($client['client_code'] ?? '')) ?>"
+                     required>
+              <div class="form-text small">Blank হলে PPPoE username-এর শেষ ৪ ডিজিট ব্যবহার হবে।</div>
             </div>
+            <?php endif; ?>
             <div class="mb-2">
               <label class="form-label req">Name</label>
               <input type="text" name="name" class="form-control form-control-sm" value="<?= h($client['name']) ?>" required>
@@ -793,19 +830,18 @@ include __DIR__ . '/../partials/partials_header.php';
               <label class="form-label">Expiry Date</label>
               <?php
                 $exp_raw = (string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? ''));
-                $exp_day = '';
-                if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $exp_raw)) {
-                  $exp_day = (string)(int)substr($exp_raw, 8, 2);
-                } elseif (preg_match('/^\d{1,2}$/', $exp_raw)) {
-                  $exp_day = (string)(int)$exp_raw;
+                $exp_display = '';
+                if ($exp_raw !== '') {
+                  $ts = strtotime($exp_raw);
+                  if ($ts !== false) $exp_display = date('Y-m-d', $ts);
                 }
               ?>
-              <select name="expiry_date" class="form-select form-select-sm">
-                <option value="">Select</option>
-                <?php for ($d=1; $d<=31; $d++): ?>
-                  <option value="<?= $d ?>" <?= $exp_day===(string)$d ? 'selected' : '' ?>><?= $d ?></option>
-                <?php endfor; ?>
-              </select>
+              <input type="date"
+                     name="expiry_date"
+                     class="form-control form-control-sm"
+                     value="<?= h($exp_display) ?>"
+                     placeholder="YYYY-MM-DD">
+              <div class="form-text small">Calendar থেকে পূর্ণ তারিখ সিলেক্ট করুন (ফাঁকা রাখলে আপডেট হবে না)।</div>
             </div>
             <div class="mb-2">
               <label class="form-label">Status</label>
@@ -1184,22 +1220,6 @@ document.getElementById('photo')?.addEventListener('change', function(){
   });
 })();
 
-// Enable Client ID edit toggle
-document.getElementById('toggleClientId')?.addEventListener('change', (e)=>{
-  const wrap = document.getElementById('clientIdWrap');
-  const inp = document.getElementById('client_id_new');
-  if(!wrap || !inp) return;
-  if(e.target.checked){
-    wrap.classList.remove('d-none');
-    inp.readOnly = false;
-    inp.classList.add('border-warning');
-    inp.focus();
-  } else {
-    wrap.classList.add('d-none');
-    inp.readOnly = true;
-    inp.classList.remove('border-warning');
-  }
-});
 </script>
 
 <?php include __DIR__ . '/../partials/partials_footer.php'; ?>

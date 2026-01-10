@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/routeros_api.class.php';
+require_once __DIR__ . '/../app/audit.php';
 
 $pdo = db();
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -12,6 +13,28 @@ function col_exists(PDO $pdo, string $table, string $col): bool {
         return (bool)$st->fetchColumn();
     } catch (Throwable $e) {
         return false;
+    }
+}
+
+function normalize_date_str(?string $val): ?string {
+    $val = trim((string)$val);
+    if ($val === '' || $val === '0000-00-00') return null;
+    $ts = strtotime($val);
+    return $ts === false ? null : date('Y-m-d', $ts);
+}
+
+if (!function_exists('audit_log_safe')) {
+    function audit_log_safe(string $action, ?int $entity_id = null, array $meta = []): void {
+        if (!function_exists('audit_log')) return;
+        $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+        try { @call_user_func_array('audit_log', [$action, 'client', $entity_id, $meta]); return; } catch (Throwable $e) {}
+        try { @call_user_func_array('audit_log', [$action, $entity_id, $meta]); return; } catch (Throwable $e) {}
+        try { @call_user_func_array('audit_log', [$action, $entity_id]); return; } catch (Throwable $e) {}
+        try {
+            if (isset($GLOBALS['pdo'])) {
+                @call_user_func_array('audit_log', [$GLOBALS['pdo'], (int)($entity_id ?? 0), $action, $metaJson]);
+            }
+        } catch (Throwable $e) {}
     }
 }
 
@@ -43,21 +66,34 @@ if ($expiryCol === '') {
     echo "No expiry column found in clients table.\n";
     exit;
 }
+$expDateExpr   = "DATE(`$expiryCol`)";
+$expDateValid  = "`$expiryCol` IS NOT NULL AND `$expiryCol` <> '' AND `$expiryCol` <> '0000-00-00'";
 
 // ১ম ধাপ: আজ মেয়াদ শেষ হলে Expired করা
 $stmt_expire = $pdo->prepare("UPDATE clients SET status='expired' 
-                              WHERE `$expiryCol` = ? AND status != 'expired' AND status != 'inactive'");
+                              WHERE $expDateValid AND $expDateExpr = ? AND status NOT IN ('expired','inactive')");
 $expire_count = $stmt_expire->execute([$today]) ? $stmt_expire->rowCount() : 0;
 
 // ১ম.৫ ধাপ: Expiry বাড়ানো হলে Active করা (inactive/expired → active)
 $stmt_reactivate = $pdo->prepare("UPDATE clients SET status='active'
-                                  WHERE `$expiryCol` > ? AND status IN ('inactive','expired')");
+                                  WHERE $expDateValid AND $expDateExpr > ? AND status IN ('inactive','expired')");
 $reactivate_count = $stmt_reactivate->execute([$today]) ? $stmt_reactivate->rowCount() : 0;
 
 // ২য় ধাপ: Expired হওয়ার পরের দিন Inactive করা
+$inactive_ids = [];
+try {
+    $sel_inactive = $pdo->prepare("SELECT id FROM clients WHERE $expDateValid AND $expDateExpr = ? AND status='expired'");
+    $sel_inactive->execute([$yesterday]);
+    $inactive_ids = $sel_inactive->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) { $inactive_ids = []; }
 $stmt_inactive = $pdo->prepare("UPDATE clients SET status='inactive' 
-                                WHERE `$expiryCol` = ? AND status='expired'");
+                                WHERE $expDateValid AND $expDateExpr = ? AND status='expired'");
 $inactive_count = $stmt_inactive->execute([$yesterday]) ? $stmt_inactive->rowCount() : 0;
+if ($inactive_count > 0 && $inactive_ids) {
+    foreach ($inactive_ids as $cid) {
+        audit_log_safe('client_auto_inactive_expiry', (int)$cid, ['expiry_date'=>$yesterday]);
+    }
+}
 
 // ৩য় ধাপ: MikroTik secret enable/disable (Expiry অনুযায়ী)
 $hasRouterId = col_exists($pdo, 'clients', 'router_id');
@@ -99,9 +135,10 @@ if ($hasRouterId && $hasPppoeId) {
             $pppoe = trim((string)$c['pppoe_id']);
             if ($pppoe === '') continue;
             $exp = (string)($c['expiry_date'] ?? '');
-            if ($exp === '') continue;
+            $expNorm = normalize_date_str($exp);
+            if ($expNorm === null) continue;
 
-            $shouldDisable = ($exp <= $today);
+            $shouldDisable = ($expNorm <= $today);
             $secret = $API->comm('/ppp/secret/print', ['?name'=>$pppoe, '.proplist'=>'.id,disabled']);
             if (!is_array($secret) || !isset($secret[0]['.id'])) continue;
             $id = $secret[0]['.id'];

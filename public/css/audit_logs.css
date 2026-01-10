@@ -1,0 +1,33 @@
+/* (বাংলা) audit_logs পেজের স্টাইল আলাদা ফাইলে রাখা হয়েছে */
+.table-sm td,
+.table-sm th {
+  padding: .5rem .6rem;
+  vertical-align: middle;
+}
+thead.table-dark th a {
+  color: #fff;
+  text-decoration: none;
+}
+thead.table-dark th a:hover {
+  text-decoration: underline;
+}
+.badge-act {
+  background: #343a40;
+}
+pre.details {
+  max-height: 180px;
+  overflow: auto;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  padding: 8px;
+  border-radius: 6px;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+.text-trunc-ua {
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

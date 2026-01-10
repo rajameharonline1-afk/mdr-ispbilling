@@ -117,19 +117,6 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
       ) pay ON pay.iid = i.id";
 
   $where = ["1=1"];
-  // (বাংলা) Soft-deleted/void invoices hide
-  if (col_exists($pdo,'invoices','is_void')) {
-    $where[] = "i.is_void=0";
-  }
-  if (col_exists($pdo,'invoices','is_deleted')) {
-    $where[] = "i.is_deleted=0";
-  }
-  if (col_exists($pdo,'invoices','deleted_at')) {
-    $where[] = "i.deleted_at IS NULL";
-  }
-  if ($has_status) {
-    $where[] = "COALESCE(i.status,'') NOT IN ('void','deleted','cancelled','canceled')";
-  }
 
   // Search (invoice_number থাকলে তাতে; নাহলে id/name/pppoe)
   if ($search !== '') {
@@ -306,25 +293,20 @@ thead th a:hover{ text-decoration:underline; }
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
         <h4 class="mb-1">Invoices</h4>
-        <div class="text-muted small">Total: <?= number_format($total_records) ?></div>
       </div>
 
       <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-primary btn-sm" href="/public/invoice_new.php">
+          <i class="bi bi-plus-circle"></i> Add Invoice
+        </a>
         <a class="btn btn-outline-secondary btn-sm" href="/public/billing.php?page=1&view=list&tab=all"><i class="bi bi-arrow-left"></i> Back</a>
        <div class="card card-totals p-2">
         <a class="small text-muted">Page Total</a>
-        <a class="fw-semibold">৳ <?= number_format($page_total, 2) ?></a>
+        <a class="fw-semibold"> <?= number_format($page_total, 2) ?></a>
       </div>
       </div>
     </div>
 
-    <!-- Tabs -->
-    <ul class="nav nav-tabs mb-3">
-      <?= tab_link('',        'All',     $cnt_all) ?>
-      <?= tab_link('paid',    'Paid',    $cnt_paid) ?>
-      <?= tab_link('unpaid',  'Unpaid',  $cnt_unpaid) ?>
-      <?= tab_link('partial', 'Partial', $cnt_partial) ?>
-    </ul>
 
     <!-- Export -->
     <?php
@@ -502,8 +484,8 @@ thead th a:hover{ text-decoration:underline; }
             </td>
             <td><?= $has_pstart ? h($r['period_start']) : '—' ?></td>
             <td><?= $has_pend   ? h($r['period_end'])   : '—' ?></td>
-            <td class="text-end">৳ <?= number_format($total_row, 2) ?></td>
-            <td class="text-end fw-semibold">৳ <?= number_format($total_row, 2) ?></td>
+            <td class="text-end"> <?= number_format($total_row, 2) ?></td>
+            <td class="text-end fw-semibold"> <?= number_format($total_row, 2) ?></td>
             <td>
               <?php
                 $st = strtolower($status_show);

@@ -584,7 +584,7 @@ require __DIR__ . '/../partials/partials_header.php';
       <thead>
         <tr>
           <th style="width:32px;"><input type="checkbox" id="select-all"></th>
-          <th><?= sort_link('id', 'Client ID') ?></th>
+          <th><?= sort_link('code', 'Client Code') ?></th>
           <th><?= sort_link('name',   'Name') ?></th>
           <?php if ($hasArea): ?><th><?= sort_link('area', 'Area') ?></th><?php endif; ?>
           <th><?= sort_link('pppoe',  'PPPoE ID') ?></th>
@@ -606,7 +606,10 @@ require __DIR__ . '/../partials/partials_header.php';
                    value="<?= (int)$client['id']; ?>"
                    data-router="<?= (int)($client['router_id'] ?? 0); ?>">
           </td>
-          <td data-label="Client ID" class="text-monospace"><?= (int)$client['id']; ?></td>
+          <?php $clientCode = trim((string)($client['client_code'] ?? '')); ?>
+          <td data-label="Client Code" class="text-monospace">
+            <?= $clientCode !== '' ? h($clientCode) : (int)$client['id']; ?>
+          </td>
 
           <td data-label="Name">
             <?= htmlspecialchars($client['name']); ?>

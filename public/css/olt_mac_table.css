@@ -1,0 +1,251 @@
+/* OLT MAC table layout tweaks (desktop-friendly, responsive) */
+
+:root, body, html {
+  height: 100vh;
+  overflow: hidden;
+  
+}
+
+:root {
+  --olt-top-offset: 128px;
+
+}
+
+.container-admin {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.olt-mac-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.olt-mac-page .container-fluid {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.olt-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.olt-table-area {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+.olt-filter-bar {
+  position: sticky;
+  top: 64px;
+  z-index: 20;
+}
+.olt-filter-bar .card {
+  box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+  margin-bottom: 0;
+}
+.olt-filter-bar .card-header { border-bottom: none; }
+
+.olt-table-wrap {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  margin: 8px -12px 0 -12px;
+  padding-top: 0;
+  background: #fff;
+  max-height: calc(100vh - 220px);
+}
+
+.olt-mac-table thead th {
+  z-index: 30;
+  background: #1f2937;
+  color: #fff;
+  text-align: center;
+  vertical-align: middle;
+  padding: 7px 5px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+
+.olt-mac-table tbody tr:nth-child(even) td {
+  background: #f3f6fb;
+}
+
+.olt-mac-table code {
+  color: #b91c1c;
+}
+.olt-mac-table th:nth-child(1),
+.olt-mac-table td:nth-child(1) {
+  width: 5%;
+}
+
+.olt-mac-table th:nth-child(2),
+.olt-mac-table td:nth-child(2) {
+  width: 12%;
+  text-align: left;
+}
+
+.olt-mac-table th:nth-child(3),
+.olt-mac-table td:nth-child(3),
+.olt-mac-table th:nth-child(4),
+.olt-mac-table td:nth-child(4),
+.olt-mac-table th:nth-child(5),
+.olt-mac-table td:nth-child(5) {
+  width: 8%;
+}
+
+.olt-mac-table th:nth-child(6),
+.olt-mac-table td:nth-child(6) {
+  width: 13%;
+  text-align: left;
+}
+
+.olt-mac-table th:nth-child(7),
+.olt-mac-table td:nth-child(7) {
+  width: 11%;
+}
+
+.olt-mac-table th:nth-child(8),
+.olt-mac-table td:nth-child(8) {
+  width: 6%;
+}
+
+.olt-mac-table th:nth-child(9),
+.olt-mac-table td:nth-child(9) {
+  width: 7%;
+}
+
+.olt-mac-table th:nth-child(10),
+.olt-mac-table td:nth-child(10) {
+  width: 7%;
+}
+
+.olt-mac-table th:nth-child(11),
+.olt-mac-table td:nth-child(11) {
+  width: 8%;
+}
+
+.olt-mac-table th:nth-child(12),
+.olt-mac-table td:nth-child(12) {
+  width: 12%;
+  min-width: 140px;
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.olt-mac-table th:nth-child(13),
+.olt-mac-table td:nth-child(13) {
+  width: 6%;
+}
+
+.olt-mac-table td:nth-child(2),
+.olt-mac-table td:nth-child(6),
+.olt-mac-table td:nth-child(12) {
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.olt-mac-table td:nth-child(1),
+.olt-mac-table td:nth-child(7),
+.olt-mac-table td:nth-child(8),
+.olt-mac-table td:nth-child(9),
+.olt-mac-table td:nth-child(10),
+.olt-mac-table td:nth-child(11),
+.olt-mac-table td:nth-child(13) {
+  white-space: nowrap;
+}
+
+.olt-rx-cell .badge {
+  margin-left: 4px;
+}
+
+.olt-dereg-cell div+div {
+  margin-top: 2px;
+}
+  .table-responsive{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+@media (max-width: 991px) {
+  :root {
+    --olt-top-offset: 200px;
+  }
+
+  .olt-mac-page .container-fluid {
+   padding-left: 6px;
+   padding-right: 6px;
+  }
+
+  .olt-table-wrap {
+    margin: 8px -6px 0 -6px;
+    max-height: none;
+    top: 0;
+    position: relative;
+    overflow: auto;
+  }
+
+  .olt-mac-table {
+    min-width: 1000px;
+  }
+
+  .olt-mac-table thead th {
+    font-size: 0.75rem;
+    padding: 6px 4px;
+  }
+
+  .olt-mac-table tbody td {
+    font-size: 0.75rem;
+    padding: 5px 4px;
+  }
+}
+
+@media print {
+  .olt-mac-table thead th {
+    position: static;
+    box-shadow: none;
+  }
+
+  .olt-table-wrap {
+    position: -webkit-sticky;
+  }
+}
+
+/* OLT MAC table layout tweaks (desktop-friendly, responsive) */
+@media screen and (max-width: 750px) {
+
+  .olt-mac-table{
+    table-layout: auto;
+    min-width: 1120px;
+  }
+  .olt-mac-table th,
+  .olt-mac-table td{
+    width: auto !important;
+  }
+  .olt-mac-table thead th{
+    white-space: nowrap;
+    font-size: .8rem;
+  }
+  .olt-mac-table td{
+    font-size: .85rem;
+  }
+  .table-responsive{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+}

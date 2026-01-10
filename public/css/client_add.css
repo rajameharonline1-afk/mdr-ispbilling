@@ -1,0 +1,6 @@
+/* (বাংলা) Client Add পেজের স্টাইল */
+.card-block{ border:6px solid #dfe3e8; border-radius:.75rem; background:#f5f6f8; }
+.card-block .card-title{ font-weight:700; padding:.65rem .9rem; border-bottom:2px solid #dfe3e8; background:#e9ecef; }
+.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.form-text.small{ font-size:.8rem; }
+.req::after{ content:" *"; color:#dc3545; font-weight:700; }

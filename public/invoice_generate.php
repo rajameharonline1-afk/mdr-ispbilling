@@ -4,7 +4,11 @@
 // বাংলা নোট: শুধুমাত্র কমেন্ট বাংলায় রাখা হয়েছে
 
 declare(strict_types=1);
-require_once __DIR__ . '/../app/require_login.php';
+if (!defined('APP_INTERNAL_CALL') || APP_INTERNAL_CALL !== true) {
+    require_once __DIR__ . '/../app/require_login.php';
+} elseif (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once __DIR__ . '/../app/db.php';
 
 $pdo = db();

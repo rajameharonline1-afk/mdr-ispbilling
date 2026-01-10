@@ -73,6 +73,7 @@ include __DIR__ . '/../partials/partials_header.php';
           <input class="form-check-input" type="checkbox" id="toggleShowPwd">
           <label class="form-check-label" for="toggleShowPwd">Show passwords</label>
         </div>
+        <div class="text-end"><button class="btn btn-success" id="btnCommit">Save</button></div>
       </div>
     </div>
     <div class="table-responsive">

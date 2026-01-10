@@ -66,21 +66,34 @@ function pick_str(array $row, array $keys): ?string {
 
 // (বাংলা) Mikrotik comment থেকে নাম/মোবাইল বের করা
 function parse_comment_fields(?string $comment): array {
-  $out = ['client_name'=>null, 'mobile'=>null];
+  $out = ['client_name'=>null, 'mobile'=>null, 'zone'=>null];
   if(!$comment) return $out;
-  $lines = preg_split('/\R/', (string)$comment);
+  $comment = trim((string)$comment);
+  $lines = preg_split('/\R/', $comment);
   foreach($lines as $line){
     $line = trim((string)$line);
     if($line === '') continue;
-    if(stripos($line, 'Client Name:') === 0){
-      $out['client_name'] = trim(substr($line, strlen('Client Name:')));
-      continue;
+    // Client Name variations: "Client Name:", "Client name :", "Name:", also key-value pairs separated by |
+    if(preg_match('/client\s*name\s*:?\s*([^|\r\n]+)/i', $line, $m) || preg_match('/^name\s*:?\s*([^|\r\n]+)/i', $line, $m)){
+      $out['client_name'] = trim($m[1]);
     }
-    if(stripos($line, 'Contact Number:') === 0){
-      $mob = trim(substr($line, strlen('Contact Number:')));
+    if(preg_match('/contact\s*number\s*:?\s*([^|\r\n]+)/i', $line, $m)){
+      $mob = trim($m[1]);
       $out['mobile'] = detect_mobile($mob) ?: $mob;
-      continue;
     }
+    if(preg_match('/zone\s*name\s*:?\s*([^|\r\n]+)/i', $line, $m)){
+      $out['zone'] = trim($m[1]);
+    }
+  }
+  // Fallback: পুরো কমেন্টে কোনো মোবাইল আছে কি না দেখো
+  if(!$out['mobile']){
+    if(preg_match('/(01[3-9][0-9]{8})/', $comment, $m)){
+      $out['mobile'] = detect_mobile($m[1]) ?: $m[1];
+    }
+  }
+  // Fallback: যদি নাম না পাওয়া যায়, কমেন্টের প্রথম লাইনের প্রথম অংশ নাও
+  if(!$out['client_name'] && !empty($lines[0])){
+    $out['client_name'] = trim($lines[0]);
   }
   return $out;
 }
@@ -135,9 +148,22 @@ try{
   foreach($pkgRows as $p){ $pkgMap[$p['name']] = ['id'=>(int)$p['id'],'price'=>(float)$p['price']]; }
 
   // (বাংলা) এক্সিস্টিং ক্লায়েন্ট ম্যাপ
-  $cliRows = $pdo->query("SELECT id, pppoe_id FROM clients")->fetchAll(PDO::FETCH_ASSOC);
+  $cliRows = $pdo->query("SELECT id, pppoe_id, name, sub_zone, box, area FROM clients")->fetchAll(PDO::FETCH_ASSOC);
   $cliMap = [];
-  foreach($cliRows as $c){ $cliMap[$c['pppoe_id']] = (int)$c['id']; }
+  $normId = function(?string $s): string {
+    return strtolower(trim((string)$s));
+  };
+  foreach($cliRows as $c){
+    $key = $normId($c['pppoe_id'] ?? '');
+    if ($key === '') continue;
+    $cliMap[$key] = [
+      'id'       => (int)$c['id'],
+      'name'     => $c['name'] ?? '',
+      'sub_zone' => $c['sub_zone'] ?? '',
+      'box'      => $c['box'] ?? '',
+      'area'     => $c['area'] ?? '',
+    ];
+  }
 
   $has_pwd_col = col_exists($pdo, 'clients', 'pppoe_password');
 
@@ -159,8 +185,25 @@ try{
 
     $comment = pick_str($s, ['comment','=.comment','.comment']) ?? '';
     $cmeta = parse_comment_fields($comment);
-    $client_name = $cmeta['client_name'] ?: $pppoe_id; // ডিফল্ট নাম = PPPoE ID
-    $mobile = $cmeta['mobile'] ?: detect_mobile($pppoe_id);
+    $keyNorm  = $normId($pppoe_id);
+    $existing = $cliMap[$keyNorm] ?? null;
+    $client_name = ($existing['name'] ?? '') ?: $cmeta['client_name'] ?: $pppoe_id; // ডিফল্ট নাম = PPPoE ID
+    // phone/caller-id ফিল্ড থেকেও মোবাইল ধরার চেষ্টা
+    $rawPhone = pick_str($s, ['phone','=.phone','.phone','caller-id','=.caller-id','.caller-id']);
+    $mobile = $cmeta['mobile'] ?: detect_mobile($rawPhone) ?: detect_mobile($pppoe_id);
+
+    // Location info (sub_zone, box) if existing client
+    $locParts = [];
+    if ($existing) {
+      if (!empty($existing['sub_zone'])) $locParts[] = $existing['sub_zone'];
+      if (!empty($existing['box']))      $locParts[] = $existing['box'];
+    }
+    $location = $locParts ? implode(' • ', $locParts) : null;
+    $zone = $cmeta['zone'] ?? ($existing['area'] ?? null);
+    if (!$zone && $location) {
+      $zone = strtok($location, '•');
+      $zone = $zone ? trim($zone) : null;
+    }
 
     $pkg = ($prof !== '' && isset($pkgMap[$prof])) ? $pkgMap[$prof] : null;
 
@@ -175,8 +218,11 @@ try{
       'package_name'    => $pkg ? $prof : null,
       'package_price'   => $pkg['price'] ?? null,
       'status'          => $status,
-      'is_existing'     => isset($cliMap[$pppoe_id]),
-      'action'          => $pkg ? (isset($cliMap[$pppoe_id])?'update':'new') : 'skip'
+      'is_existing'     => isset($cliMap[$keyNorm]),
+      'action'          => $pkg ? ($existing ? 'update' : 'new') : 'skip'
+      ,
+      'location'        => $location,
+      'zone'            => $zone,
     ];
   }
 

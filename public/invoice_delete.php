@@ -1,6 +1,6 @@
 <?php
 // /public/invoice_delete.php
-// Delete/void invoice and recalc client ledger + invoice status.
+// Hard delete invoice and recalc client ledger.
 
 declare(strict_types=1);
 
@@ -70,7 +70,8 @@ function payments_active_where(PDO $pdo, string $alias='pm'): string {
 }
 function recalc_client_ledger(PDO $pdo, int $client_id, string $invAmountCol, bool $isNetInvAmount, bool $hasPayDiscount, ?string $payFk, ?string $clientLedgerCol): void {
   if (!$clientLedgerCol) return;
-  $st1=$pdo->prepare("SELECT COALESCE(SUM(i.`$invAmountCol`),0) FROM invoices i WHERE i.client_id=?");
+  $invActive = invoices_active_where($pdo,'i');
+  $st1=$pdo->prepare("SELECT COALESCE(SUM(i.`$invAmountCol`),0) FROM invoices i WHERE i.client_id=?".$invActive);
   $st1->execute([$client_id]); $sumInv=(float)$st1->fetchColumn();
   $active = payments_active_where($pdo,'pm');
   if ($payFk) {
@@ -89,6 +90,14 @@ function recalc_client_ledger(PDO $pdo, int $client_id, string $invAmountCol, bo
   $ledger = -1 * ($sumInv - $discUsed - $sumPaid);
   $u=$pdo->prepare("UPDATE clients SET `$clientLedgerCol`=?, updated_at=NOW() WHERE id=?");
   $u->execute([$ledger,$client_id]);
+}
+function invoices_active_where(PDO $pdo, string $alias='i'): string {
+  $c=[];
+  if (col_exists($pdo,'invoices','is_void'))    $c[]="$alias.is_void=0";
+  if (col_exists($pdo,'invoices','is_deleted')) $c[]="$alias.is_deleted=0";
+  if (col_exists($pdo,'invoices','deleted_at')) $c[]="$alias.deleted_at IS NULL";
+  if (col_exists($pdo,'invoices','status'))     $c[]="COALESCE($alias.status,'') NOT IN ('void','deleted','cancelled','canceled')";
+  return $c ? (' AND '.implode(' AND ',$c)) : '';
 }
 
 $invoice_id = (int)($_POST['invoice_id'] ?? 0);
@@ -112,17 +121,19 @@ if (!$inv) {
 $client_id = (int)$inv['client_id'];
 
 try {
-  $hasUpdatedAt = col_exists($pdo,'invoices','updated_at');
-  $updatedSql = $hasUpdatedAt ? ", updated_at=NOW()" : "";
-  $statusVoid = col_exists($pdo,'invoices','status') ? status_void_value($pdo) : null;
-  if (col_exists($pdo,'invoices','is_void')) {
-    $setStatus = $statusVoid ? ", status=".$pdo->quote($statusVoid) : "";
-    $pdo->prepare("UPDATE invoices SET is_void=1".$setStatus.$updatedSql." WHERE id=?")->execute([$invoice_id]);
-  } elseif ($statusVoid) {
-    $pdo->prepare("UPDATE invoices SET status=".$pdo->quote($statusVoid).$updatedSql." WHERE id=?")->execute([$invoice_id]);
-  } else {
-    $pdo->prepare("DELETE FROM invoices WHERE id=?")->execute([$invoice_id]);
+  $pdo->beginTransaction();
+
+  // Hard delete: remove children first, then the invoice row.
+  if (col_exists($pdo, 'invoice_items', 'invoice_id')) {
+    $pdo->prepare("DELETE FROM invoice_items WHERE invoice_id=?")->execute([$invoice_id]);
   }
+  if (col_exists($pdo, 'payments', 'invoice_id')) {
+    $pdo->prepare("DELETE FROM payments WHERE invoice_id=?")->execute([$invoice_id]);
+  }
+  if (col_exists($pdo, 'payments', 'bill_id')) {
+    $pdo->prepare("DELETE FROM payments WHERE bill_id=?")->execute([$invoice_id]);
+  }
+  $pdo->prepare("DELETE FROM invoices WHERE id=?")->execute([$invoice_id]);
 
   // Recalc client ledger
   $invAmountCol = col_exists($pdo,'invoices','total') ? 'total' : (col_exists($pdo,'invoices','payable') ? 'payable' : (col_exists($pdo,'invoices','amount') ? 'amount' : 'total'));
@@ -135,8 +146,10 @@ try {
     recalc_client_ledger($pdo,$client_id,$invAmountCol,$isNetInvAmount,$hasPayDiscount,$payFk,$clientLedgerCol);
   }
 
+  $pdo->commit();
   $_SESSION['flash'] = 'Invoice deleted.';
 } catch (Throwable $e) {
+  if ($pdo->inTransaction()) $pdo->rollBack();
   $_SESSION['flash_error'] = 'Delete failed: '.$e->getMessage();
 }
 

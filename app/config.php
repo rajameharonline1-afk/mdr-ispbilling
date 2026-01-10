@@ -5,8 +5,8 @@
 
 // ডাটাবেজ কানেকশন সেটিংস
 define('DB_HOST', 'localhost');
-define('DB_USER', 'root');       // আপনার MySQL ইউজারনেম
-define('DB_PASS', 'Zabbix@010230');           // আপনার MySQL পাসওয়ার্ড
+define('DB_USER', 'isp_user');       // আপনার MySQL ইউজারনেম
+define('DB_PASS', 'isp@010230');           // আপনার MySQL পাসওয়ার্ড
 define('DB_NAME', 'isp_billing'); // আপনার ডাটাবেজ নাম
 define('SMS_WEBHOOK_SECRET', ''); // REQUIRED
 define('SMS_IP_WHITELIST',   ''); // e.g. '103.120.XX.XX, 203.76.XX.XX' (optional)

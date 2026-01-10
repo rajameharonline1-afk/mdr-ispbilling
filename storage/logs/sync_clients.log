@@ -3187,3 +3187,44 @@ Stack trace:
 #0 /var/www/isp_billing/cron/sync_clients.php(93): PDOStatement->execute()
 #1 {main}
   thrown in /var/www/isp_billing/cron/sync_clients.php on line 93
+=============================
+📡 Connecting to Router: Access_Router (157.10.243.105)
+➕ Added new client: R3545001 (Online: 1)
+➕ Added new client: R3545003 (Online: 1)
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'name' specified twice in /var/www/isp_billing/cron/sync_clients.php:264
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(264): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 264
+
+Fatal error: Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'name' specified twice in /var/www/isp_billing/cron/sync_clients.php:264
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(264): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 264
+=============================
+📡 Connecting to Router: Access_Router (157.10.243.105)
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'name' specified twice in /var/www/isp_billing/cron/sync_clients.php:272
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(272): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 272
+
+Fatal error: Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'name' specified twice in /var/www/isp_billing/cron/sync_clients.php:272
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(272): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 272
+=============================
+📡 Connecting to Router: Access_Router (157.10.243.105)
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'name' specified twice in /var/www/isp_billing/cron/sync_clients.php:277
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(277): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 277
+
+Fatal error: Uncaught PDOException: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'name' specified twice in /var/www/isp_billing/cron/sync_clients.php:277
+Stack trace:
+#0 /var/www/isp_billing/cron/sync_clients.php(277): PDOStatement->execute()
+#1 {main}
+  thrown in /var/www/isp_billing/cron/sync_clients.php on line 277

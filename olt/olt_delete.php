@@ -4,6 +4,7 @@
 session_start();
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/olt_logger.php'; // OLT action log/audit
 
 $id = (int)($_GET['id'] ?? 0);
 
@@ -16,6 +17,12 @@ if ($id <= 0) {
 
 try {
     $pdo = db();
+    $oltRow = null;
+    try {
+        $infoStmt = $pdo->prepare("SELECT * FROM olts WHERE id = ? LIMIT 1");
+        $infoStmt->execute([$id]);
+        $oltRow = $infoStmt->fetch(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) { $oltRow = null; }
     
     // **গুরুত্বপূর্ণ নিরাপত্তা পরীক্ষা: এই OLT-এর অধীনে কোনো ক্লায়েন্ট আছে কিনা?**
     // আমরা ধরে নিচ্ছি 'clients' টেবিলে 'olt_id' নামে একটি কলাম আছে।
@@ -36,6 +43,17 @@ try {
     $success = $delete_stmt->execute([$id]);
 
     if ($success) {
+        olt_log_action('delete', [
+            'id'     => $id,
+            'name'   => $oltRow['name'] ?? null,
+            'vendor' => $oltRow['vendor'] ?? null,
+            'host'   => $oltRow['host'] ?? null,
+        ]);
+        olt_audit_action('delete', $id, [
+            'name'   => $oltRow['name'] ?? null,
+            'vendor' => $oltRow['vendor'] ?? null,
+            'host'   => $oltRow['host'] ?? null,
+        ]);
         $_SESSION['toast_message'] = 'OLT has been deleted successfully!';
         $_SESSION['toast_type'] = 'success';
     } else {

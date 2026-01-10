@@ -5,6 +5,7 @@ session_start();
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/security_helpers.php'; // এনক্রিপশনের জন্য
+require_once __DIR__ . '/olt_logger.php'; // OLT action log/audit
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
@@ -119,6 +120,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['action'])) {
             $sql = "UPDATE olts SET " . implode(', ', $set) . " WHERE id = :id";
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
+
+            olt_log_action('update', [
+                'id'        => $id,
+                'name'      => $name,
+                'vendor'    => $vendor,
+                'host'      => $host,
+                'active'    => $is_active,
+                'prev_host' => $olt['host'] ?? null,
+            ]);
+            olt_audit_action('update', $id, [
+                'name'      => $name,
+                'vendor'    => $vendor,
+                'host'      => $host,
+                'active'    => $is_active,
+                'prev_host' => $olt['host'] ?? null,
+            ]);
 
             $_SESSION['toast_message'] = "OLT '<strong>" . h($name) . "</strong>' was updated successfully!";
             $_SESSION['toast_type'] = 'success';

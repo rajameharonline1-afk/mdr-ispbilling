@@ -173,14 +173,28 @@ if ($__resolved_active !== '') {
         </a>
 
         <!-- Quick Search (desktop) -->
+        <?php
+          $nav_search_action = '/public/clients.php';
+          $nav_search_is_billing = ($__resolved_active === 'billing');
+          if ($nav_search_is_billing) {
+            $nav_search_action = '/public/billing.php';
+          }
+          $nav_month = isset($__req_qs['month']) ? (string)$__req_qs['month'] : date('Y-m');
+        ?>
         <form class="topbar-search d-none d-md-flex align-items-center position-relative ms-4"
-          id="nav-search-form" action="/public/clients.php" method="get" autocomplete="off" role="search">
+          id="nav-search-form" action="<?= h($nav_search_action) ?>" method="get" autocomplete="off" role="search">
           <div class="input-group input-group-sm" id="nav-search-group">
             <!-- <span class="input-group-text py-1"><i class="bi bi-search"></i></span> -->
             <input type="text" class="form-control form-control-sm" id="nav-search-input"
               name="search" placeholder="Search Customer">
             <button class="btn btn-sm" type="submit"><i class="bi bi-search"></i></button>
           </div>
+          <?php if ($nav_search_is_billing): ?>
+            <input type="hidden" name="view" value="list">
+            <input type="hidden" name="tab" value="all">
+            <input type="hidden" name="page" value="1">
+            <input type="hidden" name="month" value="<?= h($nav_month) ?>">
+          <?php endif; ?>
           <div id="nav-suggest" class="suggest-box d-none"></div>
         </form>
       </div>
@@ -526,6 +540,7 @@ if ($__resolved_active !== '') {
                 <ul class="collapse submenu list-unstyled <?php echo $openOLT ? 'show' : ''; ?>" id="oltMenu">
                   <li><a href="/olt/index.php" class="btn btn-menu<?php echo is_active('olts'); ?>"><i class="bi bi-pc-display"></i> OLTs</a></li>
                   <li><a href="/public/olt_mac_table.php" class="btn btn-menu<?php echo is_active('olt_mac'); ?>"><i class="bi bi-table"></i> ONU Info Table</a></li>
+                  <li><a href="/public/olt_logs_view.php" class="btn btn-menu<?php echo is_active('onu_tools'); ?>"><i class="bi bi-magic"></i> OLT Logs</a></li>
                   <!-- <li><a href="/public/onu_tools.php" class="btn btn-menu<?php echo is_active('onu_tools'); ?>"><i class="bi bi-magic"></i> ONU Tools</a></li> -->
                   <!-- <li><a href="/public/admin_tools.php" class="btn btn-menu<?php echo is_active('admin_tools'); ?>"><i class="bi bi-hammer"></i> Tools</a></li> -->
                   <!-- <li><a href="/public/olt_sfp.php" class="btn btn-menu<?php echo is_active('olt_sfp'); ?>"><i class="bi bi-lightning"></i> ALL SFP</a></li> -->

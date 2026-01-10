@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/routeros_api.class.php';
 
 header('Content-Type: application/json; charset=utf-8');
 function jexit($a){ echo json_encode($a, JSON_UNESCAPED_UNICODE); exit; }
@@ -12,12 +13,48 @@ function list_columns(PDO $pdo,string $tbl): array {
   $rows=$pdo->query("SHOW COLUMNS FROM `$tbl`")->fetchAll(PDO::FETCH_ASSOC);
   return array_map(fn($r)=>$r['Field'],$rows?:[]);
 }
+function first_existing_col(array $cols, array $candidates): ?string {
+  foreach ($candidates as $c) {
+    if (in_array($c, $cols, true)) return $c;
+  }
+  return null;
+}
+
+function build_mt_comment(array $data): string {
+  $code = trim((string)($data['client_code'] ?? ''));
+  if ($code === '' && !empty($data['pppoe_id'])) {
+    $digits = preg_replace('/\\D+/', '', (string)$data['pppoe_id']);
+    if ($digits !== '') $code = substr($digits, -4);
+  }
+  $map = [
+    'client_code' => 'Client Code',
+    'name' => 'Client Name',
+    'mobile' => 'Contact Number',
+    'area' => 'Zone Name',
+    'address' => 'Present Address',
+    'join_date' => 'Joining Date',
+    'package_name' => 'Package Name',
+    'monthly_bill' => 'Monthly Bill',
+    'expiry_date' => 'Bill Expiry Date',
+  ];
+  $lines = [];
+  foreach ($map as $k => $label) {
+    $val = $k === 'client_code' ? $code : trim((string)($data[$k] ?? ''));
+    $lines[] = $label.': '.$val;
+  }
+  return implode(' | ', $lines);
+}
 
 // PPPoE → safe client_code
 function make_code_from_pppoe(string $pppoe): string {
   $x = preg_replace('/[^A-Za-z0-9]/', '', $pppoe);
   if ($x === '') $x = 'CL'.date('ymdHis');
   return substr($x, 0, 32);
+}
+function client_code_from_pppoe(string $pppoe): string {
+  $digits = preg_replace('/\\D+/', '', $pppoe);
+  if ($digits === '') return '';
+  return substr($digits, -4);
 }
 // ensure client_code unique
 function ensure_unique_client_code(PDO $pdo, string $base): string {
@@ -146,12 +183,15 @@ try{
   }
 
   $pdo=db(); $pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
-  $has_pwd_col  = col_exists($pdo,'clients','pppoe_pass') ? 'pppoe_pass' : (col_exists($pdo,'clients','pppoe_password') ? 'pppoe_password' : null);
-  $has_code_col = col_exists($pdo,'clients','client_code');
-  $billing_col  = col_exists($pdo,'clients','billing_status') ? 'billing_status' : (col_exists($pdo,'clients','payment_status') ? 'payment_status' : null);
+  $clientCols = list_columns($pdo,'clients');
+  $has_pwd_col  = in_array('pppoe_pass',$clientCols,true) ? 'pppoe_pass' : (in_array('pppoe_password',$clientCols,true) ? 'pppoe_password' : null);
+  $has_code_col = in_array('client_code',$clientCols,true);
+  $profile_col  = first_existing_col($clientCols, ['ppp_profile','profile','profile_name','ppp_profile_name']);
+  $area_col     = first_existing_col($clientCols, ['area','zone','zone_name']);
+  $billing_col  = first_existing_col($clientCols, ['billing_status','payment_status']);
   $advance_cols = array_values(array_filter(
     ['advance','advance_balance','advance_amount','prepaid','wallet_advance'],
-    fn($c)=>col_exists($pdo,'clients',$c)
+    fn($c)=>in_array($c,$clientCols,true)
   ));
   $colInfo = $pdo->query("SHOW COLUMNS FROM `clients` LIKE 'package_id'")->fetch(PDO::FETCH_ASSOC);
   $packageRequired = $colInfo ? (strtoupper((string)($colInfo['Null'] ?? 'YES')) === 'NO') : false;
@@ -161,7 +201,7 @@ try{
   $pkgMapId=[]; foreach($pkgRows as $p){ $pkgMapId[$p['id']]=$p; }
 
   // existing
-  $cliRows=$pdo->query("SELECT id,pppoe_id,client_code,name,mobile,package_id,monthly_bill FROM clients")->fetchAll(PDO::FETCH_ASSOC);
+  $cliRows=$pdo->query("SELECT id,pppoe_id,client_code,name,mobile,package_id,monthly_bill".($area_col?", `$area_col` AS area_val":"")." FROM clients")->fetchAll(PDO::FETCH_ASSOC);
   $cliMap=[]; foreach($cliRows as $c){ $cliMap[$c['pppoe_id']]=$c; }
 
   $created=$updated=$skipped=0; $affectedIds=[]; $createdIds=[]; $now=date('Y-m-d H:i:s');
@@ -174,6 +214,7 @@ try{
     $client_name= trim((string)($r['client_name']??$pppoe_id));
     $mobile     = trim((string)($r['mobile']??''));
     $status     = (string)($r['status']??'active');
+    $profile_in = trim((string)($r['profile'] ?? $profile ?? ''));
     $package_id = $r['package_id']??null;
     $pkg        = $package_id?($pkgMapId[$package_id]??null):null;
     $bill       = $pkg ? (float)$pkg['price'] : 0.0;
@@ -186,10 +227,14 @@ try{
       if($opt_import_status) $fields['status']=$status;
       if($opt_import_name && (!$opt_do_not_overwrite || empty($existing['name'])))   $fields['name']=$client_name;
       if($opt_import_mobile && (!$opt_do_not_overwrite || empty($existing['mobile']))) $fields['mobile']=($mobile!==''?$mobile:null);
+      if($area_col && !empty($r['zone']) && (!$opt_do_not_overwrite || empty($existing['area_val'] ?? ''))){
+        $fields[$area_col] = $r['zone'];
+      }
       if($opt_import_package && $package_id && $pkg){ $fields['package_id']=$package_id; $fields['monthly_bill']=$bill; }
+      if($profile_col && $profile_in !== ''){ $fields[$profile_col]=$profile_in; }
       if($opt_save_password && $has_pwd_col && $password){ $fields[$has_pwd_col]=$password; }
       if($has_code_col && (empty($existing['client_code'])||$existing['client_code']==='')){
-        $fields['client_code']=ensure_unique_client_code($pdo, make_code_from_pppoe($pppoe_id));
+        $fields['client_code']=client_code_from_pppoe($pppoe_id);
       }
       $set=[];$vals=[]; foreach($fields as $k=>$v){ $set[]="`$k`=?"; $vals[]=$v; } $vals[]=$pppoe_id;
       $pdo->prepare("UPDATE clients SET ".implode(',',$set)." WHERE pppoe_id=?")->execute($vals);
@@ -204,7 +249,7 @@ try{
         jexit(['ok'=>false,'msg'=>"Package is required for PPPoE ID {$pppoe_id}. Please assign a package and try again."]);
       }
       // INSERT (package optional)
-      $client_code = $has_code_col ? ensure_unique_client_code($pdo, make_code_from_pppoe($pppoe_id)) : null;
+      $client_code = $has_code_col ? client_code_from_pppoe($pppoe_id) : null;
       $cols=['pppoe_id','client_code','name','mobile','package_id','router_id','status','monthly_bill','is_left','created_at','updated_at','join_date'];
       $vals=[
         $pppoe_id,
@@ -217,8 +262,10 @@ try{
         $bill,
         0,$now,$now,$now
       ];
+      if($area_col){ $cols[]=$area_col; $vals[] = !empty($r['zone']) ? $r['zone'] : null; }
       if ($billing_col) { $cols[]=$billing_col; $vals[]='unpaid'; }
       if(!$has_code_col){ array_splice($cols,1,1); array_splice($vals,1,1); }
+      if($profile_col && $profile_in !== ''){ $cols[]=$profile_col; $vals[]=$profile_in; }
       if($opt_save_password && $has_pwd_col && $password){ $cols[]=$has_pwd_col; $vals[]=$password; }
       foreach ($advance_cols as $c) { $cols[]=$c; $vals[]=0; }
       $ph=rtrim(str_repeat('?,',count($cols)),',');
@@ -241,9 +288,94 @@ try{
     }catch(Throwable $e){ $pdo->rollBack(); $inv_debug=['error'=>$e->getMessage()]; }
   }
 
+  $comment_debug = ['ok'=>true,'updated'=>0,'skipped'=>0,'missing_secret'=>0,'errors'=>[]];
+  if ($invoiceIds) {
+    try {
+      $routerStmt = $pdo->prepare("SELECT * FROM routers WHERE id=? LIMIT 1");
+      $routerStmt->execute([$router_id]);
+      $router = $routerStmt->fetch(PDO::FETCH_ASSOC);
+
+      $can_sync = true;
+      if (!$router) {
+        $comment_debug = ['ok'=>false,'error'=>'Router not found'];
+        $can_sync = false;
+      }
+      if ($can_sync) {
+        $ip   = $router['ip'] ?? ($router['ip_address'] ?? ($router['host'] ?? ($router['address'] ?? '')));
+        $user = $router['username'] ?? ($router['user'] ?? '');
+        $pass = $router['password'] ?? ($router['pass'] ?? '');
+        $port = isset($router['api_port']) && $router['api_port'] ? (int)$router['api_port'] : (int)($router['port'] ?? 8728);
+
+        if ($ip === '' || $user === '' || $pass === '') {
+          $comment_debug = ['ok'=>false,'error'=>'Router credentials missing'];
+          $can_sync = false;
+        }
+      }
+      if ($can_sync) {
+        $clientCols = list_columns($pdo, 'clients');
+        $mobCol = first_existing_col($clientCols, ['mobile','phone','phone_no','contact_number']);
+        $areaCol = first_existing_col($clientCols, ['area','zone','zone_name']);
+        $addrCol = first_existing_col($clientCols, ['address','present_address']);
+        $joinCol = first_existing_col($clientCols, ['join_date','joining_date','created_at']);
+        $mbCol = first_existing_col($clientCols, ['monthly_bill','bill','monthly']);
+        $expCol = first_existing_col($clientCols, ['expiry_date','expire_date']);
+
+        $sel = ['c.id','c.pppoe_id','c.name','p.name AS package_name'];
+        if (in_array('client_code', $clientCols, true)) $sel[] = "c.client_code";
+        if ($mobCol) $sel[] = "c.`$mobCol` AS mobile";
+        if ($areaCol) $sel[] = "c.`$areaCol` AS area";
+        if ($addrCol) $sel[] = "c.`$addrCol` AS address";
+        if ($joinCol) $sel[] = "c.`$joinCol` AS join_date";
+        if ($mbCol) $sel[] = "c.`$mbCol` AS monthly_bill";
+        if ($expCol) $sel[] = "c.`$expCol` AS expiry_date";
+
+        $in = implode(',', array_fill(0, count($invoiceIds), '?'));
+        $stmt = $pdo->prepare(
+          "SELECT ".implode(',', $sel)." FROM clients c LEFT JOIN packages p ON p.id=c.package_id WHERE c.id IN ($in)"
+        );
+        $stmt->execute($invoiceIds);
+        $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $API = new RouterosAPI();
+        $API->debug = false;
+        if (!$API->connect($ip, $user, $pass, $port)) {
+          $comment_debug = ['ok'=>false,'error'=>'MikroTik API connection failed'];
+        } else {
+          foreach ($clients as $c) {
+            $pppoe = trim((string)($c['pppoe_id'] ?? ''));
+            if ($pppoe === '') { $comment_debug['skipped']++; continue; }
+            $want = build_mt_comment([
+              'client_code' => $c['client_code'] ?? '',
+              'pppoe_id' => $pppoe,
+              'name' => $c['name'] ?? $pppoe,
+              'mobile' => $c['mobile'] ?? '',
+              'area' => $c['area'] ?? '',
+              'address' => $c['address'] ?? '',
+              'join_date' => $c['join_date'] ?? '',
+              'package_name' => $c['package_name'] ?? '',
+              'monthly_bill' => $c['monthly_bill'] ?? '',
+              'expiry_date' => $c['expiry_date'] ?? '',
+            ]);
+            if ($want === '') { $comment_debug['skipped']++; continue; }
+
+            $secret = $API->comm('/ppp/secret/print', ['?name'=>$pppoe, '.proplist'=>'.id,comment']);
+            if (!is_array($secret) || empty($secret[0]['.id'])) { $comment_debug['missing_secret']++; continue; }
+            $cur = (string)($secret[0]['comment'] ?? '');
+            if ($cur === $want) { $comment_debug['skipped']++; continue; }
+            $API->comm('/ppp/secret/set', ['.id'=>$secret[0]['.id'], 'comment'=>$want]);
+            $comment_debug['updated']++;
+          }
+          $API->disconnect();
+        }
+      }
+    } catch (Throwable $e) {
+      $comment_debug = ['ok'=>false,'error'=>$e->getMessage()];
+    }
+  }
+
   jexit(['ok'=>true,'summary'=>[
     'created'=>$created,'updated'=>$updated,'skipped'=>$skipped,'invoices_created'=>$inv_created
-  ], 'invoice_debug'=>$inv_debug]);
+  ], 'invoice_debug'=>$inv_debug, 'comment_debug'=>$comment_debug]);
 
 }catch(Throwable $e){
   if(isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();

@@ -46,15 +46,15 @@ body {
   color: var(--text-main);
   background: var(--bg-base);
   min-height: 100vh;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 body.app-shell {
-  background:
-    radial-gradient(900px 620px at 12% 12%, var(--bg-blob-1), transparent 60%),
-    radial-gradient(820px 560px at 88% 16%, var(--bg-blob-2), transparent 60%),
-    radial-gradient(940px 640px at 50% 90%, var(--bg-blob-3), transparent 60%),
-    var(--bg-base);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: auto;
 }
 
 h1, h2, h3, h4, h5, h6,
@@ -109,11 +109,14 @@ h1, h2, h3, h4, h5, h6,
   min-height: calc(100vh - var(--topbar-h));
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
+  width: 100%;
 }
 
 .content-area {
   padding: 16px 20px 32px;
   min-width: 0;
+  width: 100%;
+  overflow-x: hidden;
   animation: content-fade 0.4s ease;
 }
 
@@ -129,8 +132,17 @@ h1, h2, h3, h4, h5, h6,
   backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  overflow: hidden;
+  height: var(--topbar-h);
+  max-height: var(--topbar-h);
   z-index: 1030;
   color: #fff;
+}
+.topbar .container-fluid{
+  overflow: hidden;
 }
 
 .topbar .navbar-brand,

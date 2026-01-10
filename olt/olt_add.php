@@ -6,6 +6,7 @@ require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/olt_schema.php'; // ensure telnet-related columns
 require_once __DIR__ . '/../app/security_helpers.php'; // এনক্রিপশনের জন্য
+require_once __DIR__ . '/olt_logger.php'; // OLT action log/audit
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
@@ -171,6 +172,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['action'])) {
 
             $stmt = $pdo->prepare("INSERT INTO olts ({$colSql}) VALUES ({$valSql})");
             $stmt->execute($params);
+            $newId = (int)$pdo->lastInsertId();
+
+            olt_log_action('create', [
+                'id'      => $newId,
+                'name'    => $name,
+                'vendor'  => $vendor,
+                'host'    => $host,
+                'active'  => $is_active,
+            ]);
+            olt_audit_action('create', $newId, [
+                'name'   => $name,
+                'vendor' => $vendor,
+                'host'   => $host,
+                'active' => $is_active,
+            ]);
 
             $success = true;
             $_SESSION['toast_message'] = "OLT '<strong>" . h($name) . "</strong>' added successfully!";

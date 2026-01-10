@@ -42,6 +42,21 @@ function audit_log_legacy(PDO $pdo, string $action, array $meta = []): void {
         $pdo->prepare("INSERT INTO `$table` (message) VALUES (?)")->execute([$action.' '.$payload]);
     }
 }
+if (!function_exists('audit_log_safe')) {
+    function audit_log_safe(string $action, ?int $entity_id = null, array $meta = []): void {
+        if (!function_exists('audit_log')) return;
+        $mj = json_encode($meta, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+        // চেষ্টা-১: variadic style (action, entity_id, meta)
+        try { @call_user_func_array('audit_log', [$action, $entity_id, $meta]); return; } catch (Throwable $e) {}
+        // চেষ্টা-২: (action, entity_id)
+        try { @call_user_func_array('audit_log', [$action, $entity_id]); return; } catch (Throwable $e) {}
+        // চেষ্টা-৩: (action, meta)
+        try { @call_user_func_array('audit_log', [$action, $meta]); return; } catch (Throwable $e) {}
+        // চেষ্টা-৪: legacy (pdo, id, action, note)
+        global $pdo;
+        try { if (isset($pdo)) @call_user_func_array('audit_log', [$pdo, (int)($entity_id ?? 0), $action, $mj]); } catch (Throwable $e) {}
+    }
+}
 function get_router(PDO $pdo, int $id) {
     $st = $pdo->prepare("SELECT * FROM routers WHERE id=? LIMIT 1");
     $st->execute([$id]);
@@ -63,10 +78,6 @@ function rt_connect(array $router) {
         if (property_exists($API,'port')) $API->port = $port;
         if ($API->connect($ip, $user, $pass)) return $API;
     } catch (Throwable $e) { /* fallback */ }
-    // চেষ্টা-২: 4th arg দিয়ে
-    try {
-        if ($API->connect($ip, $user, $pass, $port)) return $API;
-    } catch (Throwable $e) { /* no-op */ }
     return false;
 }
 function rt_secret_info($api, string $name): array {
@@ -222,8 +233,8 @@ foreach ($g_suspend as $rid => $rows) {
                 $pdo->prepare("UPDATE clients SET status='inactive', updated_at=NOW() WHERE id=?")->execute([(int)$c['id']]);
             }
 
-            if (function_exists('audit_log')) {
-                audit_log('client', (int)$c['id'], 'pppoe_suspend_due', null, [
+            if (function_exists('audit_log_safe')) {
+                audit_log_safe('pppoe_suspend_due', (int)$c['id'], [
                     'client_id'=>(int)$c['id'],
                     'pppoe_id'=>$pppoe,
                     'router_id'=>(int)$rid,
@@ -268,8 +279,8 @@ foreach ($g_enable as $rid => $rows) {
                 $summary['enabled']++;
                 $summary['routers'][$rid]['enable'] = ($summary['routers'][$rid]['enable'] ?? 0) + 1;
 
-                if (function_exists('audit_log')) {
-                    audit_log('client', (int)$c['id'], 'pppoe_enable_after_payment', null, [
+                if (function_exists('audit_log_safe')) {
+                    audit_log_safe('pppoe_enable_after_payment', (int)$c['id'], [
                         'client_id'=>(int)$c['id'],
                         'pppoe_id'=>$pppoe,
                         'router_id'=>(int)$rid,
