@@ -35,6 +35,35 @@
 })();
 
 (() => {
+  const form = document.getElementById('clientCodeSearchForm');
+  const input = document.getElementById('clientCodeInput');
+  if (!form || !input) return;
+  let timer = null;
+  let lastSubmitted = input.value.trim();
+  const submit = () => {
+    const val = input.value.trim();
+    if (val === lastSubmitted) return;
+    lastSubmitted = val;
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+    } else {
+      form.submit();
+    }
+  };
+  input.addEventListener('input', () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(submit, 400);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (timer) clearTimeout(timer);
+      submit();
+    }
+  });
+})();
+
+(() => {
   const ensureHolder = () => {
     let holder = document.getElementById('app-toast-holder');
     if (!holder) {

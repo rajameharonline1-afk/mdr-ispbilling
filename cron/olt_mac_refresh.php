@@ -9,8 +9,10 @@ $php = PHP_BINARY ?: 'php';
 $script = __DIR__ . '/../api/olt_mac_refresh_telnet.php';
 
 $mode = 'fast';
-if (in_array('--full', $argv ?? [], true)) {
-    $mode = 'full';
+foreach (array_slice($argv ?? [], 1) as $arg) {
+    if ($arg === '--full' || $arg === '-F') { $mode = 'full'; continue; }
+    if ($arg === '--rx' || $arg === '--diag') { $mode = 'rx'; continue; }
+    if ($arg === '--fast' || $arg === '-f') { $mode = 'fast'; continue; }
 }
 
 $cmd = escapeshellcmd($php) . ' ' . escapeshellarg($script) . ' mode=' . escapeshellarg($mode);

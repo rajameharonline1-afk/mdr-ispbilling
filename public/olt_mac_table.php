@@ -8,19 +8,28 @@ require_once __DIR__ . '/../partials/partials_header.php';
 <div class="container-admin olt-mac-table-page">
     
       <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
-        <span class="fw-semibold">ONU Table</span>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <span class="fw-semibold">ONU Table</span>
+          <form id="clientCodeSearchForm" class="d-flex align-items-center gap-2" method="get" action="">
+            <input type="hidden" name="olt_id" value="<?= (int)$filterOlt; ?>">
+            <input type="hidden" name="pon" value="<?= (int)$filterPon; ?>">
+            <input id="clientCodeInput" type="text" name="client_code" class="form-control form-control-sm" placeholder="Client code" value="<?= h($filterClientCode); ?>" style="min-width: 180px;" autocomplete="off">
+          </form>
+        </div>
         <span class="fw-semibold"><i class="bi bi-hdd-fill"></i> <?= h($lastLearnedHuman); ?></span>
       </div>
   <div class="container-fluid olt-sticky-header">
 
     <div class="olt-header olt-filter-bar mb-3">
-      <form class="card shadow-sm" method="get" action="">
+      <form id="oltFiltersForm" class="card shadow-sm" method="get" action="">
         <div class="card-body row g-3 align-items-end">
-          <div class="col-md-6">
-            <select name="olt_id" class="form-select">
-              <option value="0">Select an OLT</option>
+          <input type="hidden" name="client_code" id="clientCodeHidden" value="<?= h($filterClientCode); ?>">
+          <div class="col-md-4">
+            <select name="olt_id" class="form-select" required>
+              <option value="0" disabled <?= $filterOlt === 0 ? 'selected' : ''; ?>>Select an OLT first</option>
               <?php foreach ($olts as $olt): ?>
-                <option value="<?= $olt['id']; ?>" <?= $filterOlt === $olt['id'] ? 'selected' : ''; ?>>
+                <?php $oltId = (int)$olt['id']; ?>
+                <option value="<?= $oltId; ?>" <?= (int)$filterOlt === $oltId ? 'selected' : ''; ?>>
                   <?= h($olt['name'] ?: $olt['host']); ?>
                 </option>
               <?php endforeach; ?>
@@ -28,22 +37,25 @@ require_once __DIR__ . '/../partials/partials_header.php';
           </div>
 
           <?php if (!empty($ponOptions)): ?>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <select name="pon" class="form-select">
-              <option value="0">All PONs</option>
+              <option value="0" disabled <?= $filterPon === 0 ? 'selected' : ''; ?>>Select PON (optional)</option>
               <?php foreach ($ponOptions as $slot): ?>
-                <option value="<?= $slot; ?>" <?= $filterPon === $slot ? 'selected' : ''; ?>>
-                  PON <?= h($slot); ?>
+                <?php $slotVal = (int)$slot; ?>
+                <option value="<?= $slotVal; ?>" <?= (int)$filterPon === $slotVal ? 'selected' : ''; ?>>
+                  PON <?= h($slotVal); ?>
                 </option>
               <?php endforeach; ?>
             </select>
           </div>
           <?php endif; ?>
 
-          <div class="col-md-2 d-grid">
-            <button class="btn btn-primary">Apply</button>
-          </div>
         </div>
+        <?php if ($filterOlt === 0): ?>
+          <div class="px-3 pb-3">
+            <small class="text-muted">অনুগ্রহ করে প্রথমে একটি OLT সিলেক্ট করুন, তারপর PON/ক্লায়েন্ট কোড ফিল্টার দিন।</small>
+          </div>
+        <?php endif; ?>
 
         <?php if ($selectedOlt): ?>
           <div class="card-header bg-body">
@@ -92,10 +104,14 @@ require_once __DIR__ . '/../partials/partials_header.php';
                 <tr>
                   <td data-label="ONU ID"><?= h(format_onu_identifier($row)); ?></td>
                   <td data-label="Client">
-                    <?php if (!empty($row['client_meta'])): $cm = $row['client_meta']; ?>
+                    <?php if (!empty($row['client_meta'])): $cm = $row['client_meta']; $clientCodeDisplay = trim((string)($cm['client_code'] ?? '')); if ($clientCodeDisplay === '') { $clientCodeDisplay = (string)(int)($cm['id'] ?? 0); } ?>
                       <a href="/public/client_view.php?id=<?= $cm['id']; ?>" class="fw-semibold text-decoration-none">
-                        <?= (int)($cm['id'] ?? 0); ?>: <?= h($cm['name'] ?? ''); ?>
+                        <?= h($clientCodeDisplay); ?><?php if (($cm['name'] ?? '') !== ''): ?>: <?= h($cm['name']); ?><?php endif; ?>
                       </a>
+                    <?php elseif (!empty($row['clients'])): ?>
+                      <span class="fw-semibold"><?= h($row['clients']); ?></span>
+                    <?php elseif (!empty($row['client_id'])): ?>
+                      <span class="fw-semibold">ID: <?= (int)$row['client_id']; ?></span>
                     <?php else: ?>
                       <span class="text-muted">—</span>
                     <?php endif; ?>
@@ -167,28 +183,30 @@ require_once __DIR__ . '/../partials/partials_header.php';
                     <?php endif; ?>
                   </td>
                   <td class="olt-dereg-cell" data-label="LDR">
-                    <?php
-                    $deregReason = $row['last_dereg_reason'] ?? null;
-                    $deregTime = $row['last_dereg_time'] ?? null;
-                    $deregReasonDisplay = ($deregReason === null || $deregReason === '') ? '—' : $deregReason;
-                    ?>
-                    <div><?= h($deregReasonDisplay); ?></div>
-                    <?php if ($deregTime): ?>
-                      <div class="text-muted small"><?= h($deregTime); ?></div>
-                    <?php endif; ?>
-                  </td>
-                  <td class="text-end" data-label="Action">
+                  <?php
+                  $deregReason = $row['last_dereg_reason'] ?? null;
+                  $deregTime = $row['last_dereg_time'] ?? null;
+                  $deregReasonDisplay = ($deregReason === null || $deregReason === '') ? '—' : $deregReason;
+                  ?>
+                  <div><?= h($deregReasonDisplay); ?></div>
+                  <?php if ($deregTime): ?>
+                    <div class="text-muted small"><?= h($deregTime); ?></div>
+                  <?php endif; ?>
+                </td>
+                <td class="text-end" data-label="Action">
+                    <?php $cfgDisabled = empty($row['id']) || (($row['cache_source'] ?? '') === 'onu_monitor_cache'); ?>
                     <button class="btn btn-outline-primary btn-sm btn-config"
                       type="button"
-                      data-row-id="<?= $row['id']; ?>"
+                      <?= $cfgDisabled ? 'disabled' : ''; ?>
+                      data-row-id="<?= (int)($row['id'] ?? 0); ?>"
                       data-desc="<?= h($row['description'] ?? ''); ?>">
                       Configure
                     </button>
-                  </td>
-                </tr>
-              <?php endforeach; ?>
+                </td>
+              </tr>
             <?php endforeach; ?>
-          </tbody>
+          <?php endforeach; ?>
+         </tbody>
         </table>
       <?php else: ?>
         <div class="p-4 text-center text-muted">এই মানদণ্ডে কোনো MAC পাওয়া যায়নি।</div>

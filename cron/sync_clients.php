@@ -249,15 +249,30 @@ foreach ($routers as $router) {
                 if (col_exists($pdo, 'clients', 'pppoe_pass')) { $cols[] = 'pppoe_pass'; $vals[] = $password; }
                 if (col_exists($pdo, 'clients', 'status')) { $cols[] = 'status'; $vals[] = $status; }
                 if (col_exists($pdo, 'clients', 'is_online')) { $cols[] = 'is_online'; $vals[] = $is_online; }
-                if (!empty($commentData['name']) && col_exists($pdo, 'clients', 'name')) { $cols[] = 'name'; $vals[] = $commentData['name']; }
+                if (!empty($commentData['name']) && col_exists($pdo, 'clients', 'name')) {
+                    $pos = array_search('name', $cols, true);
+                    if ($pos === false) {
+                        $cols[] = 'name'; $vals[] = $commentData['name'];
+                    } else {
+                        $vals[$pos] = $commentData['name'];
+                    }
+                }
                 if (!empty($commentData['mobile'])) {
                     $mobCol = pick_col($pdo, 'clients', ['mobile','phone','cell','contact']);
-                    if ($mobCol) { $cols[] = $mobCol; $vals[] = $commentData['mobile']; }
+                    if ($mobCol) {
+                        $pos = array_search($mobCol, $cols, true);
+                        if ($pos === false) {
+                            $cols[] = $mobCol; $vals[] = $commentData['mobile'];
+                        } else {
+                            $vals[$pos] = $commentData['mobile'];
+                        }
+                    }
                 }
                 if (!empty($commentData['area']) && col_exists($pdo, 'clients', 'area')) { $cols[] = 'area'; $vals[] = $commentData['area']; }
                 if (!empty($commentData['address']) && col_exists($pdo, 'clients', 'address')) { $cols[] = 'address'; $vals[] = $commentData['address']; }
                 if (col_exists($pdo, 'clients', 'join_date')) {
                     $jd = !empty($commentData['join_date']) ? normalize_date($commentData['join_date']) : date('Y-m-d');
+                    if(!$jd) $jd = date('Y-m-d');
                     $cols[] = 'join_date'; $vals[] = $jd;
                 }
                 if (!empty($commentData['monthly_bill'])) {

@@ -1,5 +1,9 @@
 <?php
-if (PHP_SAPI === 'cli') {
+$isCli = PHP_SAPI === 'cli';
+// ======================
+// পরিবেশ প্রস্তুতি (CLI/Browser)
+// ======================
+if ($isCli) {
   require_once __DIR__ . '/../app/config.php';
   require_once __DIR__ . '/../app/db.php';
   require_once __DIR__ . '/../app/telnet.php';
@@ -8,14 +12,51 @@ if (PHP_SAPI === 'cli') {
   require_once __DIR__ . '/../app/telnet.php';
 }
 require_once __DIR__ . '/../app/security_helpers.php';
+require_once __DIR__ . '/../app/routeros_api.class.php';
 
 header('Content-Type: application/json; charset=utf-8');
 set_time_limit(0);
 
-$db = db();
-$debugMode = isset($_GET['debug']);
-$mode = strtolower(trim((string)($_GET['mode'] ?? 'fast')));
-$fastMode = $mode !== 'full';
+ $request = $_GET ?? [];
+ if ($isCli) {
+   $cliArgs = [];
+   foreach (array_slice($argv ?? [], 1) as $arg) {
+     $arg = (string)$arg;
+     if ($arg === '--full' || $arg === '-F') { $cliArgs['mode'] = 'full'; continue; }
+     if ($arg === '--fast') { $cliArgs['mode'] = 'fast'; continue; }
+     if ($arg === '--rx' || $arg === '--diag') { $cliArgs['mode'] = 'rx'; continue; }
+     if ($arg === '--debug' || $arg === '-d') { $cliArgs['debug'] = 1; continue; }
+     $arg = ltrim($arg, '-');
+     if (strpos($arg, '=') !== false) {
+       [$k, $v] = explode('=', $arg, 2);
+       if($k !== '') $cliArgs[$k] = $v;
+     }
+   }
+   $request = array_merge($request, $cliArgs);
+ }
+
+ $db = db();
+ $debugMode = isset($request['debug']);
+ $mode = strtolower(trim((string)($request['mode'] ?? 'fast')));
+ $mode = match($mode){
+   'full','rx' => $mode,
+   'diag','diagnostic','rxfast' => 'rx',
+   default => 'fast'
+ };
+ $fullMode = $mode === 'full';
+ $rxMode = $mode === 'rx';
+ $fastMode = !$fullMode && !$rxMode;
+ $diagEnabled = $fullMode || $rxMode;
+ $statusTimeout = $fastMode ? 6 : 10;
+ // opm-diag output can be lengthy; allow more time when RX is requested
+ $diagTimeout = $diagEnabled ? ($fullMode ? 24 : 18) : 0;
+ $macTimeout = $fastMode ? 8 : 10;
+ $descTimeout = $fullMode ? 15 : 10;
+ $clientMacTimeout = $fullMode ? 18 : 12;
+
+// ======================
+// সহায়ক ইউটিলিটি ও কনভার্সন ফাংশনসমূহ
+// ======================
 
 function decrypt_olt_secret(?string $ciphertext): ?string {
   if($ciphertext === null || $ciphertext === '') return null;
@@ -26,8 +67,215 @@ function decrypt_olt_secret(?string $ciphertext): ?string {
   return $plain;
 }
 
+function norm_mac($mac): ?string {
+  if($mac === null) return null;
+  $hex = preg_replace('/[^0-9a-fA-F]/', '', (string)$mac);
+  if(strlen($hex) < 12) return null;
+  $hex = substr(strtolower($hex), 0, 12);
+  return implode(':', str_split($hex, 2));
+}
+
+function normalize_mac_for_lookup(?string $mac): ?string {
+  return norm_mac($mac);
+}
+
+function normalize_port_label(?string $label): string {
+  if(!$label) return '—';
+  $label = trim($label);
+  if(preg_match('/(EPON|GPON)\s*0\/(\d{1,2})/i', $label, $m)){
+    $slot = str_pad($m[2], 2, '0', STR_PAD_LEFT);
+    return strtoupper($m[1])." 0/{$slot}";
+  }
+  if(preg_match('/0\/(\d{1,2})/i', $label, $m)){
+    $slot = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+    return "PON 0/{$slot}";
+  }
+  return strtoupper($label);
+}
+
+function onu_numeric($onu): int {
+  if($onu === null) return PHP_INT_MAX;
+  if(is_int($onu)) return $onu;
+  if(is_string($onu) && preg_match('/(\d+)/', $onu, $m)){
+    return (int)$m[1];
+  }
+  return PHP_INT_MAX;
+}
+
+function auto_link_client_olt_from_cache(PDO $db, int $clientId, array $fields): array {
+  $tokens = [];
+  $addToken = static function($val) use (&$tokens) {
+    $val = trim((string)$val);
+    if($val !== '') $tokens[] = $val;
+  };
+  $addToken($fields['pppoe_id'] ?? '');
+  $addToken($fields['client_code'] ?? '');
+  $addToken($fields['name'] ?? '');
+  $addToken($fields['mobile'] ?? '');
+
+  if(!$tokens) return ['ok'=>false, 'reason'=>'no_tokens'];
+
+  $fetchRow = static function(string $sql, array $params) use ($db): ?array {
+    $st = $db->prepare($sql);
+    $st->execute($params);
+    return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+  };
+
+  $match = null;
+  try{
+    foreach($tokens as $token){
+      $match = $fetchRow("SELECT * FROM olt_mac_cache WHERE LOWER(description)=? ORDER BY learned_at DESC LIMIT 1", [strtolower($token)]);
+      if($match) break;
+    }
+    if(!$match){
+      foreach($tokens as $token){
+        $mac = normalize_mac_for_lookup($token);
+        if(!$mac) continue;
+        $match = $fetchRow("SELECT * FROM olt_mac_cache WHERE REPLACE(LOWER(mac),':','') = ? ORDER BY learned_at DESC LIMIT 1", [strtolower(str_replace(':','',$mac))]);
+        if($match) break;
+      }
+    }
+  }catch(Throwable $e){
+    return ['ok'=>false, 'reason'=>'lookup_failed'];
+  }
+
+  if(!$match) return ['ok'=>false, 'reason'=>'not_found'];
+
+  $onuText = (string)($match['onu'] ?? '');
+  $onuId = null;
+  if(preg_match('/(\d+)/', $onuText, $m)){
+    $onuId = (string)(int)$m[1];
+  }
+  $macAddr = normalize_mac_for_lookup($match['mac'] ?? '') ?? ($match['mac'] ?? null);
+  $vendor = null;
+  try{
+    $st = $db->prepare("SELECT vendor FROM olts WHERE id=? LIMIT 1");
+    $st->execute([(int)$match['olt_id']]);
+    $vendor = $st->fetchColumn() ?: null;
+  }catch(Throwable $e){}
+
+  try{
+    $upd = $db->prepare("UPDATE clients
+                          SET olt_id=:oid,
+                              olt_vendor=:vendor,
+                              olt_port=:port,
+                              olt_onu=:onu,
+                              caller_mac=:mac,
+                              last_linked_at=:linked
+                          WHERE id=:id");
+    $upd->execute([
+      ':oid' => $match['olt_id'] ?? null,
+      ':vendor' => $vendor,
+      ':port' => $match['port'] ?? null,
+      ':onu' => $onuId,
+      ':mac' => $macAddr,
+      ':linked' => $match['learned_at'] ?? null,
+      ':id' => $clientId,
+    ]);
+  }catch(Throwable $e){
+    return ['ok'=>false, 'reason'=>'update_failed'];
+  }
+
+  $portLabel = (string)($match['port'] ?? '');
+  if($portLabel !== '' && $onuId){
+    try{
+      if(preg_match('/(EPON|GPON)\s*0\/(\d+)/i', $portLabel, $pm)){
+        $family = strtolower($pm[1]);
+        $slot = (int)$pm[2];
+        $iface = '0/'.$slot;
+        $rxVal = null;
+        if(isset($match['rx_power_dbm']) && $match['rx_power_dbm'] !== '' && is_numeric($match['rx_power_dbm'])){
+          $rxVal = (float)$match['rx_power_dbm'];
+        }
+        $status = strtolower((string)($match['status'] ?? 'online'));
+        $invSql = "INSERT INTO onu_inventory (olt_id,family,iface,onu_id,client_id,is_active,last_status,last_rx_dbm,last_updated)
+                   VALUES (?,?,?,?,?,1,?,?,?)
+                   ON DUPLICATE KEY UPDATE client_id=VALUES(client_id), last_status=VALUES(last_status), last_rx_dbm=VALUES(last_rx_dbm), last_updated=VALUES(last_updated)";
+        $db->prepare($invSql)->execute([
+          (int)$match['olt_id'],
+          $family,
+          $iface,
+          (int)$onuId,
+          $clientId,
+          $status !== '' ? $status : 'online',
+          $rxVal,
+          $match['learned_at'] ?? null,
+        ]);
+        if($macAddr){
+          $invIdStmt = $db->prepare("SELECT id FROM onu_inventory WHERE olt_id=? AND family=? AND iface=? AND onu_id=? LIMIT 1");
+          $invIdStmt->execute([(int)$match['olt_id'], $family, $iface, (int)$onuId]);
+          $targetId = (int)($invIdStmt->fetchColumn() ?: 0);
+          if($targetId > 0){
+            $mapSql = "INSERT INTO onu_mac_map (target_id, mac, last_seen)
+                       VALUES (?, ?, ?)
+                       ON DUPLICATE KEY UPDATE mac=VALUES(mac), last_seen=VALUES(last_seen)";
+            $db->prepare($mapSql)->execute([$targetId, $macAddr, $match['learned_at'] ?? date('Y-m-d H:i:s')]);
+          }
+        }
+      }
+    }catch(Throwable $e){
+      // ignore inventory sync failures
+    }
+  }
+
+  return [
+    'ok'=>true,
+    'port'=>$portLabel,
+    'onu'=>$onuId,
+    'olt'=>$match['olt_id'] ?? null,
+  ];
+}
+
+function sync_onu_inventory_from_payload(PDO $db, int $oltId, array $payload, ?string $learnedAt): void {
+  if($oltId <= 0) return;
+  $portLabel = (string)($payload['port'] ?? '');
+  if($portLabel === '') return;
+  if(!preg_match('/(EPON|GPON)\\s*0\\/(\\d+)/i', $portLabel, $pm)) return;
+  $family = strtolower($pm[1]);
+  $slot = (int)$pm[2];
+  $onuId = onu_numeric($payload['onu'] ?? $payload['onu_num'] ?? null);
+  if($onuId === PHP_INT_MAX || $slot <= 0) return;
+  $iface = '0/'.$slot;
+  $rxVal = null;
+  if(isset($payload['rx_power_dbm']) && $payload['rx_power_dbm'] !== '' && is_numeric($payload['rx_power_dbm'])){
+    $rxVal = (float)$payload['rx_power_dbm'];
+  }
+  $status = strtolower((string)($payload['status'] ?? 'online'));
+  $status = $status !== '' ? $status : 'online';
+  $macAddr = norm_mac($payload['mac'] ?? '');
+  $seenAt = $learnedAt ?: date('Y-m-d H:i:s');
+  try{
+    $invSql = "INSERT INTO onu_inventory (olt_id,family,iface,onu_id,client_id,is_active,last_status,last_rx_dbm,last_updated)
+               VALUES (?,?,?,?,?,1,?,?,?)
+               ON DUPLICATE KEY UPDATE client_id=VALUES(client_id), last_status=VALUES(last_status), last_rx_dbm=VALUES(last_rx_dbm), last_updated=VALUES(last_updated)";
+    $db->prepare($invSql)->execute([
+      $oltId,
+      $family,
+      $iface,
+      (int)$onuId,
+      (int)($payload['client_id'] ?? 0),
+      $status,
+      $rxVal,
+      $seenAt,
+    ]);
+    if($macAddr){
+      $invIdStmt = $db->prepare("SELECT id FROM onu_inventory WHERE olt_id=? AND family=? AND iface=? AND onu_id=? LIMIT 1");
+      $invIdStmt->execute([$oltId, $family, $iface, (int)$onuId]);
+      $targetId = (int)($invIdStmt->fetchColumn() ?: 0);
+      if($targetId > 0){
+        $mapSql = "INSERT INTO onu_mac_map (target_id, mac, last_seen)
+                   VALUES (?, ?, ?)
+                   ON DUPLICATE KEY UPDATE mac=VALUES(mac), last_seen=VALUES(last_seen)";
+        $db->prepare($mapSql)->execute([$targetId, $macAddr, $seenAt]);
+      }
+    }
+  }catch(Throwable $e){
+    // inventory sync failures are non-fatal
+  }
+}
+
 function load_existing_mac_rows(PDO $db, int $oltId): array {
-  $stmt = $db->prepare("SELECT mac,vlan,port,onu,status,description,distance_m,temperature_c,supply_voltage_v,tx_bias_ma,tx_power_dbm,rx_power_dbm,last_dereg_reason,last_dereg_time,client_id,clients
+  $stmt = $db->prepare("SELECT mac,vlan,port,onu,status,description,distance_m,rx_power_dbm,last_dereg_reason,last_dereg_time,client_id,clients,vendor,client_mac,client_mac_vlan,client_mac_learned_at,learned_at
                         FROM olt_mac_cache
                         WHERE olt_id = ?");
   $stmt->execute([$oltId]);
@@ -68,7 +316,7 @@ function values_equal($a,$b): bool {
 }
 
 function mac_payloads_equal(array $existing, array $payload): bool {
-  $fields = ['vlan','port','onu','status','description','distance_m','temperature_c','supply_voltage_v','tx_bias_ma','tx_power_dbm','rx_power_dbm','last_dereg_reason','last_dereg_time','client_id','clients'];
+  $fields = ['vlan','port','onu','status','description','distance_m','rx_power_dbm','last_dereg_reason','last_dereg_time','client_id','clients','vendor','client_mac','client_mac_vlan','client_mac_learned_at'];
   foreach($fields as $field){
     $oldVal = $existing[$field] ?? null;
     $newVal = $payload[$field] ?? null;
@@ -82,11 +330,20 @@ function mac_payloads_equal(array $existing, array $payload): bool {
 function load_client_mac_map(PDO $db): array {
   $map = [];
   try{
-    $stmt = $db->query("SELECT id, caller_mac, router_mac, ap_mac FROM clients");
+    $cols = $db->query("SHOW COLUMNS FROM clients")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    $hasMacAddress = in_array('mac_address', $cols, true);
+    $hasOnuMac     = in_array('onu_mac', $cols, true);
+    $select = "id, caller_mac, router_mac, ap_mac";
+    if($hasMacAddress) $select .= ", mac_address";
+    if($hasOnuMac) $select .= ", onu_mac";
+    $stmt = $db->query("SELECT {$select} FROM clients");
     while($row = $stmt->fetch(PDO::FETCH_ASSOC)){
       $cid = (int)($row['id'] ?? 0);
       if(!$cid) continue;
-      foreach(['caller_mac','router_mac','ap_mac'] as $f){
+      $macFields = ['caller_mac','router_mac','ap_mac'];
+      if($hasMacAddress) $macFields[] = 'mac_address';
+      if($hasOnuMac) $macFields[] = 'onu_mac';
+      foreach($macFields as $f){
         $mk = norm_mac($row[$f] ?? null);
         if($mk) $map[$mk] = $cid;
       }
@@ -113,11 +370,11 @@ function ensure_olt_mac_cache_schema(PDO $db): void {
     'client_id'       => "ADD COLUMN client_id int unsigned DEFAULT NULL AFTER olt_id",
     'description'      => "ADD COLUMN description varchar(255) DEFAULT NULL AFTER onu",
     'distance_m'       => "ADD COLUMN distance_m decimal(10,2) DEFAULT NULL AFTER description",
-    'temperature_c'    => "ADD COLUMN temperature_c decimal(10,2) DEFAULT NULL AFTER distance_m",
-    'supply_voltage_v' => "ADD COLUMN supply_voltage_v decimal(10,2) DEFAULT NULL AFTER temperature_c",
-    'tx_bias_ma'       => "ADD COLUMN tx_bias_ma decimal(10,2) DEFAULT NULL AFTER supply_voltage_v",
-    'tx_power_dbm'     => "ADD COLUMN tx_power_dbm decimal(10,2) DEFAULT NULL AFTER tx_bias_ma",
-    'rx_power_dbm'     => "ADD COLUMN rx_power_dbm decimal(10,2) DEFAULT NULL AFTER tx_power_dbm",
+    'rx_power_dbm'     => "ADD COLUMN rx_power_dbm decimal(10,2) DEFAULT NULL AFTER distance_m",
+    'vendor'           => "ADD COLUMN vendor varchar(64) DEFAULT NULL AFTER olt_id",
+    'client_mac'       => "ADD COLUMN client_mac varchar(32) DEFAULT NULL AFTER clients",
+    'client_mac_vlan'  => "ADD COLUMN client_mac_vlan int unsigned DEFAULT NULL AFTER client_mac",
+    'client_mac_learned_at' => "ADD COLUMN client_mac_learned_at datetime DEFAULT NULL AFTER client_mac_vlan",
   ];
   $ddl = [];
   foreach($needed as $col => $sql){
@@ -131,42 +388,31 @@ function ensure_olt_mac_cache_schema(PDO $db): void {
   $checked = true;
 }
 
+// ======================
+// স্কিমা প্রস্তুতি (olt_mac_cache কলামগুলো নিশ্চিত করা)
+// ======================
 ensure_olt_mac_cache_schema($db);
-function ensure_onu_client_mac_table(PDO $db): void {
-  static $checked = false;
-  if($checked) return;
-  try{
-    $db->query("SELECT 1 FROM olt_onu_client_macs LIMIT 1");
-    $checked = true;
-    return;
-  } catch(PDOException $e){
-    if(strpos($e->getMessage(), '42S02') === false){
-      throw $e;
-    }
-  }
-  $ddl = "CREATE TABLE IF NOT EXISTS `olt_onu_client_macs` (
-            `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-            `olt_id` int unsigned NOT NULL,
-            `family` varchar(8) NOT NULL,
-            `slot` smallint unsigned NOT NULL,
-            `onu` smallint unsigned NOT NULL,
-            `vlan` int unsigned DEFAULT NULL,
-            `mac` varchar(32) NOT NULL,
-            `learned_at` datetime NOT NULL,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uniq_onu_mac` (`olt_id`,`family`,`slot`,`onu`,`mac`),
-            KEY `idx_mac_lookup` (`mac`)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-  $db->exec($ddl);
-  $checked = true;
-}
-ensure_onu_client_mac_table($db);
 
-function norm_mac(string $mac): ?string {
-  $mac = strtolower(trim($mac));
-  $mac = preg_replace('/[^0-9a-f]/', '', $mac);
-  if(strlen($mac)!==12) return null;
-  return implode(':', str_split($mac, 2));
+// ======================
+// গ্লোবাল লক (cron ওভারল্যাপ প্রতিরোধ)
+// ======================
+$globalLockAcquired = false;
+try{
+  $lockStmt = $db->prepare("SELECT GET_LOCK(?, 1)");
+  $lockStmt->execute(['cron_olt_mac_refresh']);
+  $globalLockAcquired = (int)($lockStmt->fetchColumn() ?: 0) === 1;
+}catch(Throwable $e){
+  $globalLockAcquired = false;
+}
+if(!$globalLockAcquired){
+  $resp = ['ok'=>false, 'error'=>'lock_busy'];
+  if($isCli){
+    echo json_encode($resp, JSON_UNESCAPED_UNICODE);
+  } else {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($resp, JSON_UNESCAPED_UNICODE);
+  }
+  exit;
 }
 
 function canonical_spo_key(?string $family, ?int $slot, ?int $onu): ?string {
@@ -178,6 +424,12 @@ function parse_onu_identifier(string $id): ?array {
   $normalized = strtoupper(str_replace(' ', '', $id));
   if(preg_match('/(EPON|GPON)0\/(\d+):(\d+)/', $normalized, $m)){
     return [strtoupper($m[1]), (int)$m[2], (int)$m[3]];
+  }
+  if(preg_match('/(EPON|GPON)0\/(\d+)\/(\d+)/', $normalized, $m)){
+    return [strtoupper($m[1]), (int)$m[2], (int)$m[3]];
+  }
+  if(preg_match('/0\/(\d+)\/(\d+)/', $normalized, $m)){
+    return ['EPON', (int)$m[1], (int)$m[2]];
   }
   return null;
 }
@@ -271,15 +523,6 @@ function canonical_key_from_row(array $row): ?string {
     return canonical_spo_key('EPON', (int)$m[1], $onu);
   }
   return null;
-}
-
-function onu_numeric($onu): int {
-  if($onu === null) return PHP_INT_MAX;
-  if(is_int($onu)) return $onu;
-  if(is_string($onu) && preg_match('/(\d+)/', $onu, $m)){
-    return (int)$m[1];
-  }
-  return PHP_INT_MAX;
 }
 
 function parse_onu_datetime($value): ?string {
@@ -390,18 +633,36 @@ function parse_onu_statuses(string $txt): array {
 
 function parse_onu_rx_metrics(string $txt): array {
   $map = [];
-  $lines = preg_split('/\R/', $txt);
-  foreach($lines as $line){
-    $line = trim($line);
-    if($line === '' || (stripos($line,'EPON') === false && stripos($line,'GPON') === false)) continue;
-    $parts = preg_split('/\s{2,}/', $line);
-    if(count($parts) < 6) continue;
-    $idData = parse_onu_identifier($parts[0]);
-    if(!$idData) continue;
-    [$family, $slot, $onu] = $idData;
-    $key = canonical_spo_key($family, $slot, $onu);
-    if(!$key) continue;
-    $map[$key] = is_numeric($parts[5] ?? null) ? (float)$parts[5] : null;
+  // প্রথমে পুরো টেক্সটে গ্লোবাল প্যাটার্ন খুঁজে দেখি (মাল্টি-লাইন, ভ্যারিয়েবল স্পেসিং)
+  $rxPattern = '/(EPON|GPON)0\/(\d+):(\d+)[^\r\n]*?(-?\d+(?:\.\d+)?)[^\r\n]*?(-?\d+(?:\.\d+)?)[^\r\n]*?(-?\d+(?:\.\d+)?)[^\r\n]*?(-?\d+(?:\.\d+)?)[^\r\n]*?(-?\d+(?:\.\d+)?)/i';
+  if(preg_match_all($rxPattern, $txt, $m, PREG_SET_ORDER)){
+    foreach($m as $row){
+      $family = strtoupper($row[1]);
+      $slot   = (int)$row[2];
+      $onu    = (int)$row[3];
+      $rxVal  = is_numeric($row[8]) ? (float)$row[8] : null;
+      $key = canonical_spo_key($family, $slot, $onu);
+      if($key) $map[$key] = $rxVal;
+    }
+  }
+  // যদি এখনও খালি থাকে, প্রতি লাইন স্প্লিট করে শেষ কলাম ধরে চেষ্টা
+  if(!$map){
+    $lines = preg_split('/\R/', $txt);
+    foreach($lines as $line){
+      $line = trim($line);
+      if($line === '' || (stripos($line,'EPON') === false && stripos($line,'GPON') === false)) continue;
+      // কন্ট্রোল ক্যারেক্টার বাদ
+      $line = preg_replace('/[^\PC\s]/u', '', $line);
+      $parts = preg_split('/\s+/', $line);
+      if(count($parts) < 2) continue;
+      $idData = parse_onu_identifier($parts[0]);
+      if(!$idData) continue;
+      [$family, $slot, $onu] = $idData;
+      $key = canonical_spo_key($family, $slot, $onu);
+      if(!$key) continue;
+      $rxRaw = $parts[count($parts)-1] ?? null; // শেষ ইনডেক্সেই RX
+      $map[$key] = is_numeric($rxRaw) ? (float)$rxRaw : null;
+    }
   }
   return $map;
 }
@@ -438,6 +699,7 @@ function parse_onu_description_cli(string $txt): array {
 }
 
 function fetch_onu_descriptions_for_ports(string $host, int $telnetPort, string $username, string $password, string $enablePass, array $portOnuMap, bool $debugMode, ?int $oltId, array &$errorBucket): array {
+  global $descTimeout;
   $results = [];
   foreach($portOnuMap as $key => $info){
     $slot = $info['slot'] ?? null;
@@ -461,7 +723,7 @@ function fetch_onu_descriptions_for_ports(string $host, int $telnetPort, string 
       true,
       $enablePass,
       $debugMode,
-      20
+      $descTimeout
     );
     if(!$resp['ok']){
       $label = $oltId ? "OLT {$oltId}" : 'OLT';
@@ -512,7 +774,7 @@ function parse_onu_mac_address_tables(string $txt): array {
   return $map;
 }
 
-function fetch_onu_client_mac_tables(string $host, int $telnetPort, string $username, string $password, string $enablePass, array $portOnuMap, bool $debugMode, ?int $oltId, array &$errorBucket): array {
+function fetch_onu_client_mac_tables(string $host, int $telnetPort, string $username, string $password, string $enablePass, array $portOnuMap, bool $debugMode, ?int $oltId, array &$errorBucket, int $timeout): array {
   $results = [];
   foreach($portOnuMap as $info){
     $slot = $info['slot'] ?? null;
@@ -536,7 +798,7 @@ function fetch_onu_client_mac_tables(string $host, int $telnetPort, string $user
       true,
       $enablePass,
       $debugMode,
-      25
+      $timeout
     );
     if(!$resp['ok']){
       $label = $oltId ? "OLT {$oltId}" : 'OLT';
@@ -560,33 +822,240 @@ function fetch_onu_client_mac_tables(string $host, int $telnetPort, string $user
   return $results;
 }
 
-function save_onu_client_mac_rows(PDO $db, int $oltId, array $data): void {
-  if(!$data) return;
-  ensure_onu_client_mac_table($db);
-  $del = $db->prepare("DELETE FROM olt_onu_client_macs WHERE olt_id = ? AND family = ? AND slot = ? AND onu = ?");
-  $ins = $db->prepare("INSERT INTO olt_onu_client_macs (olt_id,family,slot,onu,vlan,mac,learned_at)
-                       VALUES (?,?,?,?,?,?,NOW())
-                       ON DUPLICATE KEY UPDATE vlan=VALUES(vlan), learned_at=VALUES(learned_at)");
-  foreach($data as $entry){
-    $family = strtoupper($entry['family'] ?? '');
-    $slot   = (int)($entry['slot'] ?? 0);
-    $onu    = (int)($entry['onu'] ?? 0);
-    if($family === '' || $slot <= 0 || $onu <= 0){
-      continue;
+// ======================
+// PPPoE সেশন থেকে ক্লায়েন্ট ম্যাপিং ও ক্যাশ আপডেট
+// ======================
+function run_pppoe_linking(PDO $db, bool $isCli, bool $debugMode): array {
+  $logs = [];
+  $errors = [];
+  $stats = [
+    'ok' => true,
+    'lock_acquired' => false,
+    'routers_processed' => 0,
+    'sessions_read' => 0,
+    'matched_clients' => 0,
+    'router_mac_updates' => 0,
+    'olt_link_updates' => 0,
+  ];
+
+  $log = static function(string $msg) use ($isCli, &$logs): void {
+    $logs[] = $msg;
+    if($isCli){
+      echo $msg.PHP_EOL;
     }
-    $del->execute([$oltId, $family, $slot, $onu]);
-    foreach($entry['rows'] as $row){
-      $mac = norm_mac($row['mac'] ?? '');
-      if(!$mac) continue;
-      $vlan = isset($row['vlan']) && $row['vlan'] !== '' ? (int)$row['vlan'] : null;
-      $ins->execute([$oltId, $family, $slot, $onu, $vlan, $mac]);
-    }
+  };
+
+  try{
+    $lockStmt = $db->query("SELECT GET_LOCK('cron_pppoe_olt_link', 1)");
+    $lock = (int)($lockStmt->fetchColumn() ?? 0);
+  }catch(Throwable $e){
+    $stats['ok'] = false;
+    $errors[] = 'lock_failed: '.$e->getMessage();
+    if($errors) $stats['errors'] = $errors;
+    if($debugMode) $stats['logs'] = $logs;
+    return $stats;
   }
+
+  if($lock !== 1){
+    $stats['ok'] = false;
+    $errors[] = 'lock_busy';
+    if($errors) $stats['errors'] = $errors;
+    if($debugMode) $stats['logs'] = $logs;
+    return $stats;
+  }
+  $stats['lock_acquired'] = true;
+
+  try{
+    try{
+      $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    }catch(Throwable $e){}
+
+    $cols = $db->query("SHOW COLUMNS FROM routers")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    $hasStatus = in_array('status', $cols, true);
+    $hasType = in_array('type', $cols, true);
+
+    $sqlRouters = "SELECT id, name, ip, username, password, api_port FROM routers WHERE 1";
+    if($hasType) { $sqlRouters .= " AND type='mikrotik'"; }
+    if($hasStatus){ $sqlRouters .= " AND status=1"; }
+    $st = $db->prepare($sqlRouters);
+    $st->execute();
+    $routers = $st->fetchAll(PDO::FETCH_ASSOC);
+
+    if(!$routers){
+      if($debugMode || $isCli){
+        $log("No routers found.");
+      }
+      return $stats;
+    }
+
+    $ridList = array_map(fn($r) => $r['id'], $routers);
+    $placeholders = implode(',', array_fill(0, count($ridList), '?'));
+    $clientIdx = [];
+    $sqlC = "SELECT id, router_id, pppoe_id, router_mac FROM clients WHERE router_id IN ($placeholders)";
+    $stc = $db->prepare($sqlC);
+    $stc->execute($ridList);
+    while($c = $stc->fetch(PDO::FETCH_ASSOC)){
+      $rid = (string)$c['router_id'];
+      $pp  = trim((string)$c['pppoe_id']);
+      if($pp === '') continue;
+      $clientIdx[$rid][$pp] = [
+        'id' => (int)$c['id'],
+        'router_mac' => trim((string)($c['router_mac'] ?? '')),
+      ];
+    }
+
+    $updRouterMac = $db->prepare("
+      UPDATE clients
+         SET router_mac = :mac, updated_at = NOW()
+       WHERE id = :id
+         AND (router_mac IS NULL OR router_mac = '' OR router_mac <> :mac)
+    ");
+    $selRouterMacOwner = $db->prepare("SELECT id FROM clients WHERE router_mac = :mac LIMIT 1");
+
+  $updCacheClient = $db->prepare("
+      UPDATE olt_mac_cache
+         SET client_id = :client_id
+       WHERE (client_id IS NULL OR client_id = 0)
+         AND REPLACE(LOWER(CONVERT(mac USING utf8mb4)),':','') = :mac_clean
+    ");
+
+    $selLatest = $db->prepare("
+      SELECT c.olt_id, c.port, c.onu, o.vendor
+        FROM olt_mac_cache c
+        LEFT JOIN olts o ON o.id = c.olt_id
+       WHERE REPLACE(LOWER(CONVERT(c.mac USING utf8mb4)),':','') = :mac_clean
+       ORDER BY c.learned_at DESC
+       LIMIT 1
+    ");
+
+    $updClientOlt = $db->prepare("
+      UPDATE clients
+         SET olt_id = ?, olt_vendor = ?, olt_port = ?, olt_onu = ?, last_linked_at = NOW()
+       WHERE id = ?
+    ");
+    $updCallerMac = $db->prepare("
+      UPDATE clients
+         SET caller_mac = :mac, updated_at = NOW()
+       WHERE id = :id
+         AND (caller_mac IS NULL OR caller_mac = '' OR caller_mac <> :mac)
+    ");
+
+    $macToClient = [];
+
+    foreach($routers as $r){
+      $stats['routers_processed']++;
+      $rid = (string)$r['id'];
+      if($debugMode || $isCli){
+        $log("Router #{$r['id']} {$r['name']} ({$r['ip']}): connecting...");
+      }
+
+      $API = new RouterosAPI();
+      $API->port = intval($r['api_port'] ?: 8728);
+      $API->timeout = 5;
+
+      if(!$API->connect($r['ip'], $r['username'], $r['password'])){
+        $errors[] = "router_{$rid}_connect_failed";
+        if($debugMode || $isCli){
+          $log("  ERROR: connect failed");
+        }
+        continue;
+      }
+
+      $API->write('/ppp/active/print', false);
+      $API->write('.proplist=name,caller-id');
+      $resp = $API->read();
+      $API->disconnect();
+
+      if(!is_array($resp)){
+        if($debugMode || $isCli){
+          $log("  WARN: no active list.");
+        }
+        continue;
+      }
+
+      $idx = $clientIdx[$rid] ?? [];
+      foreach($resp as $row){
+        $pp = trim((string)($row['name'] ?? ''));
+        if($pp === '') continue;
+        $stats['sessions_read']++;
+
+        $cid = trim((string)($row['caller-id'] ?? ''));
+        $mac = norm_mac($cid);
+        if(!$mac) continue;
+
+        $match = $idx[$pp] ?? null;
+        if(!$match) continue;
+
+        $stats['matched_clients']++;
+        $clientId = (int)$match['id'];
+
+        $macClean = strtolower(str_replace(':', '', $mac));
+
+        try{
+          $selRouterMacOwner->execute([':mac' => $mac]);
+          $ownerId = (int)($selRouterMacOwner->fetchColumn() ?: 0);
+        }catch(Throwable $e){
+          $ownerId = 0;
+        }
+
+        if($ownerId && $ownerId !== $clientId){
+          // MAC already belongs to another client; keep existing owner to avoid constraint violation.
+          $macToClient[$macClean] = $ownerId;
+          $errors[] = "router_mac_in_use: {$mac} by client {$ownerId}, skipped update for client {$clientId}";
+        } else {
+          try{
+            $updRouterMac->execute([':mac' => $mac, ':id' => $clientId]);
+            if($updRouterMac->rowCount() > 0){
+              $stats['router_mac_updates']++;
+            }
+          }catch(Throwable $e){
+            $errors[] = "router_mac_update_failed: {$mac} client {$clientId} - ".$e->getMessage();
+          }
+          try{
+            $updCallerMac->execute([':mac' => $mac, ':id' => $clientId]);
+          }catch(Throwable $e){
+            // caller_mac unique না হলে error আসবে না, তাই স্কিপ
+          }
+          $macToClient[$macClean] = $clientId;
+        }
+      }
+    }
+
+    foreach($macToClient as $macClean => $clientId){
+      $updCacheClient->execute([':client_id' => $clientId, ':mac_clean' => $macClean]);
+      $selLatest->execute([':mac_clean' => $macClean]);
+      $row = $selLatest->fetch(PDO::FETCH_ASSOC);
+      if(!$row) continue;
+      $oltId = (int)($row['olt_id'] ?? 0);
+      $portNorm = normalize_port_label($row['port'] ?? '');
+      $onuNum = onu_numeric($row['onu'] ?? null);
+      if($oltId > 0 && $portNorm !== '—' && $onuNum !== PHP_INT_MAX){
+        $vendor = trim((string)($row['vendor'] ?? ''));
+        $updClientOlt->execute([$oltId, $vendor !== '' ? $vendor : null, $portNorm, $onuNum, $clientId]);
+        $stats['olt_link_updates']++;
+      }
+    }
+  }catch(Throwable $e){
+    $stats['ok'] = false;
+    $errors[] = 'pppoe_link_failed: '.$e->getMessage();
+  }finally{
+    try{
+      $db->query("SELECT RELEASE_LOCK('cron_pppoe_olt_link')");
+    }catch(Throwable $e){}
+  }
+
+  if($errors) $stats['errors'] = $errors;
+  if($debugMode) $stats['logs'] = $logs;
+
+  return $stats;
 }
 
-$filterOlt = isset($_GET['olt_id']) ? (int)$_GET['olt_id'] : 0;
+// ======================
+// ইনপুট ফিল্টার (OLT নির্বাচন)
+// ======================
+$filterOlt = isset($request['olt_id']) ? (int)$request['olt_id'] : 0;
 
-$query = "SELECT id,name,host,telnet_port,ssh_port,username,password,enable_password,is_active
+$query = "SELECT id,name,vendor,host,telnet_port,ssh_port,username,password,enable_password,is_active
           FROM olts";
 $params = [];
 if($filterOlt > 0){
@@ -600,41 +1069,6 @@ $st = $db->prepare($query);
 $st->execute($params);
 $olts = $st->fetchAll(PDO::FETCH_ASSOC);
 
-if(!$olts){
-  echo json_encode(['ok'=>false,'error'=>'রিফ্রেশ চালানোর জন্য কোনো OLT পাওয়া যায়নি।'], JSON_UNESCAPED_UNICODE); exit;
-}
-
-try{
-  $ins = $db->prepare("INSERT INTO olt_mac_cache (olt_id,client_id,clients,mac,vlan,port,onu,status,description,distance_m,temperature_c,supply_voltage_v,tx_bias_ma,tx_power_dbm,rx_power_dbm,last_dereg_reason,last_dereg_time,learned_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
-                       ON DUPLICATE KEY UPDATE
-                         client_id=VALUES(client_id),
-                         clients=VALUES(clients),
-                         vlan=VALUES(vlan),
-                         port=VALUES(port),
-                         onu=VALUES(onu),
-                         status=VALUES(status),
-                         description=VALUES(description),
-                         distance_m=VALUES(distance_m),
-                         temperature_c=VALUES(temperature_c),
-                         supply_voltage_v=VALUES(supply_voltage_v),
-                         tx_bias_ma=VALUES(tx_bias_ma),
-                         tx_power_dbm=VALUES(tx_power_dbm),
-                         rx_power_dbm=VALUES(rx_power_dbm),
-                         last_dereg_reason=VALUES(last_dereg_reason),
-                         last_dereg_time=VALUES(last_dereg_time),
-                         learned_at=VALUES(learned_at)");
-}catch(PDOException $e){
-  if(strpos($e->getMessage(),'42S02')!==false){
-    echo json_encode([
-      'ok'=>false,
-      'error'=>'Table `olt_mac_cache` অনুপস্থিত। অনুগ্রহ করে এটি তৈরি করে আবার চেষ্টা করুন।'
-    ]);
-    exit;
-  }
-  throw $e;
-}
-
 $summary = [
   'ok'=>true,
   'seen'=>0,
@@ -644,14 +1078,61 @@ $summary = [
   'errors'=>[]
 ];
 
-// MAC -> client_id ম্যাপ (caller/router/ap MAC থেকে)
-$clientMacMap = load_client_mac_map($db);
-
 if($debugMode){
   $summary['debug'] = [];
 }
 
-foreach($olts as $olt){
+$prepOk = true;
+if(!$olts){
+  $summary['ok'] = false;
+  $summary['errors'][] = 'রিফ্রেশ চালানোর জন্য কোনো OLT পাওয়া যায়নি।';
+  $prepOk = false;
+}
+
+if($prepOk){
+  try{
+  $ins = $db->prepare("INSERT INTO olt_mac_cache (olt_id,vendor,client_id,clients,client_mac,client_mac_vlan,client_mac_learned_at,mac,vlan,port,onu,status,description,distance_m,rx_power_dbm,last_dereg_reason,last_dereg_time,learned_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+                       ON DUPLICATE KEY UPDATE
+                         vendor=VALUES(vendor),
+                         client_id=VALUES(client_id),
+                         clients=VALUES(clients),
+                         client_mac=VALUES(client_mac),
+                         client_mac_vlan=VALUES(client_mac_vlan),
+                         client_mac_learned_at=VALUES(client_mac_learned_at),
+                         vlan=VALUES(vlan),
+                         port=VALUES(port),
+                         onu=VALUES(onu),
+                         status=VALUES(status),
+                         description=VALUES(description),
+                         distance_m=VALUES(distance_m),
+                         rx_power_dbm=VALUES(rx_power_dbm),
+                         last_dereg_reason=VALUES(last_dereg_reason),
+                         last_dereg_time=VALUES(last_dereg_time),
+                         learned_at=VALUES(learned_at)");
+    $touchLearnedAt = $db->prepare("UPDATE olt_mac_cache SET learned_at = NOW() WHERE olt_id = ? AND mac = ?");
+  }catch(PDOException $e){
+    if(strpos($e->getMessage(),'42S02')!==false){
+      $summary['ok'] = false;
+      $summary['errors'][] = 'Table `olt_mac_cache` অনুপস্থিত। অনুগ্রহ করে এটি তৈরি করে আবার চেষ্টা করুন।';
+      $prepOk = false;
+    } else {
+      throw $e;
+    }
+  }
+}
+
+// MAC -> client_id ম্যাপ (caller/router/ap MAC থেকে)
+$clientMacMap = $prepOk ? load_client_mac_map($db) : [];
+
+// ======================
+// মূল প্রসেসিং লুপ (OLT ধরে ধরে রিফ্রেশ)
+// ======================
+if($prepOk){
+  foreach($olts as $olt){
+  if($isCli){
+    echo "[OLT {$olt['id']}] {$olt['host']} - refreshing...".PHP_EOL;
+  }
   $host = trim((string)$olt['host']);
   $port = (int)($olt['telnet_port'] ?? $olt['ssh_port'] ?? 23);
   if($port < 1) $port = 23;
@@ -679,7 +1160,7 @@ foreach($olts as $olt){
   $statusOut = telnet_run_commands(
     $host, $port, $user, $pass,
     ['configure terminal','show onu status all','exit'],
-    null, true, $enable, $debugMode, $fastMode ? 8 : 15
+    null, true, $enable, $debugMode, $statusTimeout
   );
   if($statusOut['ok']){
     $statusData = parse_onu_statuses($statusOut['output'] ?? '');
@@ -696,28 +1177,54 @@ foreach($olts as $olt){
     $summary['errors'][] = "OLT {$olt['id']} ({$host}) স্ট্যাটাস কমান্ড ব্যর্থ: {$statusOut['error']}";
   }
 
-  if(!$fastMode){
-    $diagOut = telnet_run_commands(
-      $host, $port, $user, $pass,
-      ['configure terminal','show onu opm-diag all','exit'],
-      null, true, $enable, $debugMode, 25
-    );
-    if($diagOut['ok']){
-      $diagByKey = parse_onu_rx_metrics($diagOut['output'] ?? '');
+  if($diagEnabled){
+    $diagByKey = [];
+    $diagOutLog = null;
+    $diagCmdAttempts = [
+      ['label' => 'config', 'cmds' => ['configure terminal','show onu opm-diag all','exit']],
+      ['label' => 'direct', 'cmds' => ['show onu opm-diag all']],
+    ];
+    foreach($diagCmdAttempts as $attempt){
+      $diagOut = telnet_run_commands(
+        $host, $port, $user, $pass,
+        $attempt['cmds'],
+        null, true, $enable, $debugMode, $diagTimeout
+      );
+      $diagOutLog = $diagOutLog ?: $diagOut;
+      if($diagOut['ok']){
+        $parsed = parse_onu_rx_metrics($diagOut['output'] ?? '');
+        if($parsed){
+          $diagByKey = $parsed;
+          $diagOutLog = $diagOut;
+          break;
+        }
+      }
+    }
+    $summary['diag_count'][$olt['id']] = count($diagByKey);
+    if(empty($diagByKey)){
+      if($diagOutLog && ($diagOutLog['ok'] ?? false)){
+        $summary['errors'][] = "OLT {$olt['id']} ({$host}) opm-diag parsed 0 rows (config/direct fallback tried); sample: ".substr(str_replace("\n",' ',$diagOutLog['output'] ?? ''),0,200);
+        if($isCli){
+          $sample = substr($diagOutLog['output'] ?? '', 0, 400);
+          echo "[OLT {$olt['id']}] opm-diag raw sample (first 400 chars):".PHP_EOL.$sample.PHP_EOL;
+        }
+      } else {
+        $err = $diagOutLog['error'] ?? 'অজানা ত্রুটি';
+        $summary['errors'][] = "OLT {$olt['id']} ({$host}) অপটিক-পাওয়ার কমান্ড ব্যর্থ: {$err}";
+      }
+    } else {
       if($debugMode){
         $summary['debug'][] = [
           'olt_id' => $olt['id'],
           'host' => $host,
-          'raw_diag_sample' => mb_substr($diagOut['output'] ?? '', 0, 2000),
+          'raw_diag_sample' => mb_substr($diagOutLog['output'] ?? '', 0, 2000),
         ];
       }
-    } else {
-      $summary['errors'][] = "OLT {$olt['id']} ({$host}) অপটিক-পাওয়ার কমান্ড ব্যর্থ: {$diagOut['error']}";
     }
   }
 
   $cmds = ['configure terminal','show mac address-table','exit'];
-  $out = telnet_run_commands($host, $port, $user, $pass, $cmds, null, true, $enable, $debugMode, $fastMode ? 10 : 15);
+  $out = telnet_run_commands($host, $port, $user, $pass, $cmds, null, true, $enable, $debugMode, $macTimeout);
   if(!$out['ok']){
     $summary['errors'][] = "OLT {$olt['id']} ({$host}): MAC টেবিল কমান্ড ব্যর্থ - {$out['error']}";
     continue;
@@ -787,7 +1294,7 @@ foreach($olts as $olt){
     $entry['supply_voltage_v'] = null;
     $entry['tx_bias_ma'] = null;
     $entry['tx_power_dbm'] = null;
-    if(!$fastMode && $statusKey && isset($diagByKey[$statusKey])){
+    if($diagEnabled && $statusKey && isset($diagByKey[$statusKey])){
       $entry['rx_power_dbm'] = $diagByKey[$statusKey];
     } else {
       $entry['rx_power_dbm'] = null;
@@ -810,7 +1317,6 @@ foreach($olts as $olt){
       $entry['description'] = $existingRows[$macKey]['description'];
       continue;
     }
-    if($fastMode) continue;
     $family = strtoupper($entry['family'] ?? 'EPON');
     $slot = $entry['slot'] ?? null;
     $onuNum = $entry['onu_num'] ?? onu_numeric($entry['onu'] ?? null);
@@ -827,7 +1333,7 @@ foreach($olts as $olt){
   }
   unset($entry);
   $descMap = [];
-  if(!$fastMode && $portOnuMap){
+  if($fullMode && $portOnuMap){
     $errorBucket = &$summary['errors'];
     $descMap = fetch_onu_descriptions_for_ports(
       $host,
@@ -889,7 +1395,7 @@ foreach($olts as $olt){
       'supply_voltage_v' => null,
       'tx_bias_ma'       => null,
       'tx_power_dbm'     => null,
-      'rx_power_dbm'     => (!$fastMode && isset($diagByKey[$key])) ? $diagByKey[$key] : null,
+      'rx_power_dbm'     => ($diagEnabled && isset($diagByKey[$key])) ? $diagByKey[$key] : null,
       'learned_at' => date('Y-m-d H:i:s'),
     ];
   }
@@ -910,41 +1416,53 @@ foreach($olts as $olt){
   $summary['per_olt'][$olt['id']] = count($entries);
   $summary['seen'] += count($entries);
 
-  if(!$fastMode){
-    $clientMacTargets = [];
-    foreach($entries as $entry){
-      $family = strtoupper($entry['family'] ?? '');
-      $slot   = $entry['slot'] ?? null;
-      $onuNum = $entry['onu_num'] ?? onu_numeric($entry['onu'] ?? null);
-      if($family === '' || $slot === null || $onuNum === PHP_INT_MAX) continue;
-      $targetKey = "{$family}|{$slot}";
-      if(!isset($clientMacTargets[$targetKey])){
-        $clientMacTargets[$targetKey] = [
-          'family' => $family,
-          'slot'   => (int)$slot,
-          'onus'   => []
-        ];
-      }
-      $clientMacTargets[$targetKey]['onus'][$onuNum] = true;
+  $clientMacTargets = [];
+  $clientMacEnriched = [];
+  foreach($entries as $entry){
+    $family = strtoupper($entry['family'] ?? '');
+    $slot   = $entry['slot'] ?? null;
+    $onuNum = $entry['onu_num'] ?? onu_numeric($entry['onu'] ?? null);
+    if($family === '' || $slot === null || $onuNum === PHP_INT_MAX) continue;
+    $targetKey = "{$family}|{$slot}";
+    if(!isset($clientMacTargets[$targetKey])){
+      $clientMacTargets[$targetKey] = [
+        'family' => $family,
+        'slot'   => (int)$slot,
+        'onus'   => []
+      ];
     }
-    if($clientMacTargets){
-      $clientMacData = fetch_onu_client_mac_tables(
-        $host,
-        $port,
-        $user,
-        $pass,
-        $enable,
-        $clientMacTargets,
-        $debugMode,
-        $olt['id'] ?? null,
-        $summary['errors']
-      );
-      if($clientMacData){
-        save_onu_client_mac_rows($db, (int)$olt['id'], $clientMacData);
+    $clientMacTargets[$targetKey]['onus'][$onuNum] = true;
+  }
+  // ক্লায়েন্ট MAC ডাটা একত্রীকরণ (olt_onu_client_macs টেবিল আর ব্যবহার নেই)
+  if($fullMode && $clientMacTargets){
+    $clientMacData = fetch_onu_client_mac_tables(
+      $host,
+      $port,
+      $user,
+      $pass,
+      $enable,
+      $clientMacTargets,
+      $debugMode,
+      $olt['id'] ?? null,
+      $summary['errors'],
+      $clientMacTimeout
+    );
+    if($clientMacData){
+      foreach($clientMacData as $entry){
+        $key = canonical_spo_key($entry['family'] ?? null, $entry['slot'] ?? null, $entry['onu'] ?? null);
+        if(!$key || empty($entry['rows'])) continue;
+        $first = $entry['rows'][0];
+        $m = norm_mac($first['mac'] ?? '');
+        $clientMacEnriched[$key] = [
+          'client_mac' => $m,
+          'client_mac_vlan' => isset($first['vlan']) && $first['vlan'] !== '' ? (int)$first['vlan'] : null,
+          'client_mac_learned_at' => date('Y-m-d H:i:s'),
+        ];
       }
     }
   }
 
+  // olt_mac_cache আপডেট/ইনসার্ট
   foreach($entries as $row){
     $macValue = $row['mac'] ?? '';
     $macKey = strtolower(trim((string)$macValue));
@@ -973,6 +1491,9 @@ foreach($olts as $olt){
     $payload = [
       'client_id' => $clientId ?: null,
       'clients' => $clientLabel !== '' ? $clientLabel : null,
+      'client_mac' => null,
+      'client_mac_vlan' => null,
+      'client_mac_learned_at' => null,
       'mac' => $macValue,
       'vlan' => $row['vlan'] ?? null,
       'port' => $row['port'] ?? null,
@@ -980,22 +1501,82 @@ foreach($olts as $olt){
       'status' => $row['status'] ?? null,
       'description' => $row['description'] ?? null,
       'distance_m'  => $row['distance_m'] ?? null,
-      'temperature_c' => null,
-      'supply_voltage_v' => null,
-      'tx_bias_ma' => null,
-      'tx_power_dbm' => null,
       'rx_power_dbm' => $row['rx_power_dbm'] ?? null,
       'last_dereg_reason' => $row['last_dereg_reason'] ?? null,
       'last_dereg_time'   => $row['last_dereg_time'] ?? null,
+      'vendor' => $olt['vendor'] ?? null,
     ];
-    if(isset($existingRows[$macKey]) && mac_payloads_equal($existingRows[$macKey], $payload)){
+    $cmKey = canonical_spo_key($row['family'] ?? null, $row['slot'] ?? null, $row['onu_num'] ?? onu_numeric($row['onu'] ?? null));
+    if($cmKey && isset($clientMacEnriched[$cmKey])){
+      $payload['client_mac'] = $clientMacEnriched[$cmKey]['client_mac'];
+      $payload['client_mac_vlan'] = $clientMacEnriched[$cmKey]['client_mac_vlan'];
+      $payload['client_mac_learned_at'] = $clientMacEnriched[$cmKey]['client_mac_learned_at'];
+    }
+    if(!$payload['client_mac'] && $payload['client_id']){
+      $payload['client_mac'] = norm_mac($macValue);
+    }
+
+    if($payload['client_id']){
+      $learnedAt = $existingRows[$macKey]['learned_at'] ?? date('Y-m-d H:i:s');
+      sync_onu_inventory_from_payload($db, (int)$olt['id'], $payload, $learnedAt);
+      $onuNumNorm = onu_numeric($payload['onu'] ?? null);
+      $oltVendor = $olt['vendor'] ?? null;
+      try{
+        $updateClientLinkFromCache ??= $db->prepare("UPDATE clients
+                                                     SET olt_id=?, olt_vendor=?, olt_port=?, olt_onu=?, caller_mac=IFNULL(NULLIF(caller_mac,''), ?), last_linked_at=NOW()
+                                                     WHERE id=?");
+        $updateClientLinkFromCache->execute([
+          (int)$olt['id'],
+          $oltVendor !== '' ? $oltVendor : null,
+          $payload['port'] ?? null,
+          $onuNumNorm !== PHP_INT_MAX ? $onuNumNorm : null,
+          $macValue ?: null,
+          (int)$payload['client_id'],
+        ]);
+      }catch(Throwable $e){
+        $summary['errors'][] = "OLT {$olt['id']}: client link sync ব্যর্থ - ".$e->getMessage();
+      }
+    }
+    // rx_power_dbm ফাঁকা থাকলে কেবল পূর্বের non-zero মান রাখার চেষ্টা করি (নইলে NULL)
+    if($payload['rx_power_dbm'] === null){
+      $prevRx = $existingRows[$macKey]['rx_power_dbm'] ?? null;
+      if(is_numeric($prevRx) && (float)$prevRx !== 0.0){
+        $payload['rx_power_dbm'] = (float)$prevRx;
+      }
+    }
+    $comparePayload = $payload;
+    if(isset($existingRows[$macKey]) && mac_payloads_equal($existingRows[$macKey], $comparePayload)){
+      try{
+        $touchLearnedAt->execute([$olt['id'], $macValue]);
+        $existingRows[$macKey]['learned_at'] = date('Y-m-d H:i:s');
+      }catch(PDOException $e){
+        $summary['errors'][] = "OLT {$olt['id']}: learned_at আপডেট ব্যর্থ - ".$e->getMessage();
+      }
       continue;
     }
+    // Default fallbacks to avoid NULL persistence (DB write only)
+    $payload['status'] = $payload['status'] ?? 'unknown';
+    $payload['description'] = $payload['description'] ?? '';
+    $payload['distance_m'] = is_numeric($payload['distance_m']) ? (float)$payload['distance_m'] : 0;
+    $payload['rx_power_dbm'] = is_numeric($payload['rx_power_dbm']) ? (float)$payload['rx_power_dbm'] : null;
+    $payload['last_dereg_reason'] = $payload['last_dereg_reason'] ?? '';
+    $ldt = trim((string)($payload['last_dereg_time'] ?? ''));
+    $payload['last_dereg_time'] = $ldt === '' ? null : $ldt;
+    if($payload['vlan'] === null || $payload['vlan'] === '') $payload['vlan'] = 0;
+    if($payload['port'] === null) $payload['port'] = '';
+    if($payload['onu'] === null) $payload['onu'] = '';
+    if($payload['vendor'] === null) $payload['vendor'] = '';
+    if($payload['client_mac_vlan'] !== null && $payload['client_mac_vlan'] !== '') $payload['client_mac_vlan'] = (int)$payload['client_mac_vlan'];
+
     try{
       $ins->execute([
         $olt['id'],
+        $payload['vendor'],
         $payload['client_id'],
         $payload['clients'],
+        $payload['client_mac'],
+        $payload['client_mac_vlan'],
+        $payload['client_mac_learned_at'],
         $payload['mac'],
         $payload['vlan'],
         $payload['port'],
@@ -1003,10 +1584,6 @@ foreach($olts as $olt){
         $payload['status'],
         $payload['description'],
         $payload['distance_m'],
-        $payload['temperature_c'],
-        $payload['supply_voltage_v'],
-        $payload['tx_bias_ma'],
-        $payload['tx_power_dbm'],
         $payload['rx_power_dbm'],
         $payload['last_dereg_reason'],
         $payload['last_dereg_time'],
@@ -1022,6 +1599,28 @@ foreach($olts as $olt){
       break;
     }
   }
+  if($isCli){
+    $count = $summary['per_olt'][$olt['id']] ?? 0;
+    $diagC = $summary['diag_count'][$olt['id']] ?? 0;
+    echo "[OLT {$olt['id']}] done. Entries: {$count} | RX parsed: {$diagC}".PHP_EOL;
+  }
 }
 
-echo json_encode($summary, JSON_UNESCAPED_UNICODE);
+}
+
+$pppoeStats = run_pppoe_linking($db, $isCli, $debugMode);
+$result = [
+  'ok' => ($summary['ok'] ?? false) && ($pppoeStats['ok'] ?? true),
+  'olt' => $summary,
+  'pppoe_link' => $pppoeStats,
+];
+
+// গ্লোবাল লক রিলিজ
+try{
+  $db->query("SELECT RELEASE_LOCK('cron_olt_mac_refresh')");
+}catch(Throwable $e){}
+
+// ======================
+// আউটপুট (CLI/ব্রাউজার JSON)
+// ======================
+echo json_encode($result, JSON_UNESCAPED_UNICODE);

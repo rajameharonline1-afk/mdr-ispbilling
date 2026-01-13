@@ -138,6 +138,61 @@ function format_mac_display(?string $mac): ?string {
   return strtoupper(implode(':', str_split($key, 2)));
 }
 
+function parse_monitor_iface(?string $iface): array {
+  $txt = strtoupper(trim((string)$iface));
+  if($txt === '') return [null, null, null, null];
+  $family = null;
+  if(str_starts_with($txt, 'EPON')) $family = 'EPON';
+  elseif(str_starts_with($txt, 'GPON')) $family = 'GPON';
+
+  if(preg_match('/(EPON|GPON)\s*0*([0-9]+)\/\s*0*([0-9]+)\s*:\s*0*([0-9]+)/', $txt, $m)){
+    return [strtoupper($m[1]), (int)$m[2], (int)$m[3], (int)$m[4]];
+  }
+  if(preg_match('/(EPON|GPON)\s*0*([0-9]+)\s*ONU\s*0*([0-9]+)/', $txt, $m)){
+    return [strtoupper($m[1]), (int)$m[2], null, (int)$m[3]];
+  }
+  if(preg_match('/PON\s*0*([0-9]+)\s*:\s*0*([0-9]+)/', $txt, $m)){
+    return [$family, null, (int)$m[1], (int)$m[2]];
+  }
+  if(preg_match('/(\d+)\s*\/\s*(\d+)\s*:\s*(\d+)/', $txt, $m)){
+    return [$family, (int)$m[1], (int)$m[2], (int)$m[3]];
+  }
+  if(preg_match('/(\d+)\s*:\s*(\d+)/', $txt, $m)){
+    return [$family, null, (int)$m[1], (int)$m[2]];
+  }
+  if(preg_match('/(\d+)/', $txt, $m)){
+    return [$family, null, null, (int)$m[1]];
+  }
+  return [null, null, null, null];
+}
+
+function build_monitor_port_label(?string $family, ?int $slot, ?int $port): string {
+  $fam = $family ?: 'PON';
+  if($slot !== null && $port !== null){
+    return sprintf('%s %d/%d', $fam, $slot, $port);
+  }
+  if($port !== null){
+    return sprintf('%s 0/%d', $fam, $port);
+  }
+  if($slot !== null){
+    return sprintf('%s 0/%d', $fam, $slot);
+  }
+  return '—';
+}
+
+function parse_rx_metric($raw){
+  if($raw === null) return null;
+  if(is_numeric($raw)) return (float)$raw;
+  if(is_string($raw)){
+    $trim = trim($raw);
+    if($trim === '' || strcasecmp($trim, 'N/A') === 0) return null;
+    if(is_numeric($trim)) return (float)$trim;
+    if(preg_match('/-?\d+(?:\.\d+)?/', $trim, $m)) return (float)$m[0];
+    return $trim;
+  }
+  return null;
+}
+
 function load_onu_client_mac_rows(PDO $db, int $oltId): array {
   if($oltId <= 0) return [];
   try{
@@ -175,6 +230,8 @@ function load_client_lookup(PDO $db, int $oltId): array {
   $areaCol = '';
   $subZoneCol = '';
   $boxCol = '';
+  $hasRxPower = false;
+  $hasMacAddress = false;
 
   $clientParams = [];
   $clientWhere  = '';
@@ -185,11 +242,15 @@ function load_client_lookup(PDO $db, int $oltId): array {
   try{
     $clientCols = $db->query("SHOW COLUMNS FROM clients")->fetchAll(PDO::FETCH_COLUMN);
     $hasOnuMac = in_array('onu_mac', $clientCols, true);
+    $hasRxPower = in_array('rx_power', $clientCols, true);
+    $hasMacAddress = in_array('mac_address', $clientCols, true);
     foreach (['area','zone','location'] as $c) { if (in_array($c, $clientCols, true)) { $areaCol = $c; break; } }
     foreach (['sub_zone','subzone','sub_area'] as $c) { if (in_array($c, $clientCols, true)) { $subZoneCol = $c; break; } }
     foreach (['box','distribution_box','box_name'] as $c) { if (in_array($c, $clientCols, true)) { $boxCol = $c; break; } }
     $selectCols = "c.id, c.name, c.client_code, c.pppoe_id, c.caller_mac, c.router_mac, c.ap_mac";
     if($hasOnuMac) $selectCols .= ", c.onu_mac";
+    if($hasMacAddress) $selectCols .= ", c.mac_address";
+    if($hasRxPower) $selectCols .= ", c.rx_power";
     $selectCols .= ", c.olt_id, c.olt_port, c.olt_onu";
     if($areaCol !== '') $selectCols .= ", c.`{$areaCol}` AS area_name";
     if($subZoneCol !== '') $selectCols .= ", c.`{$subZoneCol}` AS sub_zone_name";
@@ -204,6 +265,7 @@ function load_client_lookup(PDO $db, int $oltId): array {
         'name' => $r['name'] ?? '',
         'pppoe_id' => $r['pppoe_id'] ?? '',
         'client_code' => $r['client_code'] ?? '',
+        'rx_power' => $hasRxPower ? ($r['rx_power'] ?? null) : null,
         'area' => $r['area_name'] ?? '',
         'sub_zone' => $r['sub_zone_name'] ?? '',
         'box' => $r['box_name'] ?? '',
@@ -218,6 +280,7 @@ function load_client_lookup(PDO $db, int $oltId): array {
       }
       $macFields = ['caller_mac','router_mac','ap_mac'];
       if($hasOnuMac) $macFields[] = 'onu_mac';
+      if($hasMacAddress) $macFields[] = 'mac_address';
       foreach($macFields as $mf){
         $mk = normalize_mac_key($r[$mf] ?? null);
         if($mk) $byMac[$mk] = $meta + ['source' => 'client_mac'];
@@ -298,12 +361,50 @@ function match_client_for_mac_row(array $row, array $lookup): ?array {
         'match_via' => 'client_binding',
       ];
     }
+    // Even if the stored binding mismatches, still surface the client meta so the table is populated.
+    return [
+      'id' => $cacheClientId,
+      'name' => $r['name'] ?? '',
+      'pppoe_id' => $r['pppoe_id'] ?? '',
+      'client_code' => $r['client_code'] ?? '',
+      'area' => $r['area_name'] ?? '',
+      'sub_zone' => $r['sub_zone_name'] ?? '',
+      'box' => $r['box_name'] ?? '',
+      'match_via' => 'client_id',
+    ];
   }
   if($oltId > 0 && $port && $onu !== PHP_INT_MAX){
     $key = "{$oltId}|{$port}|{$onu}";
     if(isset($lookup['byKey'][$key])) return $lookup['byKey'][$key] + ['match_via' => 'port_onu'];
   }
+  $macKey = normalize_mac_key($row['mac'] ?? null);
+  if($macKey && isset($lookup['byMac'][$macKey])){
+    return $lookup['byMac'][$macKey] + ['match_via' => 'mac'];
+  }
   return null;
+}
+
+function row_matches_client_code(array $row, string $code): bool {
+  $needle = strtolower(trim($code));
+  if($needle === '') return true;
+
+  $meta = $row['client_meta'] ?? null;
+  if(is_array($meta)){
+    $metaCode = strtolower(trim((string)($meta['client_code'] ?? '')));
+    if($metaCode !== '' && $metaCode === $needle) return true;
+
+    $metaId = strtolower((string)($meta['id'] ?? ''));
+    if($metaId !== '' && $metaId === $needle) return true;
+  }
+
+  $clientId = strtolower((string)($row['client_id'] ?? ''));
+  if($clientId !== '' && $clientId === $needle) return true;
+
+  if(!empty($row['clients']) && stripos((string)$row['clients'], $code) !== false){
+    return true;
+  }
+
+  return false;
 }
 
 function update_client_olt_binding(PDO $db, array $row, int $clientId): void {
@@ -345,6 +446,9 @@ function backfill_cache_client_id(PDO $db, array $row, array $lookup): ?int {
   if ($oltId <= 0 || $onu === PHP_INT_MAX) return null;
   $key = "{$oltId}|{$port}|{$onu}";
   $match = $lookup['byKey'][$key] ?? null;
+  if(!$match && ($mk = normalize_mac_key($row['mac'] ?? null))){
+    $match = $lookup['byMac'][$mk] ?? null;
+  }
   if (!$match || empty($match['id'])) return null;
   $cid = (int)$match['id'];
   if ($cid <= 0) return null;
@@ -375,6 +479,17 @@ function rx_power_meta($value): array {
     return ['Warn', 'bg-warning text-dark'];
   }
   return ['Critical', 'bg-danger'];
+}
+
+function choose_rx_power($monitorValue, $clientValue){
+  $monIsNum = $monitorValue !== null && $monitorValue !== '' && is_numeric($monitorValue);
+  $clientIsNum = $clientValue !== null && $clientValue !== '' && is_numeric($clientValue);
+  if($monIsNum && $clientIsNum){
+    return (float)$monitorValue;
+  }
+  if($monIsNum) return (float)$monitorValue;
+  if($clientIsNum) return (float)$clientValue;
+  return $monitorValue ?? $clientValue;
 }
 
 function onu_numeric(?string $onu): int {
@@ -429,6 +544,11 @@ function resolve_row_status(array $row): ?string {
 
 $filterOlt   = (int)($_GET['olt_id'] ?? 0);
 $filterPon   = (int)($_GET['pon'] ?? 0);
+$filterOnu   = (int)($_GET['onu'] ?? 0);
+$filterClientCode = trim((string)($_GET['client_code'] ?? ''));
+if(strlen($filterClientCode) > 50){
+  $filterClientCode = substr($filterClientCode, 0, 50);
+}
 $perPage     = 1000;
 
 $link_notice = '';
@@ -583,30 +703,233 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
   exit;
 }
 
-$where = [];
-$params = [];
-if($filterOlt > 0){
-  $where[] = 'c.olt_id = ?';
-  $params[] = $filterOlt;
-}
-$sql = "SELECT c.*, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor
-        FROM olt_mac_cache c
-        LEFT JOIN olts o ON o.id = c.olt_id";
-if($where){
-  $sql .= ' WHERE ' . implode(' AND ', $where);
-}
-$sql .= " ORDER BY c.learned_at DESC LIMIT {$perPage}";
-try {
-  $stmt = $db->prepare($sql);
-  $stmt->execute($params);
-  $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-  $tableMissing = false;
+$usingMonitorCache = false;
+$monitorTableMissing = false;
+$rows = [];
+$monitorRowCount = 0;
+$monitorOltIds = [];
+$legacyCacheByKey = [];
+$legacyCacheByMac = [];
+$monitorLastGeneratedTs = null;
+$latestRowTs = null;
+$monitorRecent24 = 0;
+$stats = ['total_entries'=>0,'olt_count'=>0,'last_learned'=>null];
+$recent24 = 0;
+
+try{
+  $monParams = [];
+  $monWhere  = '';
+  if($filterOlt > 0){
+    $monWhere = 'WHERE c.olt_id = ?';
+    $monParams[] = $filterOlt;
+  }
+  $monSql = "SELECT c.*, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor
+             FROM onu_monitor_cache c
+             LEFT JOIN olts o ON o.id = c.olt_id
+             {$monWhere}
+             ORDER BY c.generated_at DESC";
+  $monStmt = $db->prepare($monSql);
+  $monStmt->execute($monParams);
+  $cacheRows = $monStmt->fetchAll(PDO::FETCH_ASSOC);
+  foreach($cacheRows as $cacheRow){
+    $usingMonitorCache = true;
+    $oltId = (int)($cacheRow['olt_id'] ?? 0);
+    if($oltId > 0) $monitorOltIds[$oltId] = true;
+    $generatedAt = $cacheRow['generated_at'] ?? null;
+    $genTs = $generatedAt ? (strtotime((string)$generatedAt) ?: null) : null;
+    if($genTs !== null){
+      if($monitorLastGeneratedTs === null || $genTs > $monitorLastGeneratedTs){
+        $monitorLastGeneratedTs = $genTs;
+      }
+    }
+    $payload = json_decode($cacheRow['data_json'] ?? '', true);
+    if(is_array($payload) && is_array(($payload['groups'] ?? null))){
+      foreach($payload['groups'] as $ponLabel => $group){
+        if(empty($group['list']) || !is_array($group['list'])) continue;
+        foreach($group['list'] as $item){
+          [$family,$slot,$port,$onu] = parse_monitor_iface($item['iface'] ?? '');
+          if($onu === null) continue;
+          $rawPort = build_monitor_port_label($family, $slot, $port);
+          $normalizedPort = normalize_port_label($rawPort);
+          $ponSlot = $port ?? $slot;
+          if($ponSlot === null && preg_match('/(\d+)/', (string)$ponLabel, $m)){ $ponSlot = (int)$m[1]; }
+          $rxVal = parse_rx_metric($item['rx'] ?? ($item['rx_power'] ?? null));
+          $macDisplay = format_mac_display($item['mac'] ?? '') ?? strtoupper((string)($item['mac'] ?? ''));
+          $vlanVal = $item['vlan'] ?? ($cacheRow['vlan'] ?? null);
+          if($vlanVal === '' || $vlanVal === 'N/A') $vlanVal = null;
+          $distanceVal = $item['distance_m'] ?? null;
+          if($distanceVal !== null && is_numeric($distanceVal)){
+            $distanceVal = (float)$distanceVal;
+            if($distanceVal <= 0) $distanceVal = null;
+          }
+          $deregReason = $item['last_dereg_reason'] ?? null;
+          $deregTime = $item['last_dereg_time'] ?? null;
+          $rowTs = $genTs;
+          $row = [
+            'id' => 0,
+            'olt_id' => $oltId,
+            'olt_vendor' => $cacheRow['olt_vendor'] ?? null,
+            'olt_name' => $cacheRow['olt_name'] ?? null,
+            'olt_host' => $cacheRow['olt_host'] ?? null,
+            'port' => $rawPort,
+            'normalized_port' => $normalizedPort,
+            'onu' => $onu,
+            'mac' => $macDisplay,
+            'description' => $item['description'] ?? ($item['desc'] ?? null),
+            'status' => $item['status'] ?? null,
+            'rx_power_dbm' => $rxVal,
+            'distance_m' => $distanceVal,
+            'vlan' => $vlanVal,
+            'last_dereg_reason' => $deregReason,
+            'last_dereg_time' => $deregTime,
+            'learned_at' => $generatedAt,
+            'client_id' => null,
+            'pon_slot' => $ponSlot,
+            'cache_source' => 'onu_monitor_cache',
+          ];
+          $rows[] = $row;
+          $monitorRowCount++;
+          if($rowTs !== null && $rowTs >= time() - 86400){
+            $monitorRecent24++;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Fallback path: newer schemas may store one row per ONU directly in onu_monitor_cache.
+    $flatPort = $cacheRow['port'] ?? ($cacheRow['iface'] ?? ($cacheRow['pon_port'] ?? null));
+    $normalizedPort = normalize_port_label($flatPort);
+    $flatOnu = $cacheRow['onu'] ?? ($cacheRow['onu_id'] ?? ($cacheRow['onu_no'] ?? null));
+    $rxVal = parse_rx_metric($cacheRow['rx_power_dbm'] ?? ($cacheRow['rx_power'] ?? ($cacheRow['rx'] ?? null)));
+    $distanceVal = $cacheRow['distance_m'] ?? ($cacheRow['distance'] ?? null);
+    if($distanceVal !== null && is_numeric($distanceVal)){
+      $distanceVal = (float)$distanceVal;
+      if($distanceVal <= 0) $distanceVal = null;
+    }
+    $ponSlot = null;
+    foreach(['pon_slot','pon','slot','pon_id','pon_port'] as $f){
+      if(isset($cacheRow[$f]) && $cacheRow[$f] !== null && $cacheRow[$f] !== ''){
+        $ponSlot = (int)$cacheRow[$f];
+        if($ponSlot <= 0) $ponSlot = null;
+        break;
+      }
+    }
+    $learnedAt = $generatedAt ?? ($cacheRow['learned_at'] ?? ($cacheRow['updated_at'] ?? ($cacheRow['created_at'] ?? null)));
+    $rowTs = $learnedAt ? (strtotime((string)$learnedAt) ?: null) : $genTs;
+    if($rowTs !== null){
+      if($monitorLastGeneratedTs === null || $rowTs > $monitorLastGeneratedTs){
+        $monitorLastGeneratedTs = $rowTs;
+      }
+    }
+    $row = [
+      'id' => (int)($cacheRow['id'] ?? 0),
+      'olt_id' => $oltId,
+      'olt_vendor' => $cacheRow['olt_vendor'] ?? ($cacheRow['vendor'] ?? null),
+      'olt_name' => $cacheRow['olt_name'] ?? null,
+      'olt_host' => $cacheRow['olt_host'] ?? null,
+      'port' => $flatPort,
+      'normalized_port' => $normalizedPort,
+      'onu' => $flatOnu,
+      'mac' => format_mac_display($cacheRow['mac'] ?? '') ?? strtoupper((string)($cacheRow['mac'] ?? '')),
+      'description' => $cacheRow['description'] ?? ($cacheRow['desc'] ?? null),
+      'status' => $cacheRow['status'] ?? null,
+      'rx_power_dbm' => $rxVal,
+      'distance_m' => $distanceVal,
+      'vlan' => $cacheRow['vlan'] ?? null,
+      'last_dereg_reason' => $cacheRow['last_dereg_reason'] ?? null,
+      'last_dereg_time' => $cacheRow['last_dereg_time'] ?? null,
+      'learned_at' => $learnedAt,
+      'client_id' => $cacheRow['client_id'] ?? null,
+      'pon_slot' => $ponSlot,
+      'cache_source' => 'onu_monitor_cache',
+    ];
+    $rows[] = $row;
+    $monitorRowCount++;
+    if($rowTs !== null && $rowTs >= time() - 86400){
+      $monitorRecent24++;
+    }
+  }
 } catch (PDOException $e) {
   if (strpos($e->getMessage(), '42S02') !== false) {
-    $rows = [];
-    $tableMissing = true;
+    $monitorTableMissing = true;
   } else {
     throw $e;
+  }
+}
+
+if($usingMonitorCache){
+  // Fallback: pull last-known rx/distance from olt_mac_cache for rows missing monitor RX.
+  try{
+    $legacyParams = [];
+    $where = '';
+    if($filterOlt > 0){
+      $where = 'WHERE olt_id = ?';
+      $legacyParams[] = $filterOlt;
+    } elseif($monitorOltIds){
+      $placeholders = implode(',', array_fill(0, count($monitorOltIds), '?'));
+      $where = "WHERE olt_id IN ({$placeholders})";
+      $legacyParams = array_keys($monitorOltIds);
+    }
+    $legacySql = "SELECT olt_id, port, onu, mac, rx_power_dbm, distance_m FROM olt_mac_cache {$where}";
+    $legacyStmt = $db->prepare($legacySql);
+    $legacyStmt->execute($legacyParams);
+    while($lr = $legacyStmt->fetch(PDO::FETCH_ASSOC)){
+      $oltId = (int)($lr['olt_id'] ?? 0);
+      $portNorm = normalize_port_label($lr['port'] ?? '');
+      $onuNum = onu_numeric($lr['onu'] ?? '');
+      if($oltId > 0 && $portNorm !== '—' && $onuNum !== PHP_INT_MAX){
+        $legacyCacheByKey["{$oltId}|{$portNorm}|{$onuNum}"] = [
+          'rx' => $lr['rx_power_dbm'] ?? null,
+          'distance' => $lr['distance_m'] ?? null,
+        ];
+      }
+      $mk = normalize_mac_key($lr['mac'] ?? null);
+      if($mk){
+        $legacyCacheByMac[$mk] = [
+          'rx' => $lr['rx_power_dbm'] ?? null,
+          'distance' => $lr['distance_m'] ?? null,
+          'olt_id' => $oltId,
+          'port' => $portNorm,
+          'onu' => $onuNum,
+        ];
+      }
+    }
+  } catch(Throwable $e){}
+
+  $stats = [
+    'total_entries' => $monitorRowCount,
+    'olt_count' => count($monitorOltIds),
+    'last_learned' => $monitorLastGeneratedTs ? date('Y-m-d H:i:s', $monitorLastGeneratedTs) : null,
+  ];
+  $recent24 = $monitorRecent24;
+  $tableMissing = false;
+} else {
+  $where = [];
+  $params = [];
+  if($filterOlt > 0){
+    $where[] = 'c.olt_id = ?';
+    $params[] = $filterOlt;
+  }
+  $sql = "SELECT c.*, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor
+          FROM olt_mac_cache c
+          LEFT JOIN olts o ON o.id = c.olt_id";
+  if($where){
+    $sql .= ' WHERE ' . implode(' AND ', $where);
+  }
+  $sql .= " ORDER BY c.learned_at DESC LIMIT {$perPage}";
+  try {
+    $stmt = $db->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $tableMissing = false;
+  } catch (PDOException $e) {
+    if (strpos($e->getMessage(), '42S02') !== false) {
+      $rows = [];
+      $tableMissing = true;
+    } else {
+      throw $e;
+    }
   }
 }
 
@@ -619,26 +942,76 @@ if(!$tableMissing && $rows){
   $processedRows = [];
   foreach($rows as $row){
     $row['normalized_port'] = normalize_port_label($row['port'] ?? '');
-    $slot = null;
-    if(preg_match('/0\/(\d{1,2})/', $row['normalized_port'], $m)){
-      $slot = (int)$m[1];
-    } elseif(preg_match('/PON\s*(\d+)/i', $row['normalized_port'], $m)){
-      $slot = (int)$m[1];
+    $slot = isset($row['pon_slot']) && $row['pon_slot'] !== null ? (int)$row['pon_slot'] : null;
+    if($slot === 0) $slot = null;
+    if($slot === null){
+      if(preg_match('/0\/(\d{1,2})/', $row['normalized_port'], $m)){
+        $slot = (int)$m[1];
+      } elseif(preg_match('/PON\s*(\d+)/i', $row['normalized_port'], $m)){
+        $slot = (int)$m[1];
+      }
     }
     $onuRaw = trim((string)($row['onu'] ?? ''));
+    $onuNum = onu_numeric($row['onu'] ?? '');
     if(!$slot || $onuRaw === '' || $onuRaw === '—'){
+      continue;
+    }
+    if($filterOnu > 0 && $onuNum !== $filterOnu){
       continue;
     }
     $row['pon_slot'] = $slot;
     $label = 'PON '.$slot;
-    $backfilled = backfill_cache_client_id($db, $row, $clientLookup);
-    if($backfilled){
-      $row['client_id'] = $backfilled;
-      update_client_olt_binding($db, $row, $backfilled);
-    } elseif(!empty($row['client_id'])) {
-      update_client_olt_binding($db, $row, (int)$row['client_id']);
+    if($usingMonitorCache){
+      $row['client_id'] = $row['client_id'] ?? null;
+    } else {
+      $backfilled = backfill_cache_client_id($db, $row, $clientLookup);
+      if($backfilled){
+        $row['client_id'] = $backfilled;
+        update_client_olt_binding($db, $row, $backfilled);
+      } elseif(!empty($row['client_id'])) {
+        update_client_olt_binding($db, $row, (int)$row['client_id']);
+      }
     }
     $row['client_meta'] = match_client_for_mac_row($row, $clientLookup);
+    if($filterClientCode !== '' && !row_matches_client_code($row, $filterClientCode)){
+      continue;
+    }
+    if((!isset($row['description']) || $row['description'] === null || $row['description'] === '') && !empty($row['client_meta']['name'])){
+      $row['description'] = $row['client_meta']['name'];
+    }
+    if($usingMonitorCache){
+      $mk = normalize_mac_key($row['mac'] ?? null);
+      $fallback = null;
+      if($row['olt_id'] && $row['normalized_port'] && ($onuNum = onu_numeric($row['onu'] ?? '')) !== PHP_INT_MAX){
+        $cacheKey = "{$row['olt_id']}|{$row['normalized_port']}|{$onuNum}";
+        $fallback = $legacyCacheByKey[$cacheKey] ?? null;
+      }
+      if(!$fallback && $mk && isset($legacyCacheByMac[$mk])){
+        $fallback = $legacyCacheByMac[$mk];
+      }
+      if($fallback){
+        if(($row['rx_power_dbm'] === null || $row['rx_power_dbm'] === '' || !is_numeric($row['rx_power_dbm'])) && isset($fallback['rx']) && $fallback['rx'] !== null && $fallback['rx'] !== '' && is_numeric($fallback['rx'])){
+          $row['rx_power_dbm'] = (float)$fallback['rx'];
+        }
+        if(($row['distance_m'] === null || $row['distance_m'] === '' || !is_numeric($row['distance_m'])) && isset($fallback['distance']) && $fallback['distance'] !== null && $fallback['distance'] !== '' && is_numeric($fallback['distance'])){
+          $row['distance_m'] = (float)$fallback['distance'];
+        }
+      }
+    }
+    $clientRxPower = $row['client_meta']['rx_power'] ?? null;
+    if($usingMonitorCache){
+      $row['rx_power_dbm'] = choose_rx_power($row['rx_power_dbm'] ?? null, $clientRxPower);
+      if(!empty($row['distance_m']) && is_numeric($row['distance_m']) && (float)$row['distance_m'] <= 0){
+        $row['distance_m'] = null;
+      }
+    } else {
+      // Fallback: use client rx_power when cache is missing or empty.
+      $row['rx_power_dbm'] = choose_rx_power($row['rx_power_dbm'] ?? null, $clientRxPower);
+    }
+    if(!empty($row['last_dereg_time'])){
+      $tsLdr = strtotime((string)$row['last_dereg_time']);
+      if($tsLdr){ $row['last_dereg_time'] = date('Y-m-d H:i', $tsLdr); }
+    }
     $processedRows[] = $row;
   }
   $rows = $processedRows;
@@ -676,10 +1049,11 @@ if(!$tableMissing && $rows){
     foreach($g['rows'] as $row){
       $onuNum = onu_numeric($row['onu'] ?? '');
       $baseKey = $row['normalized_port'] ?? '';
+      $oltKey = (int)($row['olt_id'] ?? 0);
       if($onuNum !== PHP_INT_MAX){
-        $dedupKey = "{$baseKey}|{$onuNum}";
+        $dedupKey = "{$oltKey}|{$baseKey}|{$onuNum}";
       } else {
-        $dedupKey = "{$baseKey}|".strtolower($row['mac'] ?? '');
+        $dedupKey = "{$oltKey}|{$baseKey}|".strtolower($row['mac'] ?? '');
       }
       if(!isset($bestByKey[$dedupKey])){
         $bestByKey[$dedupKey] = $row;
@@ -725,50 +1099,66 @@ if ($groupedMacs) {
   $ponOptions = array_values(array_unique($ponOptions));
 }
 // Default: যদি কোনো PON সিলেক্ট না থাকে, প্রথম PON দেখাবে
-if ($filterPon === 0 && !empty($ponOptions)) {
-  $filterPon = $ponOptions[0];
-}
-
 if($filterPon > 0 && $groupedMacs){
   $groupedMacs = array_filter($groupedMacs, fn($g)=> (int)($g['slot'] ?? 0) === $filterPon);
 }
-$statWhere = [];
-$statParams = [];
-if($filterOlt > 0){
-  $statWhere[] = 'olt_id = ?';
-  $statParams[] = $filterOlt;
+if($filterOnu > 0 && $groupedMacs){
+  foreach($groupedMacs as &$g){
+    $g['rows'] = array_values(array_filter($g['rows'], fn($r)=> onu_numeric($r['onu'] ?? '') === $filterOnu));
+  }
+  unset($g);
+  $groupedMacs = array_filter($groupedMacs, fn($g)=> !empty($g['rows']));
 }
-$statSql = "SELECT COUNT(*) AS total_entries,
-                   COUNT(DISTINCT olt_id) AS olt_count,
-                   MAX(learned_at) AS last_learned
-            FROM olt_mac_cache";
-if($statWhere){
-  $statSql .= ' WHERE ' . implode(' AND ', $statWhere);
+$latestRowTs = null;
+if($rows){
+  foreach($rows as $r){
+    $ts = strtotime($r['learned_at'] ?? '');
+    if($ts && ($latestRowTs === null || $ts > $latestRowTs)){
+      $latestRowTs = $ts;
+    }
+  }
 }
-if(!$tableMissing){
-  $statStmt = $db->prepare($statSql);
-  $statStmt->execute($statParams);
-  $stats = $statStmt->fetch(PDO::FETCH_ASSOC) ?: ['total_entries'=>0,'olt_count'=>0,'last_learned'=>null];
-} else {
-  $stats = ['total_entries'=>0,'olt_count'=>0,'last_learned'=>null];
-}
+if(!$usingMonitorCache){
+  $statWhere = [];
+  $statParams = [];
+  if($filterOlt > 0){
+    $statWhere[] = 'olt_id = ?';
+    $statParams[] = $filterOlt;
+  }
+  $statSql = "SELECT COUNT(*) AS total_entries,
+                     COUNT(DISTINCT olt_id) AS olt_count,
+                     MAX(learned_at) AS last_learned
+              FROM olt_mac_cache";
+  if($statWhere){
+    $statSql .= ' WHERE ' . implode(' AND ', $statWhere);
+  }
+  if(!$tableMissing){
+    $statStmt = $db->prepare($statSql);
+    $statStmt->execute($statParams);
+    $stats = $statStmt->fetch(PDO::FETCH_ASSOC) ?: ['total_entries'=>0,'olt_count'=>0,'last_learned'=>null];
+  }
 
-$recentSql = "SELECT COUNT(*) FROM olt_mac_cache WHERE learned_at >= NOW() - INTERVAL 1 DAY";
-if($filterOlt > 0){
-  $recentSql .= " AND olt_id = ?";
-  $recentParams = [$filterOlt];
-} else {
-  $recentParams = [];
-}
-if(!$tableMissing){
-  $recentStmt = $db->prepare($recentSql);
-  $recentStmt->execute($recentParams);
-  $recent24 = (int)$recentStmt->fetchColumn();
-} else {
-  $recent24 = 0;
+  $recentSql = "SELECT COUNT(*) FROM olt_mac_cache WHERE learned_at >= NOW() - INTERVAL 1 DAY";
+  if($filterOlt > 0){
+    $recentSql .= " AND olt_id = ?";
+    $recentParams = [$filterOlt];
+  } else {
+    $recentParams = [];
+  }
+  if(!$tableMissing){
+    $recentStmt = $db->prepare($recentSql);
+    $recentStmt->execute($recentParams);
+    $recent24 = (int)$recentStmt->fetchColumn();
+  }
 }
 
 $lastLearnedAt = $stats['last_learned'] ?? null;
+if($latestRowTs !== null){
+  $statTs = $lastLearnedAt ? strtotime((string)$lastLearnedAt) : null;
+  if($statTs === false || $statTs === null || $latestRowTs > $statTs){
+    $lastLearnedAt = date('Y-m-d H:i:s', $latestRowTs);
+  }
+}
 $lastLearnedHuman = $lastLearnedAt ? diff_for_humans($lastLearnedAt) : '—';
 
 $olts = $db->query("SELECT id, name, host FROM olts ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
