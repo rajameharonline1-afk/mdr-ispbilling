@@ -10,7 +10,7 @@
 # সব কিছু একটাই .tar.gz আর্কাইভে রাখবে
 # যদি অন্য লোকেশনে ব্যাকআপ রাখতে চান, এভাবে চালাতে পারেন:
 # BACKUP_ROOT=/var/www/ /var/www/isp_billing/backup.sh
-
+# BACKUP_ROOT=/var/www/isp_billing /var/www/isp_billing/backup.sh
 #!/usr/bin/env bash
 set -euo pipefail
 

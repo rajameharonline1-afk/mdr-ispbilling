@@ -61,24 +61,24 @@ include __DIR__ . '/../partials/partials_header.php';
   </div></div>
 
   <div id="previewArea" class="d-none">
-    <div class="d-flex justify-content-between align-items-center mb-2">
-      <h5>Preview</h5>
-      <div class="d-flex align-items-center gap-3">
-        <input type="text" class="form-control form-control-sm" id="pppoeSearch" placeholder="Search PPPoE ID or Mobile">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="selectAllRows">
-          <label class="form-check-label" for="selectAllRows">Select all</label>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5>Preview</h5>
+          <div class="d-flex align-items-center gap-3">
+            <input type="text" class="form-control form-control-sm" id="pppoeSearch" placeholder="Search PPPoE ID or Mobile">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="selectAllRows">
+              <label class="form-check-label" for="selectAllRows">Select all</label>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="toggleShowPwd">
+              <label class="form-check-label" for="toggleShowPwd">Show passwords</label>
+            </div>
+            <div class="text-end"><button class="btn btn-success btn-commit" type="button">Save</button></div>
+          </div>
         </div>
-        <div class="form-check form-switch">
-          <input class="form-check-input" type="checkbox" id="toggleShowPwd">
-          <label class="form-check-label" for="toggleShowPwd">Show passwords</label>
-        </div>
-        <div class="text-end"><button class="btn btn-success" id="btnCommit">Save</button></div>
-      </div>
-    </div>
-    <div class="table-responsive">
-      <table class="table table-sm table-bordered" id="tblPreview">
-        <thead><tr>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered" id="tblPreview">
+            <thead><tr>
           <th><input type="checkbox" id="selectAllRowsHeader"></th><th>PPPoE ID</th><th>Password</th><th>Client</th>
           <th>Mobile</th><th>Profile</th><th>Package</th><th>Price</th>
           <th>Status</th><th>Action</th>
@@ -87,7 +87,7 @@ include __DIR__ . '/../partials/partials_header.php';
       </table>
     </div>
     <div class="alert alert-warning d-none" id="warnUnmatched">Some profiles did not match any package.</div>
-    <div class="text-end"><button class="btn btn-success" id="btnCommit">Commit Selected</button></div>
+    <div class="text-end"><button class="btn btn-success btn-commit" type="button">Commit Selected</button></div>
   </div>
 </div>
 
@@ -186,9 +186,13 @@ tblBody.addEventListener('change',e=>{
   }
 });
 
-// Commit
-document.getElementById('btnCommit').addEventListener('click',async()=>{
+// Commit handler shared by both action buttons
+async function commitSelection(){
   const rid=document.getElementById('router_id').value, prof=document.getElementById('profile').value;
+  if(!rid||!prof){
+    showToast('Select router and profile before committing.', 'warning');
+    return;
+  }
   const rows=[]; let missingPkg=false;
   tblBody.querySelectorAll('tr').forEach(tr=>{
     const idx=tr.dataset.idx, src=LAST_PREVIEW[idx];
@@ -226,6 +230,11 @@ document.getElementById('btnCommit').addEventListener('click',async()=>{
   if(!data.ok) return showToast('Commit failed: '+(data.msg||''), 'danger');
   const s=data.summary||{};
   showToast(`Done. Created: ${s.created||0}, Updated: ${s.updated||0}, Skipped: ${s.skipped||0}, Invoices: ${s.invoices_created||0}`, 'success', 5000);
+}
+
+// Attach commit handler to all commit buttons (top + bottom)
+document.querySelectorAll('.btn-commit').forEach(btn=>{
+  btn.addEventListener('click', commitSelection);
 });
 </script>
 <?php include __DIR__ . '/../partials/partials_footer.php'; ?>

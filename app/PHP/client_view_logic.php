@@ -37,6 +37,23 @@ if (!function_exists('onu_numeric')) {
     return PHP_INT_MAX;
   }
 }
+if (!function_exists('first_non_empty')) {
+  function first_non_empty(array $row, array $keys) {
+    foreach ($keys as $k) {
+      if (array_key_exists($k, $row) && $row[$k] !== null && $row[$k] !== '') return $row[$k];
+    }
+    return null;
+  }
+}
+if (!function_exists('fmt_display_dt')) {
+  function fmt_display_dt($val): ?string {
+    if ($val === null || $val === '') return null;
+    $ts = strtotime((string)$val);
+    if ($ts) return date('Y-m-d H:i:s', $ts);
+    $t = trim((string)$val);
+    return $t !== '' ? $t : null;
+  }
+}
 
 /* ---------------- Input: client id / PPPoE name ---------------- */
 $paramId   = trim((string)($_GET['id'] ?? ''));
@@ -108,6 +125,32 @@ foreach ($lookups as [$type, $value]) {
 }
 
 if (!$client) { header("Location: /public/clients.php"); exit; }
+
+// Normalize common fields so the view always shows data even if schema varies slightly
+$addr = first_non_empty($client, ['address','present_address','addr','current_address']);
+if ($addr !== null) $client['address'] = $addr;
+$client_area = first_non_empty($client, ['area','zone','zone_name']);
+if ($client_area !== null) $client['area'] = $client_area;
+$client_sub_zone = first_non_empty($client, ['sub_zone','subzone','sub_zone_name']);
+if ($client_sub_zone !== null) $client['sub_zone'] = $client_sub_zone;
+$client_box = first_non_empty($client, ['box','box_no','box_id']);
+if ($client_box !== null) $client['box'] = $client_box;
+$expiry = first_non_empty($client, ['expiry_date','expire_date','next_due_date']);
+if ($expiry !== null) $client['expiry_date'] = $expiry;
+$joinDate = first_non_empty($client, ['join_date','created_at']);
+if ($joinDate !== null) $client['join_date'] = $joinDate;
+$creator = first_non_empty($client, ['created_by','added_by','user_id']);
+if ($creator !== null) $client['created_by'] = $creator;
+$mobile = first_non_empty($client, ['mobile','phone','contact','mobile_no','msisdn']);
+if ($mobile !== null) $client['mobile'] = $mobile;
+if (empty($client['router_name'])) {
+  if (!empty($client['router_ip']))      $client['router_name'] = $client['router_ip'];
+  elseif (!empty($client['router_id']))  $client['router_name'] = 'Router #'.(int)$client['router_id'];
+}
+$pkgNameFromClient = $client['package_name'] ?? null;
+if (!$pkgNameFromClient && !empty($client['package'])) {
+  $client['package_name'] = $client['package'];
+}
 
 $client_id = (int)$client['id'];
 $pppoe_id  = (string)($client['pppoe_id'] ?? '');
@@ -424,14 +467,53 @@ $client_initial = mb_strtoupper(mb_substr($client['name'] ?? '?', 0, 1, 'UTF-8')
 $m              = trim($client['mobile'] ?? '');
 
 /* ---------------- Live placeholders (AJAX will fill) ---------------- */
-$live_ip   = '—';
-$last_seen = '—';
+$live_ip = first_non_empty($client, ['ip_address','ip','ipv4','client_ip','last_ip']);
+if ($live_ip === null || $live_ip === '') $live_ip = '—';
+$uptime_raw = first_non_empty($client, ['uptime','session_uptime']);
+if (!$uptime_raw && !empty($client['last_sync_time'])) $uptime_raw = $client['last_sync_time'];
+$uptime_display = $uptime_raw ? fmt_display_dt($uptime_raw) ?? (string)$uptime_raw : '—';
+$last_seen_raw = first_non_empty($client, ['last_logout_at','last_sync_time','last_seen']);
+$last_seen = fmt_display_dt($last_seen_raw) ?? '—';
 $is_online = false;
+if (isset($client['is_online'])) {
+  $v = $client['is_online'];
+  $is_online = is_numeric($v) ? ((int)$v === 1) : in_array(strtolower((string)$v), ['yes','true','online','active'], true);
+}
+// Stored traffic usage fallback (client_traffic_log)
+$data_dl = $data_ul = null;
+$data_usage_asof = null;
+try{
+  $st = $pdo->prepare("SELECT total_download_gb, total_upload_gb, log_time FROM client_traffic_log WHERE client_id=? ORDER BY log_time DESC LIMIT 1");
+  $st->execute([$client_id]);
+  $row = $st->fetch(PDO::FETCH_ASSOC);
+  if($row){
+    $data_dl = is_numeric($row['total_download_gb']) ? (float)$row['total_download_gb'] : null;
+    $data_ul = is_numeric($row['total_upload_gb']) ? (float)$row['total_upload_gb'] : null;
+    $data_usage_asof = $row['log_time'] ?? null;
+  }
+}catch(Throwable $e){}
+$data_dl_text = ($data_dl !== null) ? (number_format($data_dl, 3).' GB') : '—';
+$data_ul_text = ($data_ul !== null) ? (number_format($data_ul, 3).' GB') : '—';
+if ($uptime_display === '—' && $data_usage_asof) {
+  // যদি লাইভ আপটাইম না থাকে, শেষ ট্রাফিক লগের সময় দেখাই
+  $uptime_display = 'Last log: ' . (fmt_display_dt($data_usage_asof) ?? $data_usage_asof);
+}
 $rx_prefill = ($invRow && $invRow['last_rx_dbm'] !== null) ? (float)$invRow['last_rx_dbm'] : null;
 if($monitor_rx !== null){
   $rx_prefill = (float)$monitor_rx;
 }
-$rx_prefill_meta = rx_badge_meta($rx_prefill);
+$rx_from_cache = null;
+if(is_array($cacheRow)){
+  $rx_from_cache = $cacheRow['rx_power_dbm'] ?? ($cacheRow['rx_power'] ?? ($cacheRow['rx'] ?? null));
+}
+if($rx_prefill === null && $rx_from_cache !== null){
+  if(is_numeric($rx_from_cache)){
+    $rx_prefill = (float)$rx_from_cache;
+  } elseif(is_string($rx_from_cache) && preg_match('/-?\d+(?:\.\d+)?/', $rx_from_cache, $m)) {
+    $rx_prefill = (float)$m[0];
+  }
+}
+$rx_prefill = $rx_prefill ?? (is_numeric($client['rx_power'] ?? null) ? (float)$client['rx_power'] : null);
 $olt_linked = !empty($client['olt_id']);
 $olt_name   = $client['olt_name'] ?? null;
 $olt_host   = $client['olt_host'] ?? null;
@@ -525,8 +607,23 @@ if (!empty($client['olt_id']) && !empty($client['olt_port']) && !empty($client['
     $onu_mac = null;
   }
 }
+$rx_prefill_meta = rx_badge_meta($rx_prefill);
+$initialOltBinding['rx_power_dbm'] = $rx_prefill;
 $onu_mac = $onu_mac ?: ($client['caller_mac'] ?? null);
-$router_mac_display = norm_mac($client['router_mac'] ?? ($client['caller_mac'] ?? ($client['ap_mac'] ?? ($client['onu_mac'] ?? null))));
+$router_mac_raw = $client['router_mac']
+               ?? ($binding['mac'] ?? null)
+               ?? ($onu_mac ?: null)
+               ?? ($client['caller_mac'] ?? null)
+               ?? ($client['ap_mac'] ?? null)
+               ?? ($client['last_seen_mac'] ?? null)
+               ?? ($client['onu_mac'] ?? null);
+$router_mac_display = norm_mac($router_mac_raw);
+if(!$router_mac_display && $router_mac_raw){
+  $router_mac_display = trim((string)$router_mac_raw);
+}
+if(!$router_mac_display && $onu_mac){
+  $router_mac_display = norm_mac($onu_mac) ?: trim((string)$onu_mac);
+}
 $device_vendor = null;
 if ($router_mac_display && function_exists('mac_vendor_lookup')) {
   $device_vendor = mac_vendor_lookup($router_mac_display);

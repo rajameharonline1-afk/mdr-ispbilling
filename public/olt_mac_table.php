@@ -1,85 +1,17 @@
 <?php
 // OLT MAC Table page
 require_once __DIR__ . '/../app/PHP/olt_mac_table_logic.php';
-require_once __DIR__ . '/../partials/partials_header.php';
+
+$isAjax = (string)($_GET['ajax'] ?? '') === '1';
+
+function render_olt_table_block(array $groupedMacs, array $clientMacCache, int $filterOlt): void
+{
 ?>
-<link rel="stylesheet" href="/css/olt_mac_table.css?v=<?= @filemtime(__DIR__ . '/../assets/css/olt_mac_table.css'); ?>">
-
-<div class="container-admin olt-mac-table-page">
-    
-      <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
-        <div class="d-flex align-items-center gap-3 flex-wrap">
-          <span class="fw-semibold">ONU Table</span>
-          <form id="clientCodeSearchForm" class="d-flex align-items-center gap-2" method="get" action="">
-            <input type="hidden" name="olt_id" value="<?= (int)$filterOlt; ?>">
-            <input type="hidden" name="pon" value="<?= (int)$filterPon; ?>">
-            <input id="clientCodeInput" type="text" name="client_code" class="form-control form-control-sm" placeholder="Client code" value="<?= h($filterClientCode); ?>" style="min-width: 180px;" autocomplete="off">
-          </form>
-        </div>
-        <span class="fw-semibold"><i class="bi bi-hdd-fill"></i> <?= h($lastLearnedHuman); ?></span>
-      </div>
-  <div class="container-fluid olt-sticky-header">
-
-    <div class="olt-header olt-filter-bar mb-3">
-      <form id="oltFiltersForm" class="card shadow-sm" method="get" action="">
-        <div class="card-body row g-3 align-items-end">
-          <input type="hidden" name="client_code" id="clientCodeHidden" value="<?= h($filterClientCode); ?>">
-          <div class="col-md-4">
-            <select name="olt_id" class="form-select" required>
-              <option value="0" disabled <?= $filterOlt === 0 ? 'selected' : ''; ?>>Select an OLT first</option>
-              <?php foreach ($olts as $olt): ?>
-                <?php $oltId = (int)$olt['id']; ?>
-                <option value="<?= $oltId; ?>" <?= (int)$filterOlt === $oltId ? 'selected' : ''; ?>>
-                  <?= h($olt['name'] ?: $olt['host']); ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <?php if (!empty($ponOptions)): ?>
-          <div class="col-md-3">
-            <select name="pon" class="form-select">
-              <option value="0" disabled <?= $filterPon === 0 ? 'selected' : ''; ?>>Select PON (optional)</option>
-              <?php foreach ($ponOptions as $slot): ?>
-                <?php $slotVal = (int)$slot; ?>
-                <option value="<?= $slotVal; ?>" <?= (int)$filterPon === $slotVal ? 'selected' : ''; ?>>
-                  PON <?= h($slotVal); ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <?php endif; ?>
-
-        </div>
-        <?php if ($filterOlt === 0): ?>
-          <div class="px-3 pb-3">
-            <small class="text-muted">অনুগ্রহ করে প্রথমে একটি OLT সিলেক্ট করুন, তারপর PON/ক্লায়েন্ট কোড ফিল্টার দিন।</small>
-          </div>
-        <?php endif; ?>
-
-        <?php if ($selectedOlt): ?>
-          <div class="card-header bg-body">
-            <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
-              <span class="fw-semibold">OLT NAME : <?= h($selectedOlt['name'] ?: 'Unnamed OLT'); ?> |IP: <?= h($selectedOlt['host'] ?? ''); ?></span>
-              
-            </div>
-            <?php if (!empty($ponSummary)): ?>
-              <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
-                <span class="text-muted small">PON Ports: <?= (int)$ponTotals['total_pons']; ?> • Total ONU: <?= (int)$ponTotals['total_onu']; ?></span>
-                <?php foreach ($ponSummary as $ps): ?>
-                  <span class="badge text-bg-light border"><?= h($ps['label'] ?? 'PON :'); ?> • ONU : <?= (int)($ps['count'] ?? 0); ?></span>
-                <?php endforeach; ?>
-              </div>
-            <?php endif; ?>
-          </div>
-        <?php endif; ?>
-      </form>
-    </div>
-  </div>
-
   <div class="container-fluid olt-table-area">
     <div class="table-responsive olt-table-wrap">
-      <?php if ($groupedMacs): ?>
+      <?php if ($filterOlt <= 0): ?>
+        <div class="p-4 text-center text-muted">দয়া করে প্রথমে OLT সিলেক্ট করুন।</div>
+      <?php elseif ($groupedMacs): ?>
         <table class="table table-hover table-sm align-middle olt-mac-table table-app">
           <thead class="olt-table-header">
             <tr>
@@ -104,7 +36,11 @@ require_once __DIR__ . '/../partials/partials_header.php';
                 <tr>
                   <td data-label="ONU ID"><?= h(format_onu_identifier($row)); ?></td>
                   <td data-label="Client">
-                    <?php if (!empty($row['client_meta'])): $cm = $row['client_meta']; $clientCodeDisplay = trim((string)($cm['client_code'] ?? '')); if ($clientCodeDisplay === '') { $clientCodeDisplay = (string)(int)($cm['id'] ?? 0); } ?>
+                    <?php if (!empty($row['client_meta'])): $cm = $row['client_meta'];
+                      $clientCodeDisplay = trim((string)($cm['client_code'] ?? ''));
+                      if ($clientCodeDisplay === '') {
+                        $clientCodeDisplay = (string)(int)($cm['id'] ?? 0);
+                      } ?>
                       <a href="/public/client_view.php?id=<?= $cm['id']; ?>" class="fw-semibold text-decoration-none">
                         <?= h($clientCodeDisplay); ?><?php if (($cm['name'] ?? '') !== ''): ?>: <?= h($cm['name']); ?><?php endif; ?>
                       </a>
@@ -183,17 +119,17 @@ require_once __DIR__ . '/../partials/partials_header.php';
                     <?php endif; ?>
                   </td>
                   <td class="olt-dereg-cell" data-label="LDR">
-                  <?php
-                  $deregReason = $row['last_dereg_reason'] ?? null;
-                  $deregTime = $row['last_dereg_time'] ?? null;
-                  $deregReasonDisplay = ($deregReason === null || $deregReason === '') ? '—' : $deregReason;
-                  ?>
-                  <div><?= h($deregReasonDisplay); ?></div>
-                  <?php if ($deregTime): ?>
-                    <div class="text-muted small"><?= h($deregTime); ?></div>
-                  <?php endif; ?>
-                </td>
-                <td class="text-end" data-label="Action">
+                    <?php
+                    $deregReason = $row['last_dereg_reason'] ?? null;
+                    $deregTime = $row['last_dereg_time'] ?? null;
+                    $deregReasonDisplay = ($deregReason === null || $deregReason === '') ? '—' : $deregReason;
+                    ?>
+                    <div><?= h($deregReasonDisplay); ?></div>
+                    <?php if ($deregTime): ?>
+                      <div class="text-muted small"><?= h($deregTime); ?></div>
+                    <?php endif; ?>
+                  </td>
+                  <td class="text-end" data-label="Action">
                     <?php $cfgDisabled = empty($row['id']) || (($row['cache_source'] ?? '') === 'onu_monitor_cache'); ?>
                     <button class="btn btn-outline-primary btn-sm btn-config"
                       type="button"
@@ -202,16 +138,128 @@ require_once __DIR__ . '/../partials/partials_header.php';
                       data-desc="<?= h($row['description'] ?? ''); ?>">
                       Configure
                     </button>
-                </td>
-              </tr>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
             <?php endforeach; ?>
-          <?php endforeach; ?>
-         </tbody>
+          </tbody>
         </table>
       <?php else: ?>
         <div class="p-4 text-center text-muted">এই মানদণ্ডে কোনো MAC পাওয়া যায়নি।</div>
       <?php endif; ?>
     </div>
+  </div>
+<?php
+}
+
+function render_olt_summary_block(?array $selectedOlt, array $ponSummary, array $ponTotals, int $filterOlt): void
+{
+  if (!$selectedOlt || $filterOlt <= 0) {
+    echo '';
+    return;
+  }
+?>
+  <div class="card-header bg-body">
+    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+      <span class="fw-semibold">OLT NAME : <?= h($selectedOlt['name'] ?: 'Unnamed OLT'); ?> |IP: <?= h($selectedOlt['host'] ?? ''); ?></span>
+    </div>
+    <?php if (!empty($ponSummary)): ?>
+      <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+        <span class="text-muted small">PON Ports: <?= (int)$ponTotals['total_pons']; ?> • Total ONU: <?= (int)$ponTotals['total_onu']; ?></span>
+        <?php foreach ($ponSummary as $ps): ?>
+          <span class="badge text-bg-light border"><?= h($ps['label'] ?? 'PON :'); ?> • ONU : <?= (int)($ps['count'] ?? 0); ?></span>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+  </div>
+<?php
+}
+
+if ($isAjax) {
+  $tableHtml = '';
+  if ($filterOlt <= 0) {
+    $tableHtml = '<div class="p-4 text-center text-muted">দয়া করে প্রথমে OLT সিলেক্ট করুন।</div>';
+  } else {
+    ob_start();
+    render_olt_table_block($groupedMacs, $clientMacCache, $filterOlt);
+    $tableHtml = ob_get_clean();
+  }
+  ob_start();
+  render_olt_summary_block($selectedOlt ?? null, $ponSummary ?? [], $ponTotals ?? [], $filterOlt);
+  $summaryHtml = ob_get_clean();
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode([
+    'ok' => true,
+    'html' => $tableHtml,
+    'summary' => $summaryHtml,
+    'pon_options' => $filterOlt > 0 ? array_values($ponOptions ?? []) : [],
+  ], JSON_UNESCAPED_UNICODE);
+  exit;
+}
+
+require_once __DIR__ . '/../partials/partials_header.php';
+?>
+<link rel="stylesheet" href="/css/olt_mac_table.css?v=<?= @filemtime(__DIR__ . '/../assets/css/olt_mac_table.css'); ?>">
+<div class="olt-mac-wrap container-fluid">
+  <div class="container-admin olt-mac-table-page">
+
+    <div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        <span class="fw-semibold">ONU Table</span>
+        <form id="clientCodeSearchForm" class="d-flex align-items-center gap-2" method="get" action="">
+          <input type="hidden" name="olt_id" value="<?= (int)$filterOlt; ?>">
+          <input type="hidden" name="pon" value="<?= (int)$filterPon; ?>">
+          <input id="clientCodeInput" type="text" name="client_code" class="form-control form-control-sm" placeholder="Client code" value="<?= h($filterClientCode); ?>" style="min-width: 180px;" autocomplete="off">
+        </form>
+      </div>
+      <span class="fw-semibold"><i class="bi bi-hdd-fill"></i> <?= h($lastLearnedHuman); ?></span>
+    </div>
+    <div class="container-fluid olt-sticky-header">
+      <div class="olt-header olt-filter-bar mb-3">
+        <form id="oltFiltersForm" class="card shadow-sm" method="get" action="">
+          <div class="card-body row g-3 align-items-end">
+            <input type="hidden" name="client_code" id="clientCodeHidden" value="<?= h($filterClientCode); ?>">
+            <div class="col-md-4">
+              <select name="olt_id" class="form-select" required>
+                <option value="0" disabled <?= $filterOlt === 0 ? 'selected' : ''; ?>>OLT সিলেক্ট করুন</option>
+                <?php foreach ($olts as $olt): ?>
+                  <?php $oltId = (int)$olt['id']; ?>
+                  <option value="<?= $oltId; ?>" <?= (int)$filterOlt === $oltId ? 'selected' : ''; ?>>
+                    <?= h($olt['name'] ?: $olt['host']); ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="col-md-3">
+              <select name="pon" class="form-select" <?= $filterOlt === 0 ? 'disabled' : ''; ?>>
+                <option value="0" disabled <?= $filterPon === 0 ? 'selected' : ''; ?>>PON সিলেক্ট করুন</option>
+                <?php if (!empty($ponOptions) && $filterOlt > 0): ?>
+                  <?php foreach ($ponOptions as $slot): ?>
+                    <?php $slotVal = (int)$slot; ?>
+                    <option value="<?= $slotVal; ?>" <?= (int)$filterPon === $slotVal ? 'selected' : ''; ?>>
+                      PON <?= h($slotVal); ?>
+                    </option>
+                  <?php endforeach; ?>
+                <?php endif; ?>
+              </select>
+            </div>
+
+          </div>
+          <div class="px-3 pb-3">
+            <?php if ($filterOlt === 0): ?>
+              <small class="text-muted">অনুগ্রহ করে প্রথমে একটি OLT সিলেক্ট করুন, তারপর PON/ক্লায়েন্ট কোড ফিল্টার দিন।</small>
+            <?php endif; ?>
+          </div>
+
+          <div id="oltSummary">
+            <?php render_olt_summary_block($selectedOlt ?? null, $ponSummary ?? [], $ponTotals ?? [], $filterOlt); ?>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <?php render_olt_table_block($groupedMacs, $clientMacCache, $filterOlt); ?>
   </div>
 </div>
 

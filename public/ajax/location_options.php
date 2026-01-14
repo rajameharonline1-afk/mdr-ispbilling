@@ -54,7 +54,10 @@ if (!is_array($input)) {
     if (!is_array($input)) $input = [];
 }
 
-$token = $input['csrf_token'] ?? ($input['_csrf'] ?? null);
+$token = $input['csrf_token'] ?? ($input['_csrf'] ?? ($input['csrf'] ?? null));
+if (!$token) {
+    $token = csrf_request_token();
+}
 $sessionToken = csrf_session_token();
 if (!$sessionToken || !$token || !hash_equals((string)$sessionToken, (string)$token)) {
     http_response_code(400);

@@ -1,4 +1,7 @@
 {
     "chatgpt.commentCodeLensEnabled": true,
-    "chatgpt.openOnStartup": true
+    "chatgpt.openOnStartup": true,
+    "cSpell.enabledFileTypes": {
+        "css": false
+    }
 }

@@ -1,47 +1,37 @@
 /* OLT MAC table layout tweaks (desktop-friendly, responsive) */
 
-:root, body, html {
-  height: 100vh;
-  overflow: hidden;
-  
-}
-
 :root {
   --olt-top-offset: 128px;
 }
 
-.olt-mac-page {
-  height: 100vh;
+/* Layout: keep header/filters fixed, only table area scrolls */
+.olt-mac-wrap{
+  height: calc(100vh - var(--topbar-h));
   display: flex;
   flex-direction: column;
-}
-
-.olt-mac-page .container-fluid {
-  width: 100%;
-  max-width: 100%;
-  margin: 0 auto;
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
-.olt-sticky-header {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-}
-
-.olt-table-area {
-  flex: 1;
-  height: 100%;
   overflow: hidden;
 }
 
-.olt-filter-bar {
-  position: sticky;
-  top: 64px;
-  z-index: 20;
+.olt-mac-table-page{
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow: hidden;
 }
-.olt-filter-bar .card {
+
+.olt-sticky-header{
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+
+.olt-filter-bar{
+  position: sticky;
+  top: 0;
+  z-index: 7;
+}
+.olt-filter-bar .card{
   box-shadow: 0 4px 18px rgba(0,0,0,0.08);
   margin-bottom: 0;
 }
@@ -56,7 +46,6 @@
 
 .olt-table-wrap {
   position: relative;
-  height: 100%;
   overflow-y: auto;
   overflow-x: auto;
   border: 1px solid #d1d5db;
@@ -64,7 +53,6 @@
   margin: 8px -12px 0 -12px;
   padding-top: 0;
   background: #fff;
-  max-height: calc(100vh - 220px);
 }
 
 .olt-mac-table thead th {
@@ -83,73 +71,27 @@
   background: #f3f6fb;
 }
 
-.olt-mac-table code {
-  color: #b91c1c;
-}
-.olt-mac-table th:nth-child(1),
-.olt-mac-table td:nth-child(1) {
-  width: 5%;
-}
+.olt-mac-table code { color: #b91c1c; }
 
-.olt-mac-table th:nth-child(2),
-.olt-mac-table td:nth-child(2) {
-  width: 12%;
-  text-align: left;
-}
-
-.olt-mac-table th:nth-child(3),
-.olt-mac-table td:nth-child(3),
-.olt-mac-table th:nth-child(4),
-.olt-mac-table td:nth-child(4),
-.olt-mac-table th:nth-child(5),
-.olt-mac-table td:nth-child(5) {
-  width: 8%;
-}
-
-.olt-mac-table th:nth-child(6),
-.olt-mac-table td:nth-child(6) {
-  width: 13%;
-  text-align: left;
-}
-
-.olt-mac-table th:nth-child(7),
-.olt-mac-table td:nth-child(7) {
-  width: 11%;
-}
-
-.olt-mac-table th:nth-child(8),
-.olt-mac-table td:nth-child(8) {
-  width: 6%;
-}
-
-.olt-mac-table th:nth-child(9),
-.olt-mac-table td:nth-child(9) {
-  width: 7%;
-}
-
-.olt-mac-table th:nth-child(10),
-.olt-mac-table td:nth-child(10) {
-  width: 7%;
-}
-
-.olt-mac-table th:nth-child(11),
-.olt-mac-table td:nth-child(11) {
-  width: 8%;
-}
-
-.olt-mac-table th:nth-child(12),
-.olt-mac-table td:nth-child(12) {
+.olt-mac-table th:nth-child(1), .olt-mac-table td:nth-child(1) { width: 5%; }
+.olt-mac-table th:nth-child(2), .olt-mac-table td:nth-child(2) { width: 12%; text-align: left; }
+.olt-mac-table th:nth-child(3), .olt-mac-table td:nth-child(3),
+.olt-mac-table th:nth-child(4), .olt-mac-table td:nth-child(4),
+.olt-mac-table th:nth-child(5), .olt-mac-table td:nth-child(5) { width: 8%; }
+.olt-mac-table th:nth-child(6), .olt-mac-table td:nth-child(6) { width: 13%; text-align: left; }
+.olt-mac-table th:nth-child(7), .olt-mac-table td:nth-child(7) { width: 11%; }
+.olt-mac-table th:nth-child(8), .olt-mac-table td:nth-child(8) { width: 6%; }
+.olt-mac-table th:nth-child(9), .olt-mac-table td:nth-child(9) { width: 7%; }
+.olt-mac-table th:nth-child(10), .olt-mac-table td:nth-child(10) { width: 7%; }
+.olt-mac-table th:nth-child(11), .olt-mac-table td:nth-child(11) { width: 8%; }
+.olt-mac-table th:nth-child(12), .olt-mac-table td:nth-child(12) {
   width: 12%;
   min-width: 140px;
   text-align: left;
   white-space: normal;
   word-break: break-word;
 }
-
-.olt-mac-table th:nth-child(13),
-.olt-mac-table td:nth-child(13) {
-  width: 6%;
-}
+.olt-mac-table th:nth-child(13), .olt-mac-table td:nth-child(13) { width: 6%; }
 
 .olt-mac-table td:nth-child(2),
 .olt-mac-table td:nth-child(6),
@@ -169,34 +111,33 @@
   white-space: nowrap;
 }
 
-.olt-rx-cell .badge {
-  margin-left: 4px;
-}
+.olt-rx-cell .badge { margin-left: 4px; }
+.olt-dereg-cell div+div { margin-top: 2px; }
 
-.olt-dereg-cell div+div {
-  margin-top: 2px;
+.table-responsive{
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
-  .table-responsive{
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
 
 @media (max-width: 991px) {
-  :root {
-    --olt-top-offset: 200px;
+  .olt-mac-wrap{
+    height: auto;
+    min-height: auto;
+    overflow: visible;
   }
-
-  .olt-mac-page .container-fluid {
-   padding-left: 6px;
-   padding-right: 6px;
+  .olt-mac-table-page{
+    gap: 0.75rem;
+    overflow: visible;
   }
-
+  .olt-sticky-header,
+  .olt-filter-bar{
+    position: static;
+  }
+  .olt-table-area{
+    overflow: visible;
+  }
   .olt-table-wrap {
     margin: 8px -6px 0 -6px;
-    max-height: none;
-    top: 0;
-    position: relative;
-    overflow: auto;
   }
 
   .olt-mac-table {
@@ -214,20 +155,7 @@
   }
 }
 
-@media print {
-  .olt-mac-table thead th {
-    position: static;
-    box-shadow: none;
-  }
-
-  .olt-table-wrap {
-    position: -webkit-sticky;
-  }
-}
-
-/* OLT MAC table layout tweaks (desktop-friendly, responsive) */
 @media screen and (max-width: 750px) {
-
   .olt-mac-table{
     table-layout: auto;
     min-width: 1120px;
@@ -245,7 +173,5 @@
   }
   .table-responsive{
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
   }
-
 }

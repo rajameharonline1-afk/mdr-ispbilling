@@ -9,10 +9,10 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
 <!-- (বাংলা) Client view স্টাইল assets/css/custom_modern.css এ রাখা হয়েছে -->
 <link rel="stylesheet" href="/public/css/client_view.css?v=<?= $clientViewCssVer ?>">
 
-<div class="container py-3 text-start">
+<div class="container py-3 text-start page-shell">
 
   <!-- Header -->
-  <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
+  <div class="mb-3 d-flex flex-wrap align-items-center gap-2 client-header">
     <div class="d-flex align-items-center gap-2">
       <div class="header-avatar">
         <?php if ($photo_url): ?>
@@ -31,8 +31,8 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
       </div>
     </div>
 
-    <div class="ms-auto d-flex flex-wrap gap-2">
-      <a href="/public/clients.php" class="btn btn-light btn-sm"><i class="bi bi-arrow-left"></i> Back</a>
+    <div class="ms-auto d-flex flex-wrap client-actions">
+      <a href="/public/clients.php" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Back</a>
       <a href="/public/client_edit.php?id=<?= (int)$client['id'] ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil-square"></i> Edit Info</a>
       <a href="/public/audit_logs.php?client_id=<?= (int)$client['id'] ?>" class="btn btn-outline-dark btn-sm" target="_blank" rel="noopener"><i class="bi bi-clock-history"></i> Logs</a>
       <?php if (!$isLeft): ?>
@@ -52,10 +52,10 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
     </div>
   <?php endif; ?>
 
-  <div class="row g-3">
+  <div class="row g-3 client-grid">
 
     <!-- Account Information -->
-    <div class="col-12 col-lg-4">
+    <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title">Account Information</div>
         <div class="table-responsive p-2">
@@ -96,7 +96,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
     </div>
 
     <!-- Billing Information -->
-    <div class="col-12 col-lg-4">
+    <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title d-flex justify-content-between align-items-center">Billing Information<span class="badge <?= $badge ?>"><?= $stLabel ?></span></div>
         <div class="table-responsive p-2">
@@ -159,7 +159,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
     </div>
 
     <!-- Server Information -->
-    <div class="col-12 col-lg-4">
+    <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title">Server Information</div>
         <div class="table-responsive p-2">
@@ -220,7 +220,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
               </tr> -->
               <tr><td class="k"><i class="bi bi-cpu"></i> Vendor</td><td class="v" id="device-vendor"><?= $device_vendor ? h($device_vendor) : '—' ?></td></tr>
               <tr><td class="k"><i class="bi bi-pc-display"></i> IP Address</td><td class="v mono" id="live-ip"><?= h($live_ip) ?></td></tr>
-              <tr><td class="k"><i class="bi bi-stopwatch"></i> Uptime</td><td class="v" id="uptime">—</td></tr>
+              <tr><td class="k"><i class="bi bi-stopwatch"></i> Uptime</td><td class="v" id="uptime"><?= h($uptime_display) ?></td></tr>
               <tr>
                 <td class="k"><i class="bi bi-wifi"></i> Status</td>
                 <td class="v"><span id="live-status" class="badge <?= $is_online?'bg-success':'bg-danger' ?>"><?= $is_online?'Online':'Offline' ?></span></td>
@@ -228,7 +228,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
               <tr><td class="k"><i class="bi bi-alarm"></i>Last Logout</td><td class="v" id="last-seen"><?= h($last_seen) ?></td></tr>
               <tr>
                 <td class="k"><i class="bi bi-bar-chart-line"></i> Data Used</td>
-                <td class="v"><span id="total-dl">—</span> Download <br> <span id="total-ul">—</span> Upload</td>
+                <td class="v"><span id="total-dl"><?= h($data_dl_text) ?></span> Download <br> <span id="total-ul"><?= h($data_ul_text) ?></span> Upload</td>
               </tr>
             </tbody>
           </table>
@@ -248,7 +248,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
     </div>
 
     <!-- OLT Information -->
-    <div class="col-12 col-lg-4 mt-3 mt-lg-0">
+    <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title">OLT Information</div>
         <div class="table-responsive p-2">

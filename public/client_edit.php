@@ -21,6 +21,26 @@ function db_has_column(string $table, string $column): bool {
     return isset($cache[$table][$column]);
 }
 
+function db_enum_values(string $table, string $column): array {
+    try {
+        $st = db()->prepare("SHOW COLUMNS FROM `{$table}` LIKE ?");
+        $st->execute([$column]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        return [];
+    }
+    if (!$row) return [];
+    $type = (string)($row['Type'] ?? '');
+    if (!preg_match('/^enum\((.*)\)$/i', $type, $m)) return [];
+    $vals = str_getcsv($m[1], ',', "'");
+    $out = [];
+    foreach ($vals as $v) {
+        $v = trim($v);
+        if ($v !== '') $out[] = $v;
+    }
+    return $out;
+}
+
 function ensure_option_present(array $options, string $value): array {
     $value = trim($value);
     if ($value !== '' && !in_array($value, $options, true)) {
@@ -334,12 +354,44 @@ $HAS_PHOTO_URL   = db_has_column('clients','photo_url');
 $HAS_PPPOE_PASS  = db_has_column('clients','pppoe_pass');
 $HAS_JOIN_DATE   = db_has_column('clients','join_date');
 $HAS_UPDATED_AT  = db_has_column('clients','updated_at');
+$HAS_EXPIRY_DATE = db_has_column('clients','expiry_date');
+$HAS_EXPIRE_DATE = db_has_column('clients','expire_date');
+
+$client_expiry = '';
+if ($HAS_EXPIRY_DATE) {
+    $client_expiry = trim((string)($client['expiry_date'] ?? ''));
+}
+if ($client_expiry === '' && $HAS_EXPIRE_DATE) {
+    $client_expiry = trim((string)($client['expire_date'] ?? ''));
+}
+if ($client_expiry !== '' || $HAS_EXPIRE_DATE) {
+    $client['expiry_date'] = $client_expiry;
+}
+$EXPIRY_COLS = [];
+if ($HAS_EXPIRY_DATE) $EXPIRY_COLS[] = 'expiry_date';
+if ($HAS_EXPIRE_DATE) $EXPIRY_COLS[] = 'expire_date';
 
 $pdoOptions      = db();
 $area_options    = location_option_list($pdoOptions, 'area');
 $subzone_options = $HAS_SUB_ZONE ? location_option_list($pdoOptions, 'sub_zone') : [];
 $box_options     = $HAS_BOX ? location_option_list($pdoOptions, 'box') : [];
 $LOC_CSRF        = csrf_ensure_token();
+
+$status_values = db_enum_values('clients', 'status');
+if (!$status_values) {
+    $status_values = ['active','inactive','pending','hold','disabled','blocked','expired'];
+}
+$status_values = array_values(array_unique(array_map('strtolower', $status_values)));
+$status_labels = [
+    'active' => 'Active',
+    'inactive' => 'Inactive',
+    'pending' => 'Pending',
+    'expired' => 'Expired',
+    'hold' => 'Hold',
+    'disabled' => 'Disabled',
+    'blocked' => 'Blocked',
+    'left' => 'Left',
+];
 
 $pppoe_pass_display = $HAS_PPPOE_PASS ? (string)($client['pppoe_pass'] ?? '') : '';
 if ($HAS_PPPOE_PASS && $pppoe_pass_display === '') {
@@ -392,8 +444,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $package_id   = intval($_POST['package_id'] ?? $client['package_id']);
     $router_id    = intval($_POST['router_id']  ?? $client['router_id']);
     $monthly_bill = is_numeric($_POST['monthly_bill'] ?? null) ? (0+$_POST['monthly_bill']) : (0+$client['monthly_bill']);
-    $expiry_date  = normalize_day_only_date((string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? '')));
-    $status       = trim($_POST['status'] ?? $client['status']);
+    $expiry_input = trim((string)($_POST['expiry_date'] ?? ''));
+    $expiry_date  = $expiry_input !== '' ? normalize_day_only_date($expiry_input) : '';
+    $status       = strtolower(trim($_POST['status'] ?? ($client['status'] ?? '')));
     $prev_expiry  = (string)($client['expiry_date'] ?? '');
     $join_date    = trim($_POST['join_date'] ?? ($client['join_date'] ?? ''));
     $client_code  = $HAS_CLIENT_CODE ? trim((string)($_POST['client_code'] ?? ($client['client_code'] ?? ''))) : '';
@@ -410,6 +463,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($pppoe_id === '')    $errors[] = 'PPPoE username is required.';
     if ($package_id <= 0)    $errors[] = 'Please select a package.';
     if ($monthly_bill < 0)   $errors[] = 'Monthly bill is invalid.';
+    if ($expiry_input !== '' && $expiry_date === '') $errors[] = 'Expiry date is invalid.';
+    if ($expiry_input !== '' && !$EXPIRY_COLS) $errors[] = 'Expiry date column is missing in database.';
+    if ($status !== '' && !in_array($status, $status_values, true)) $errors[] = 'Invalid status.';
+    if ($status === '') $status = strtolower(trim((string)($client['status'] ?? '')));
+    $router_id_db = $router_id > 0 ? $router_id : null;
 
     // duplicate mobile / PPPoE checks skipped per requirement
 
@@ -433,7 +491,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'package_id = :package_id',
             'router_id = :router_id',
             'monthly_bill = :monthly_bill',
-            'expiry_date = :expiry_date',
             'status = :status'
         ];
         $params = [
@@ -442,8 +499,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ':email'=>($email==='') ? null : $email,
             ':address'=>($address==='') ? null : $address,
             ':area'=>$area,
-            ':pppoe_id'=>$pppoe_id, ':package_id'=>$package_id, ':router_id'=>$router_id,
-            ':monthly_bill'=>$monthly_bill, ':expiry_date'=>$expiry_date ?: null, ':status'=>$status,
+            ':pppoe_id'=>$pppoe_id, ':package_id'=>$package_id, ':router_id'=>$router_id_db,
+            ':monthly_bill'=>$monthly_bill, ':status'=>$status,
             ':id'=>$client_id
         ];
         if ($HAS_CLIENT_CODE && $client_code !== '') { $sets[] = 'client_code = :client_code'; $params[':client_code'] = $client_code; }
@@ -454,6 +511,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($HAS_PPPOE_PASS)  { $sets[] = 'pppoe_pass = :pppoe_pass';  $params[':pppoe_pass'] = $pppoe_pass; }
         if ($HAS_PHOTO_URL)   { $sets[] = 'photo_url = :photo_url';    $params[':photo_url']  = $new_photo_url; }
         if ($HAS_UPDATED_AT)  { $sets[] = 'updated_at = NOW()'; }
+        if ($expiry_date !== '') {
+            if ($HAS_EXPIRY_DATE) { $sets[] = 'expiry_date = :expiry_date'; $params[':expiry_date'] = $expiry_date; }
+            if ($HAS_EXPIRE_DATE) { $sets[] = 'expire_date = :expire_date'; $params[':expire_date'] = $expiry_date; }
+        }
 
         $pdoSave = db();
         $pdoSave->beginTransaction();
@@ -485,6 +546,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'expiry_date' => $client['expiry_date'] ?? null,
             'status' => $client['status'] ?? null,
         ];
+        $effective_expiry = $expiry_date !== '' ? $expiry_date : ($prev_expiry !== '' ? $prev_expiry : null);
         $newData = [
             'id' => $new_client_id,
             'client_code' => $client_code !== '' ? $client_code : null,
@@ -497,9 +559,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'box' => $HAS_BOX ? $box : ($client['box'] ?? null),
             'pppoe_id' => $pppoe_id,
             'package_id' => $package_id,
-            'router_id' => $router_id,
+            'router_id' => $router_id_db,
             'monthly_bill' => $monthly_bill,
-            'expiry_date' => $expiry_date ?: null,
+            'expiry_date' => $effective_expiry,
             'status' => $status,
         ];
         if ($HAS_PPPOE_PASS && $pppoe_pass !== $prevPppoePass) {
@@ -529,6 +591,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (array_key_exists($field, $chgNew)) { $commentChanged = true; break; }
         }
 
+        $expiry_for_comment = $expiry_date !== '' ? $expiry_date : $prev_expiry;
         $needsSecretSync = $router_id && $pppoe_id !== '' && ($routerChanged || $pppoeChanged || $passChanged || $packageChanged || $commentChanged || !$prevRouterId);
         $pkg = null;
         if (($needsSecretSync || $packageChanged) && $package_id) {
@@ -550,7 +613,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $comment = build_mt_comment([
-                'client_code' => $client['client_code'] ?? '',
+                'client_code' => $client_code !== '' ? $client_code : ($client['client_code'] ?? ''),
                 'pppoe_id' => $pppoe_id,
                 'name' => $name,
                 'mobile' => $mobile,
@@ -559,7 +622,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'join_date' => $HAS_JOIN_DATE ? $join_date : '',
                 'package_name' => $pkgName,
                 'monthly_bill' => (string)$monthly_bill,
-                'expiry_date' => (string)$expiry_date,
+                'expiry_date' => (string)$expiry_for_comment,
             ]);
             $syncPass = $HAS_PPPOE_PASS ? ($pppoe_pass === '' ? null : $pppoe_pass) : null;
             $secret = mikrotik_ensure_pppoe_secret((int)$router_id, $pppoe_id, $syncPass, $profileName, ['comment'=>$comment]);
@@ -611,11 +674,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($successNotes)) {
             $notice .= ' '.implode(' ', $successNotes);
         }
+
+        // PRG: redirect after POST to avoid resubmission prompt
+        $_SESSION['flash_notice'] = $notice;
+        header('Location: /public/client_edit.php?id='.(int)$client_id);
+        exit;
     }
 }
 
 /* --------- UI helpers --------- */
+if ($notice === null && isset($_SESSION['flash_notice'])) {
+    $notice = $_SESSION['flash_notice'];
+    unset($_SESSION['flash_notice']);
+}
 $photo_url = $HAS_PHOTO_URL ? trim($client['photo_url'] ?? '') : '';
+if ($photo_url === '/assets/img/avatar_placeholder.png') {
+    $photo_url = '';
+}
+if ($photo_url !== '' && str_starts_with($photo_url, '/uploads/clients/')) {
+    $abs = realpath(__DIR__ . '/..' . $photo_url);
+    if (!$abs || !is_file($abs)) {
+        $photo_url = '';
+    }
+}
 $client_initial = mb_strtoupper(mb_substr($client['name'] ?? '?', 0, 1, 'UTF-8'));
 
 include __DIR__ . '/../partials/partials_header.php';
@@ -650,15 +731,15 @@ include __DIR__ . '/../partials/partials_header.php';
       </div>
     </div>
     <div class="ms-auto d-flex flex-wrap gap-2">
-      <a href="/public/client_view.php?id=<?= (int)$client['id'] ?>" class="btn btn-light btn-sm"><i class="bi bi-eye"></i> View</a>
-      <a href="/public/clients.php" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Back</a>
+      <a href="/public/client_view.php?id=<?= (int)$client['id'] ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-eye"></i> View</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php"><i class="bi bi-arrow-left"></i> Back</a>
     </div>
   </div>
 
   <?php if ($errors): ?>
     <div class="alert alert-danger"><i class="bi bi-exclamation-triangle"></i> <?= h(implode(' | ', $errors)) ?></div>
   <?php elseif ($notice): ?>
-    <div class="alert alert-success"><i class="bi bi-check2-circle"></i> <?= h($notice) ?></div>
+    <div class="alert alert-success" id="pageNotice"><i class="bi bi-check2-circle"></i> <?= h($notice) ?></div>
   <?php endif; ?>
 
   <?php if (!$HAS_PHOTO_URL): ?>
@@ -784,7 +865,7 @@ include __DIR__ . '/../partials/partials_header.php';
                     <?php if ($photo_url): ?>
                       <img id="photoPreview" src="<?= h($photo_url) ?>" alt="Photo" style="width:100%;height:100%;object-fit:cover">
                     <?php else: ?>
-                      <img id="photoPreview" src="/assets/img/avatar_placeholder.png" alt="Photo" style="width:100%;height:100%;object-fit:cover">
+                      <img id="photoPreview" src="/assets/images/default-avatar.png" alt="Photo" style="width:100%;height:100%;object-fit:cover">
                     <?php endif; ?>
                   </div>
                   <div class="flex-grow-1">
@@ -829,7 +910,8 @@ include __DIR__ . '/../partials/partials_header.php';
             <div class="mb-2">
               <label class="form-label">Expiry Date</label>
               <?php
-                $exp_raw = (string)($_POST['expiry_date'] ?? ($client['expiry_date'] ?? ''));
+                $exp_raw = trim((string)($_POST['expiry_date'] ?? ''));
+                if ($exp_raw === '') $exp_raw = (string)($client['expiry_date'] ?? '');
                 $exp_display = '';
                 if ($exp_raw !== '') {
                   $ts = strtotime($exp_raw);
@@ -847,10 +929,13 @@ include __DIR__ . '/../partials/partials_header.php';
               <label class="form-label">Status</label>
               <select name="status" class="form-select form-select-sm">
                 <?php
-                  $opts = ['active'=>'Active','inactive'=>'Inactive','pending'=>'Pending','hold'=>'Hold','disabled'=>'Disabled','blocked'=>'Blocked','expired'=>'Expired'];
-                  $cur  = strtolower(trim($client['status'] ?? 'active'));
-                  foreach($opts as $k=>$v){
-                    echo '<option value="'.h($k).'"'.($cur===$k?' selected':'').'>'.h($v).'</option>';
+                  $cur  = strtolower(trim($_POST['status'] ?? ($client['status'] ?? 'active')));
+                  if (!in_array($cur, $status_values, true)) {
+                    $cur = strtolower(trim($client['status'] ?? 'active'));
+                  }
+                  foreach($status_values as $k){
+                    $label = $status_labels[$k] ?? ucwords(str_replace('_',' ', $k));
+                    echo '<option value="'.h($k).'"'.($cur===$k?' selected':'').'>'.h($label).'</option>';
                   }
                 ?>
               </select>
@@ -965,8 +1050,24 @@ document.getElementById('photo')?.addEventListener('change', function(){
 });
 </script>
 
+<?php if ($notice): ?>
 <script>
 (function(){
+  const msg = <?= json_encode($notice, JSON_UNESCAPED_UNICODE) ?>;
+  window.addEventListener('load', () => {
+    if (window.globalToast) {
+      window.globalToast(msg, 'success', 3500, 'Success');
+      const alertEl = document.getElementById('pageNotice');
+      if (alertEl) alertEl.style.display = 'none';
+    }
+  });
+})();
+</script>
+<?php endif; ?>
+
+<script>
+(function(){
+  const HAS_SUB_ZONE = <?= json_encode((bool)$HAS_SUB_ZONE) ?>;
   const typeLabels = {area:'Area', sub_zone:'Sub Zone', box:'Box'};
   const csrf = <?= json_encode($LOC_CSRF, JSON_UNESCAPED_UNICODE) ?>;
   let currentType = null;
@@ -1071,7 +1172,7 @@ document.getElementById('photo')?.addEventListener('change', function(){
   }
 
   parentAreaSelect?.addEventListener('change', () => {
-    if (currentType === 'box') {
+    if (currentType === 'box' && HAS_SUB_ZONE) {
       populateParentSub(parentAreaSelect.value || '', '');
     }
   });
@@ -1080,6 +1181,9 @@ document.getElementById('photo')?.addEventListener('change', function(){
     if (modalInstance) return modalInstance;
     const bs = window.bootstrap || null;
     if (!modalEl || !bs || !bs.Modal) return null;
+    if (modalEl.parentElement !== document.body) {
+      document.body.appendChild(modalEl);
+    }
     modalInstance = new bs.Modal(modalEl);
     return modalInstance;
   }
@@ -1096,7 +1200,7 @@ document.getElementById('photo')?.addEventListener('change', function(){
     form?.reset();
     clearNotice();
     const showArea = (type === 'sub_zone' || type === 'box');
-    const showSub = (type === 'box');
+    const showSub = (type === 'box' && HAS_SUB_ZONE);
     parentAreaWrap?.classList.toggle('d-none', !showArea);
     parentSubWrap?.classList.toggle('d-none', !showSub);
     if (showArea) {
@@ -1148,8 +1252,9 @@ document.getElementById('photo')?.addEventListener('change', function(){
     noticeEl.classList.remove('text-success', 'text-danger', 'text-muted');
   }
 
-  async function submitValue(type, label, details){
+  async function submitValue(type, label, details, btn){
     try {
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
       const payload = {type, label, details, csrf_token: csrf};
       if (type !== 'area' && parentAreaSelect && !parentAreaWrap?.classList.contains('d-none')) {
         payload.parent_area = parentAreaSelect.value || '';
@@ -1159,27 +1264,32 @@ document.getElementById('photo')?.addEventListener('change', function(){
       }
       const res = await fetch('/ajax/location_options.php', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        credentials: 'same-origin',
+        headers: {'Content-Type':'application/json','X-CSRF-Token': csrf},
         body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to save');
       areaCache = null;
       subZoneCache = null;
-      await refreshSelect(type, data.value || label);
-      setNotice(`Saved: ${(data.value || label).trim()}.`, 'success');
+      const savedVal = data.value || data?.data?.value || label;
+      await refreshSelect(type, savedVal);
+      setNotice(`Saved: ${(savedVal || '').trim()}.`, 'success');
       notify('Updated successfully.', 'success', 'Success');
       const modal = ensureModal();
       modal?.hide();
       form?.reset();
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
     } catch (err) {
       const msg = err?.message || 'Could not save option.';
       setNotice(msg, 'error');
       notify(msg, 'danger', 'Error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
     }
   }
 
-  saveBtn?.addEventListener('click', () => {
+  function handleSave(evt){
+    evt?.preventDefault();
     const type = currentType;
     const label = (labelInput?.value ?? '').trim();
     const details = (detailInput?.value ?? '').trim();
@@ -1201,15 +1311,18 @@ document.getElementById('photo')?.addEventListener('change', function(){
         parentAreaSelect.focus();
         return;
       }
-      if (parentSubSelect && !parentSubSelect.value) {
+      if (HAS_SUB_ZONE && parentSubSelect && !parentSubSelect.value) {
         setNotice('Please select a sub zone.', 'error');
         notify('Please select a sub zone.', 'warning', 'Notice');
         parentSubSelect.focus();
         return;
       }
     }
-    submitValue(type, label, details);
-  });
+    submitValue(type, label, details, saveBtn);
+  }
+
+  form?.addEventListener('submit', handleSave);
+  saveBtn?.addEventListener('click', handleSave);
 
   document.querySelectorAll('[data-loc-add]').forEach(btn => {
     btn.addEventListener('click', () => {

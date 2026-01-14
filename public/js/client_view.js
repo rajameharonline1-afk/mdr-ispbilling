@@ -243,11 +243,18 @@ function loadLiveStatus(){
       const rBtn   = document.getElementById('btn-copy-router');
       const aBtn   = document.getElementById('btn-copy-active');
 
-      const rmac = (d.router_mac && d.router_mac.trim()!=='') ? d.router_mac : (d.caller_id || '—');
-      const amac = (d.active_mac && d.active_mac.trim()!=='') ? d.active_mac : (d.caller_id || '—');
+      const rmac = (d.router_mac && d.router_mac.trim()!=='') ? d.router_mac : (d.arp_mac || d.caller_id || '—');
+      const amac = (d.active_mac && d.active_mac.trim()!=='') ? d.active_mac : (d.caller_id || d.arp_mac || '—');
 
-      if (rmacEl) rmacEl.textContent = rmac || '—';
-      if (amacEl) amacEl.textContent = amac || '—';
+      const keepText = (el) => el && el.textContent && el.textContent.trim() && el.textContent.trim() !== '—';
+      if (rmacEl){
+        if (rmac && rmac !== '—') rmacEl.textContent = rmac;
+        else if (!keepText(rmacEl)) rmacEl.textContent = '—';
+      }
+      if (amacEl){
+        if (amac && amac !== '—') amacEl.textContent = amac;
+        else if (!keepText(amacEl)) amacEl.textContent = '—';
+      }
 
       if (rBtn){
         if (rmac && rmac!=='—'){ rBtn.style.display=''; rBtn.setAttribute('data-copy', rmac); rBtn.removeAttribute('data-copy-el'); }
@@ -274,11 +281,21 @@ function loadLiveStatus(){
       const namePill = document.getElementById('name-online');
       const binding = d.olt_binding;
 
-      if(ip) ip.textContent = (d.ip ?? '—');
-      if(up) up.textContent = (d.uptime ?? '—');
-      if(ls) ls.textContent = (d.last_seen ?? '—');
-      if(dl) dl.textContent = (d.total_download_gb!=null ? d.total_download_gb+' GB' : '—');
-      if(ul) ul.textContent = (d.total_upload_gb!=null   ? d.total_upload_gb  +' GB' : '—');
+      const keep = (el) => el && el.textContent && el.textContent.trim() && el.textContent.trim() !== '—';
+      const setOrKeep = (el, val, fmt=(v)=>v) => {
+        if(!el) return;
+        if(val !== null && val !== undefined && String(val).trim() !== ''){
+          el.textContent = fmt(val);
+        } else if(!keep(el)) {
+          el.textContent = '—';
+        }
+      };
+
+      setOrKeep(ip, d.ip);
+      setOrKeep(up, d.uptime);
+      setOrKeep(ls, d.last_seen);
+      setOrKeep(dl, d.total_download_gb, (v)=>v+' GB');
+      setOrKeep(ul, d.total_upload_gb, (v)=>v+' GB');
       if(rx) rx.textContent = d.rx_rate || '0 Kbps';
       if(tx) tx.textContent = d.tx_rate || '0 Kbps';
       updateRxDisplay(d.rx_power_dbm);

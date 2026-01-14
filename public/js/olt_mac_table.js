@@ -35,32 +35,106 @@
 })();
 
 (() => {
-  const form = document.getElementById('clientCodeSearchForm');
-  const input = document.getElementById('clientCodeInput');
-  if (!form || !input) return;
+  const filterForm = document.getElementById('oltFiltersForm');
+  const clientForm = document.getElementById('clientCodeSearchForm');
+  const clientInput = document.getElementById('clientCodeInput');
+  const oltSelect = filterForm?.querySelector('select[name="olt_id"]');
+  const ponSelect = filterForm?.querySelector('select[name="pon"]');
+  const tableArea = document.querySelector('.olt-table-area');
+  const summaryWrap = document.getElementById('oltSummary');
+  if (!filterForm || !clientForm || !clientInput || !tableArea || !oltSelect) return;
+
   let timer = null;
-  let lastSubmitted = input.value.trim();
-  const submit = () => {
-    const val = input.value.trim();
-    if (val === lastSubmitted) return;
-    lastSubmitted = val;
-    if (typeof form.requestSubmit === 'function') {
-      form.requestSubmit();
+
+  function setTable(html) {
+    tableArea.innerHTML = html || '<div class="p-4 text-center text-muted">কোনো ডেটা পাওয়া যায়নি।</div>';
+  }
+
+  function setSummary(html) {
+    if (summaryWrap) summaryWrap.innerHTML = html || '';
+  }
+
+  function syncPonOptions(options, current, clearSelection = false) {
+    if (!ponSelect) return;
+    const opts = Array.isArray(options) ? options : [];
+    const prev = clearSelection ? '0' : (ponSelect.value || '0');
+    ponSelect.innerHTML = '<option value="0" disabled>PON সিলেক্ট করুন</option>';
+    opts.forEach(val => {
+      const v = String(val);
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = 'PON ' + v;
+      ponSelect.appendChild(opt);
+    });
+    if (opts.length === 0) {
+      ponSelect.value = '0';
+      ponSelect.setAttribute('disabled', 'disabled');
     } else {
-      form.submit();
+      ponSelect.removeAttribute('disabled');
+      if (!clearSelection && opts.includes(Number(prev))) {
+        ponSelect.value = prev;
+      } else if (current && opts.includes(Number(current))) {
+        ponSelect.value = String(current);
+      } else {
+        ponSelect.value = '0';
+      }
     }
-  };
-  input.addEventListener('input', () => {
+  }
+
+  async function fetchTable() {
+    const oltId = parseInt(oltSelect.value || '0', 10) || 0;
+    const ponVal = ponSelect ? (parseInt(ponSelect.value || '0', 10) || 0) : 0;
+    const code = (clientInput.value || '').trim();
+
+    if (oltId <= 0) {
+      syncPonOptions([], 0, true);
+      setSummary('');
+      setTable('<div class="p-4 text-center text-muted">দয়া করে প্রথমে OLT সিলেক্ট করুন।</div>');
+      return;
+    }
+
+    setTable('<div class="p-4 text-center text-muted">লোড হচ্ছে…</div>');
+    try {
+      const params = new URLSearchParams({ ajax: '1', olt_id: String(oltId) });
+      if (ponVal > 0) params.append('pon', String(ponVal));
+      if (code !== '') params.append('client_code', code);
+      const res = await fetch('/public/olt_mac_table.php?' + params.toString(), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        cache: 'no-store',
+        credentials: 'same-origin'
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) throw new Error(data?.error || 'লোড ব্যর্থ হয়েছে');
+      syncPonOptions(data.pon_options || [], ponVal);
+      setTable(data.html || '<div class="p-4 text-center text-muted">কোনো ডেটা পাওয়া যায়নি।</div>');
+      setSummary(data.summary || '');
+    } catch (err) {
+      setTable('<div class="p-4 text-center text-danger">' + (err?.message || 'লোড ব্যর্থ হয়েছে') + '</div>');
+    }
+  }
+
+  function debounceFetch() {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(submit, 400);
+    timer = setTimeout(fetchTable, 350);
+  }
+
+  oltSelect.addEventListener('change', () => {
+    if (ponSelect) {
+      ponSelect.value = '0';
+    }
+    debounceFetch();
   });
-  input.addEventListener('keydown', (e) => {
+  ponSelect?.addEventListener('change', debounceFetch);
+  clientInput.addEventListener('input', debounceFetch);
+  clientInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (timer) clearTimeout(timer);
-      submit();
+      debounceFetch();
     }
   });
+
+  clientForm.addEventListener('submit', (e) => e.preventDefault());
+  filterForm.addEventListener('submit', (e) => e.preventDefault());
 })();
 
 (() => {

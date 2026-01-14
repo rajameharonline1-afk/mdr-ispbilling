@@ -46,6 +46,20 @@ function location_option_ensure_table(PDO $pdo): void {
     } catch (Throwable $e) {
         // ignore if not exists
     }
+    try {
+        $col = $pdo->query("SHOW COLUMNS FROM `client_location_options` LIKE 'type'")->fetch(PDO::FETCH_ASSOC);
+        $colType = is_array($col) ? ($col['Type'] ?? '') : '';
+        $needs = is_string($colType) && (
+            strpos($colType, "'area'") === false ||
+            strpos($colType, "'sub_zone'") === false ||
+            strpos($colType, "'box'") === false
+        );
+        if ($needs) {
+            $pdo->exec("ALTER TABLE `client_location_options` MODIFY COLUMN `type` ENUM('area','sub_zone','box') NOT NULL");
+        }
+    } catch (Throwable $e) {
+        // ignore if not possible
+    }
     $ensured = true;
 }
 
