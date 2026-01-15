@@ -1,6 +1,19 @@
+# Dependencies
+/vendor/
+
+# Logs and Storage
 /storage/logs/*.log
-vendor/
-storage/logs/*.log
-backups/*.sql
-app/config.php
+*.log
+
+# Backups and Large Files
+*.sql
+*.tar.gz
+*.zip
+backups/
+
+# Configuration and Environment
 .env
+app/config.php
+
+# OS files
+.DS_Store
