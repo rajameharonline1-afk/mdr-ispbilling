@@ -18,7 +18,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/css/client_view.css') ?: time();
         <?php if ($photo_url): ?>
           <img src="<?= h($photo_url) ?>" referrerpolicy="no-referrer" alt="<?= h($client['name'] ?? 'Photo') ?>">
         <?php else: ?>
-          <div class="avatar-fallback"><?= h($client_initial) ?></div>
+          <img id="photoPreview" src="/assets/images/default-avatar.png" alt="Photo" style="width:100%;height:100%;object-fit:cover">
         <?php endif; ?>
       </div>
       <div class="d-flex flex-column">

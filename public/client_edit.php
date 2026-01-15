@@ -711,7 +711,7 @@ include __DIR__ . '/../partials/partials_header.php';
         <?php if ($photo_url): ?>
           <img id="topPreview" src="<?= h($photo_url) ?>" alt="<?= h($client['name'] ?? 'Photo') ?>">
         <?php else: ?>
-          <div class="avatar-fallback"><?= h($client_initial) ?></div>
+          <img id="photoPreview" src="/assets/images/default-avatar.png" alt="Photo" style="width:100%;height:100%;object-fit:cover">
         <?php endif; ?>
       </div>
       <div class="d-flex align-items-center gap-2">
