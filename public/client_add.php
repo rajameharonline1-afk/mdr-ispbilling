@@ -626,7 +626,7 @@ window.CLIENT_ADD_BOOT = {
 
 
 
-<div class="container-fluid py-3 text-start">
+<div class="container-fluid py-3 text-start client-add-shell">
   <div class="mb-3 d-flex justify-content-between align-items-center">
     <h6 class="mb-0"><i class="bi bi-person-plus"></i> Add Client</h6>
     <div class="d-flex gap-2">
@@ -719,31 +719,34 @@ window.CLIENT_ADD_BOOT = {
             </div>
 
             <?php if ($HAS_SUB_ZONE): ?>
-            <?php $form_sub = (string)($_POST['sub_zone'] ?? ''); $sub_opts = ensure_option_present($subzone_options, $form_sub); ?>
+            <?php $form_sub = isset($_POST['sub_zone']) ? (string)$_POST['sub_zone'] : (string)($client['sub_zone'] ?? ''); $sub_opts_form = ensure_option_present($subzone_options, $form_sub); ?>
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Sub Zone</label>
-                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="sub_zone"><i class="fa-sharp-duotone fa-light fa-plus"></i></button>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="sub_zone" title="Add Sub Zone" style="text-decoration:none;">
+                  <i class="fa-sharp-duotone fa-light fa-plus"></i>
+                </button>
               </div>
               <select name="sub_zone" class="form-select form-select-sm" data-loc-type="sub_zone" required>
                 <option value="">Select</option>
-                <?php foreach ($sub_opts as $opt): $opt=(string)$opt; ?>
+                <?php foreach ($sub_opts_form as $opt): $opt=(string)$opt; ?>
                   <option value="<?= h($opt) ?>" <?= $form_sub===$opt?'selected':'' ?>><?= h($opt) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
             <?php endif; ?>
-
             <?php if ($HAS_BOX): ?>
-            <?php $form_box = (string)($_POST['box'] ?? ''); $box_opts = ensure_option_present($box_options, $form_box); ?>
+            <?php $form_box = isset($_POST['box']) ? (string)$_POST['box'] : (string)($client['box'] ?? ''); $box_opts_form = ensure_option_present($box_options, $form_box); ?>
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0 req">Box</label>
-                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="box"><i class="fa-sharp-duotone fa-light fa-plus"></i></button>
+                <button type="button" class="btn btn-outline-primary btn-sm py-0" data-loc-add="box" title="Add Box" style="text-decoration:none;">
+                  <i class="fa-sharp-duotone fa-light fa-plus"></i>
+                </button>
               </div>
               <select name="box" class="form-select form-select-sm" data-loc-type="box" required>
                 <option value="">Select</option>
-                <?php foreach ($box_opts as $opt): $opt=(string)$opt; ?>
+                <?php foreach ($box_opts_form as $opt): $opt=(string)$opt; ?>
                   <option value="<?= h($opt) ?>" <?= $form_box===$opt?'selected':'' ?>><?= h($opt) ?></option>
                 <?php endforeach; ?>
               </select>

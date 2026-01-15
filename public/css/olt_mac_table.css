@@ -2,14 +2,34 @@
 
 :root {
   --olt-top-offset: 128px;
+  --olt-border: #e5e7eb;
+  --olt-muted: #4b5563;
+  --olt-surface: #ffffff;
+}
+
+/* Shell + backdrop */
+.olt-mac-shell{
+  background:
+    radial-gradient(900px 520px at 10% 10%, rgba(59, 130, 246, 0.12), transparent 60%),
+    radial-gradient(880px 520px at 90% 12%, rgba(16, 185, 129, 0.12), transparent 60%),
+    #f3f4f6;
+  border: 1px solid var(--olt-border);
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+  padding: 1rem 1.25rem 1.25rem;
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* Layout: keep header/filters fixed, only table area scrolls */
-.olt-mac-wrap{
-  height: calc(100vh - var(--topbar-h));
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+.olt-table-wrap {
+  position: relative;
+  overflow-y: auto; /* ওপর-নিচে স্ক্রল করার জন্য */
+  max-height: 550px; /* একটি নির্দিষ্ট উচ্চতা দিন (আপনার প্রয়োজন মতো) */
+  border: 1px solid var(--olt-border);
+  border-radius: 12px;
 }
 
 .olt-mac-table-page{
@@ -18,44 +38,20 @@
   flex-direction: column;
   gap: 1rem;
   overflow: hidden;
+  max-width: 100%;
 }
 
 .olt-sticky-header{
   position: sticky;
   top: 0;
   z-index: 6;
+  background: transparent;
 }
 
-.olt-filter-bar{
-  position: sticky;
-  top: 0;
-  z-index: 7;
-}
-.olt-filter-bar .card{
-  box-shadow: 0 4px 18px rgba(0,0,0,0.08);
-  margin-bottom: 0;
-}
-.olt-filter-bar .card-header{ border-bottom: none; }
-
-.olt-table-area{
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding-top: 0.25rem;
-}
-
-.olt-table-wrap {
-  position: relative;
-  overflow-y: auto;
-  overflow-x: auto;
-  border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
-  margin: 8px -12px 0 -12px;
-  padding-top: 0;
-  background: #fff;
-}
 
 .olt-mac-table thead th {
+  position: sticky; /* এটি হেডারকে এক জায়গায় আটকে রাখবে */
+  top: 0;           /* স্ক্রিন বা কন্টেইনারের একদম উপরে আটকে থাকবে */
   z-index: 30;
   background: #1f2937;
   color: #fff;
@@ -66,9 +62,9 @@
   font-size: 0.82rem;
   line-height: 1.15;
 }
-
-.olt-mac-table tbody tr:nth-child(even) td {
-  background: #f3f6fb;
+.olt-mac-table tbody tr:hover td{
+  background: #eef6ff;
+  transition: background 0.15s ease;
 }
 
 .olt-mac-table code { color: #b91c1c; }
@@ -173,5 +169,25 @@
   }
   .table-responsive{
     overflow-x: auto;
+  }
+}
+
+@media (max-width: 575.98px){
+  .olt-mac-shell{
+    padding: 0.75rem;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(15,23,42,0.12);
+    max-width: 100%;
+  }
+  .olt-table-wrap{
+    margin: 8px 0 0 0;
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 768px){
+  .olt-filter-bar .row > [class*="col-"]{
+    flex: 0 0 100%;
+    max-width: 100%;
   }
 }

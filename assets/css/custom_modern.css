@@ -46,7 +46,6 @@ body {
   background: var(--bg-base);
   min-height: 100vh;
   width: 100%;
-  overflow-x: hidden;
 }
 
 body.app-shell {
@@ -57,7 +56,6 @@ body.app-shell {
     var(--bg-base);
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 h1, h2, h3, h4, h5, h6,
@@ -101,6 +99,7 @@ h1, h2, h3, h4, h5, h6,
   height: calc(100vh - var(--topbar-h));
   overflow: auto;
   animation: content-fade 0.4s ease forwards;
+
 }
 
 @keyframes content-fade {

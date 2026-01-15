@@ -701,18 +701,10 @@ $client_initial = mb_strtoupper(mb_substr($client['name'] ?? '?', 0, 1, 'UTF-8')
 
 include __DIR__ . '/../partials/partials_header.php';
 ?>
-<style>
-.card-block{ border:1px solid #dfe3e8; border-radius:.75rem; background:#f5f6f8; }
-.card-block .card-title{ font-weight:700; padding:.65rem .9rem; border-bottom:1px solid #dfe3e8; background:#e9ecef; }
-.header-avatar{ width:56px; height:56px; border-radius:50%; overflow:hidden; border:1px solid #e5e7eb; background:#f2f4f7; }
-.header-avatar img{ width:100%; height:100%; object-fit:cover; display:block; }
-.header-avatar .avatar-fallback{ width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-weight:700; color:#5c6b7a; }
-.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.form-text.small{ font-size:.8rem; }
-.req::after{ content:" *"; color:#dc3545; font-weight:700; }
-</style>
+<?php $clientEditCssVer = @filemtime(__DIR__ . '/css/client_edit.css') ?: time(); ?>
+<link rel="stylesheet" href="/public/css/client_edit.css?v=<?= $clientEditCssVer ?>">
 
-<div class="container-fluid py-3 text-start">
+<div class="container-fluid py-3 text-start client-edit-shell">
   <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
     <div class="d-flex align-items-center gap-2">
       <div class="header-avatar">
