@@ -20,6 +20,38 @@ $clients = db()->query("SELECT id,name FROM clients WHERE is_deleted=0 ORDER BY 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
 <style>
+.new-invoice-shell{
+  max-width: 960px;
+  background:
+    radial-gradient(780px 520px at 12% 12%, rgba(59, 130, 246, 0.12), transparent 60%),
+    radial-gradient(760px 500px at 90% 14%, rgba(16, 185, 129, 0.12), transparent 60%),
+    #f6f7fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+  padding: 1.5rem;
+}
+.new-invoice-shell h4{ font-weight:700; }
+.card-invoice{
+  border:1px solid #e5e7eb;
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(15,23,42,0.08);
+}
+.card-invoice .card-body{
+  padding: 1.25rem;
+}
+.form-label{ font-weight: 600; color: #111827; }
+.form-control, .form-select, textarea.form-control{
+  border-radius: 10px;
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  box-shadow: inset 0 1px 2px rgba(15,23,42,0.04);
+}
+.form-control:focus, .form-select:focus, textarea.form-control:focus{
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 .15rem rgba(13,110,253,.15);
+  background: #fff;
+}
 .card-preview .kv {display:flex;justify-content:space-between}
 .card-preview .kv div:first-child{color:#6c757d}
 </style>
@@ -27,14 +59,14 @@ $clients = db()->query("SELECT id,name FROM clients WHERE is_deleted=0 ORDER BY 
 <body>
 <?php include __DIR__.'/../partials/partials_header.php'; ?>
 
-<div class="main-content p-3 p-md-4">
-  <div class="container-fluid" style="max-width: 900px;">
+<div class="main-content p-3 p-md-4 d-flex justify-content-center">
+  <div class="container-fluid new-invoice-shell">
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h4 class="mb-1">New Invoice</h4>
       <a class="btn btn-outline-secondary btn-sm" href="invoices.php">Back</a>
     </div>
 
-    <form class="card border-0 shadow-sm" method="post" action="../api/invoice_create.php" id="invForm">
+    <form class="card border-0 card-invoice" method="post" action="../api/invoice_create.php" id="invForm">
       <div class="card-body">
         <div class="row g-3">
           <div class="col-12 col-md-6">

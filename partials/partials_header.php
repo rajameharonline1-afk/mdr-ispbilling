@@ -174,24 +174,25 @@ if ($__resolved_active !== '') {
 
         <!-- Quick Search (desktop) -->
         <?php
-          $nav_search_action = '/public/clients.php';
-          $nav_search_is_billing = ($__resolved_active === 'billing');
-          if ($nav_search_is_billing) {
-            $nav_search_action = '/public/billing.php';
-          }
-          $nav_month = isset($__req_qs['month']) ? (string)$__req_qs['month'] : date('Y-m');
-        ?>
-        <form class="topbar-search d-none d-md-flex align-items-center position-relative ms-4"
-          id="nav-search-form" action="<?= h($nav_search_action) ?>" method="get" autocomplete="off" role="search">
-          <div class="input-group input-group-sm" id="nav-search-group">
-            <!-- <span class="input-group-text py-1"><i class="bi bi-search"></i></span> -->
-            <input type="text" class="form-control form-control-sm" id="nav-search-input"
-              name="search" placeholder="Search Customer">
-            <button class="btn btn-sm" type="submit"><i class="bi bi-search"></i></button>
-          </div>
-          <?php if ($nav_search_is_billing): ?>
-            <input type="hidden" name="view" value="list">
-            <input type="hidden" name="tab" value="all">
+      $nav_search_action = '/public/clients.php';
+      $nav_search_is_billing = ($__resolved_active === 'billing');
+      if ($nav_search_is_billing) {
+        $nav_search_action = '/public/billing.php';
+      }
+      $nav_search_q = isset($__req_qs['search']) ? (string)$__req_qs['search'] : '';
+      $nav_month = isset($__req_qs['month']) ? (string)$__req_qs['month'] : date('Y-m');
+    ?>
+    <form class="topbar-search d-none d-md-flex align-items-center position-relative ms-4"
+      id="nav-search-form" action="<?= h($nav_search_action) ?>" method="get" autocomplete="off" role="search">
+      <div class="input-group input-group-sm" id="nav-search-group">
+        <!-- <span class="input-group-text py-1"><i class="bi bi-search"></i></span> -->
+        <input type="text" class="form-control form-control-sm" id="nav-search-input"
+          name="search" placeholder="Search client code / name / PPPoE / mobile" value="<?= h($nav_search_q) ?>" aria-label="Search clients by code, name, PPPoE, or mobile">
+        <button class="btn btn-sm" type="submit"><i class="bi bi-search"></i></button>
+      </div>
+      <?php if ($nav_search_is_billing): ?>
+        <input type="hidden" name="view" value="list">
+        <input type="hidden" name="tab" value="all">
             <input type="hidden" name="page" value="1">
             <input type="hidden" name="month" value="<?= h($nav_month) ?>">
           <?php endif; ?>
@@ -227,7 +228,7 @@ if ($__resolved_active !== '') {
     <form class="w-100 position-relative" id="nav-search-form-m" action="/public/clients.php" method="get" autocomplete="off" role="search">
       <div class="input-group input-group-sm" id="nav-search-group-m">
         <span class="input-group-text"><i class="bi bi-search"></i></span>
-        <input type="text" class="form-control" id="nav-search-input-m" name="search" placeholder="Search...">
+        <input type="text" class="form-control" id="nav-search-input-m" name="search" placeholder="Search client code / name / PPPoE / mobile" value="<?= h($nav_search_q) ?>" aria-label="Search clients by code, name, PPPoE, or mobile">
         <button class="btn" type="submit">Go</button>
       </div>
       <div id="nav-suggest-m" class="suggest-box d-none"></div>
@@ -236,8 +237,19 @@ if ($__resolved_active !== '') {
 
   <script>
   (function(){
-    const endpoint = '/public/search_logic.php';
-    const minChars = 2;
+    const path = window.location.pathname || '';
+    const basePrefix = (path.includes('/public/'))
+      ? path.slice(0, path.indexOf('/public/'))
+      : '';
+    const endpoints = [
+      'search_logic.php',                // relative (works when app root is /public)
+      'public/search_logic.php',         // relative (when app root is /)
+      `${basePrefix}/search_logic.php`,
+      `${basePrefix}/public/search_logic.php`,
+      '/search_logic.php',
+      '/public/search_logic.php'
+    ];
+    const minChars = 1;
 
     function esc(s){
       return (s || '').replace(/[&<>"']/g, m => ({
@@ -273,7 +285,15 @@ if ($__resolved_active !== '') {
 
       function render(items, q){
         clear();
-        if (!items || !items.length){ hide(); return; }
+        if (!items || !items.length){
+          const empty = document.createElement('div');
+          empty.className = 'list-group-item small text-muted';
+          empty.textContent = 'No matches';
+          suggest.classList.add('list-group');
+          suggest.appendChild(empty);
+          show();
+          return;
+        }
         suggest.classList.add('list-group');
         items.forEach((row) => {
           const id = row.client_id || '';
@@ -293,9 +313,21 @@ if ($__resolved_active !== '') {
       }
 
       async function fetchData(q){
-        const res = await fetch(`${endpoint}?query=${encodeURIComponent(q)}`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
+        let lastErr = null;
+        for (const ep of endpoints) {
+          try {
+            const res = await fetch(`${ep}?query=${encodeURIComponent(q)}`, { credentials: 'same-origin' });
+            if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+            return await res.json();
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+        if (lastErr) {
+          console.warn('Search suggest failed', lastErr);
+          throw lastErr;
+        }
+        return {results:[]};
       }
 
       function onInput(){

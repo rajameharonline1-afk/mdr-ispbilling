@@ -269,7 +269,22 @@ $areas = $areas_stmt->fetchAll(PDO::FETCH_COLUMN);
 include __DIR__ . '/../partials/partials_header.php';
 ?>
 <style>
-.table thead { background:#0d6efd; color:#fff; }
+.invoices-shell{
+  background:
+    radial-gradient(820px 540px at 12% 12%, rgba(59, 130, 246, 0.08), transparent 60%),
+    radial-gradient(820px 540px at 88% 18%, rgba(16, 185, 129, 0.08), transparent 60%),
+    #f6f7fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+  padding: 1.25rem 1.5rem;
+}
+.filter-card{
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(15,23,42,0.08);
+}
+.table thead { background:#0f2941; color:#fff; }
 .table-sm td,.table-sm th{ padding:6px 10px; line-height:1.2; vertical-align:middle; font-size:.9rem; }
 thead th a{ text-decoration:none; color:inherit; }
 thead th a:hover{ text-decoration:underline; }
@@ -278,16 +293,50 @@ thead th a:hover{ text-decoration:underline; }
 </style>
 
 <div class="main-content p-3 p-md-4">
-  <div class="container-fluid">
+  <div class="container-fluid invoices-shell">
     <?php
       $flash = $_SESSION['flash'] ?? '';
       $flash_err = $_SESSION['flash_error'] ?? '';
       unset($_SESSION['flash'], $_SESSION['flash_error']);
-      if ($flash_err): ?>
-        <div class="alert alert-danger mb-3"><?= h($flash_err) ?></div>
-      <?php elseif ($flash): ?>
-        <div class="alert alert-success mb-3"><?= h($flash) ?></div>
-    <?php endif; ?>
+      $flashData = null;
+      if ($flash_err) {
+        $flashData = ['type'=>'error','title'=>'Error','message'=>$flash_err];
+      } elseif ($flash) {
+        $decoded = json_decode($flash, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+          $flashData = $decoded;
+        } else {
+          $flashData = ['type'=>'success','title'=>'Success','message'=>(string)$flash];
+        }
+      }
+      if ($flashData): ?>
+        <div id="flashToast" class="position-fixed end-0 top-0 m-3" style="z-index:2100; min-width:260px; max-width: 320px;">
+          <?php
+            $type = $flashData['type'] ?? 'success';
+            $title = $flashData['title'] ?? 'Notice';
+            $msg = $flashData['message'] ?? '';
+            $cls = $type === 'error' ? 'bg-danger text-white' : ($type === 'warning' ? 'bg-warning text-dark' : 'bg-success text-white');
+            $icon = $type==='error'?'bi-x-circle-fill':($type==='warning'?'bi-exclamation-triangle-fill':'bi-check-circle-fill');
+          ?>
+          <div class="rounded-3 shadow-lg p-3 <?= $cls ?> d-flex align-items-start gap-2">
+            <i class="bi <?= $icon ?>"></i>
+            <div class="flex-grow-1">
+              <div class="fw-semibold"><?= h($title) ?></div>
+              <?php if ($msg !== ''): ?><div class="small mb-0"><?= h($msg) ?></div><?php endif; ?>
+            </div>
+            <button type="button" class="btn-close btn-close-white btn-sm ms-2" aria-label="Close" id="flashToastClose"></button>
+          </div>
+        </div>
+        <script>
+          (function(){
+            const toast = document.getElementById('flashToast');
+            const closeBtn = document.getElementById('flashToastClose');
+            if(!toast) return;
+            let timer = setTimeout(()=> toast.remove(), 4000);
+            closeBtn?.addEventListener('click', ()=>{ clearTimeout(timer); toast.remove(); });
+          })();
+        </script>
+      <?php endif; ?>
 
     <!-- Header -->
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -323,7 +372,7 @@ thead th a:hover{ text-decoration:underline; }
     </a>
 
     <!-- Filters -->
-    <form class="card border-0 shadow-sm mb-3" method="GET">
+    <form class="card border-0 filter-card mb-3" method="GET">
       <div class="card-body">
         <div class="row g-2">
           <div class="col-12 col-md-4">
@@ -535,7 +584,7 @@ thead th a:hover{ text-decoration:underline; }
                    href="invoice_print.php?id=<?= (int)$r['id'] ?>&pdf=1" target="_blank">
                   <i class="bi bi-file-earmark-arrow-down"></i>
                 </a>
-                <form class="d-inline" method="post" action="invoice_delete.php" onsubmit="return confirm('Delete this invoice?');">
+                <form class="d-inline js-invoice-delete" method="post" action="invoice_delete.php">
                   <?= csrf_input_html() ?>
                   <input type="hidden" name="invoice_id" value="<?= (int)$r['id'] ?>">
                   <button class="btn btn-outline-danger" title="Delete">
@@ -759,6 +808,50 @@ thead th a:hover{ text-decoration:underline; }
     } catch (err) {
       alert('Network error');
     }
+  });
+})();
+</script>
+
+<!-- Delete confirm overlay -->
+<div id="deleteConfirmBackdrop" class="d-none position-fixed top-0 start-0 vw-100 vh-100 bg-dark bg-opacity-50 d-flex align-items-center justify-content-center" style="z-index:2000;">
+  <div class="bg-white rounded-4 shadow-lg p-4" style="width:min(420px,90vw);">
+    <h5 class="mb-2 d-flex align-items-center gap-2"><i class="bi bi-trash text-danger"></i> Delete invoice?</h5>
+    <p class="text-muted mb-3 small">This will permanently remove the invoice. Continue?</p>
+    <div class="d-flex justify-content-end gap-2">
+      <button type="button" class="btn btn-light" id="deleteCancelBtn">Cancel</button>
+      <button type="button" class="btn btn-danger" id="deleteOkBtn">Delete</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const backdrop = document.getElementById('deleteConfirmBackdrop');
+  if(!backdrop) return;
+  const cancelBtn = document.getElementById('deleteCancelBtn');
+  const okBtn = document.getElementById('deleteOkBtn');
+  let pendingForm = null;
+
+  function openConfirm(form){
+    pendingForm = form;
+    backdrop.classList.remove('d-none');
+  }
+  function closeConfirm(){
+    backdrop.classList.add('d-none');
+    pendingForm = null;
+  }
+
+  document.addEventListener('submit', function(e){
+    const form = e.target.closest('form.js-invoice-delete');
+    if (!form) return;
+    e.preventDefault();
+    openConfirm(form);
+  });
+
+  cancelBtn?.addEventListener('click', closeConfirm);
+  backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeConfirm(); });
+  okBtn?.addEventListener('click', ()=>{
+    if (pendingForm) pendingForm.submit();
+    closeConfirm();
   });
 })();
 </script>

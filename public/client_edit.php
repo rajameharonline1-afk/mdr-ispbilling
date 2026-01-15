@@ -333,8 +333,8 @@ $st->execute([$client_id]);
 $client = $st->fetch(PDO::FETCH_ASSOC);
 if (!$client) { header("Location: clients.php"); exit; }
 
-$packages = db()->query("SELECT id, name, price, profile, profile_name FROM packages ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-$routers  = db()->query("SELECT id, name FROM routers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$packages = db()->query("SELECT id, name, price, profile, profile_name, router_id FROM packages ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$routers  = db()->query("SELECT id, name, ip, username, password, api_port FROM routers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 // Ensure legacy unique index on mobile is removed to allow duplicates
 try {
@@ -352,6 +352,7 @@ $HAS_NID         = db_has_column('clients','nid');
 $HAS_DOB         = db_has_column('clients','dob');
 $HAS_PHOTO_URL   = db_has_column('clients','photo_url');
 $HAS_PPPOE_PASS  = db_has_column('clients','pppoe_pass');
+$HAS_PPPOE_PASSWORD = db_has_column('clients','pppoe_password');
 $HAS_JOIN_DATE   = db_has_column('clients','join_date');
 $HAS_UPDATED_AT  = db_has_column('clients','updated_at');
 $HAS_EXPIRY_DATE = db_has_column('clients','expiry_date');
@@ -393,8 +394,13 @@ $status_labels = [
     'left' => 'Left',
 ];
 
-$pppoe_pass_display = $HAS_PPPOE_PASS ? (string)($client['pppoe_pass'] ?? '') : '';
-if ($HAS_PPPOE_PASS && $pppoe_pass_display === '') {
+$pppoe_pass_display = '';
+if ($HAS_PPPOE_PASS) {
+    $pppoe_pass_display = (string)($client['pppoe_pass'] ?? '');
+} elseif ($HAS_PPPOE_PASSWORD) {
+    $pppoe_pass_display = (string)($client['pppoe_password'] ?? '');
+}
+if (($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD) && $pppoe_pass_display === '') {
     $mkPass = mikrotik_fetch_pppoe_password($client);
     if ($mkPass !== null && $mkPass !== '') {
         $pppoe_pass_display = $mkPass;
@@ -425,25 +431,37 @@ $errors = [];
 $notice = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!csrf_validate($_POST['csrf'] ?? '')) {
+        $errors[] = 'Invalid CSRF token.';
+    }
+
     $successNotes = [];
     $new_client_id = $client_id;
     $prevRouterId   = (int)($client['router_id'] ?? 0);
     $prevPppoeId    = (string)($client['pppoe_id'] ?? '');
-    $prevPppoePass  = $HAS_PPPOE_PASS ? (string)($client['pppoe_pass'] ?? '') : null;
+    if ($HAS_PPPOE_PASS) {
+        $prevPppoePass = (string)($client['pppoe_pass'] ?? '');
+    } elseif ($HAS_PPPOE_PASSWORD) {
+        $prevPppoePass = (string)($client['pppoe_password'] ?? '');
+    } else {
+        $prevPppoePass = null;
+    }
     $name         = trim($_POST['name'] ?? $client['name']);
     $mobile       = preg_replace('/\D+/', '', trim($_POST['mobile'] ?? $client['mobile']));
-    $email        = trim($_POST['email'] ?? $client['email']);
-    $address      = trim($_POST['address'] ?? $client['address']);
-    $area         = trim($_POST['area'] ?? $client['area']);
+    $email        = trim($_POST['email'] ?? ($client['email'] ?? ''));
+    $address      = trim($_POST['address'] ?? ($client['address'] ?? ''));
+    $area         = trim($_POST['area'] ?? ($client['area'] ?? ''));
     $sub_zone     = trim($_POST['sub_zone'] ?? ($client['sub_zone'] ?? ''));
     $box          = trim($_POST['box'] ?? ($client['box'] ?? ''));
     $nid          = trim($_POST['nid'] ?? ($client['nid'] ?? ''));
     $dob          = trim($_POST['dob'] ?? ($client['dob'] ?? ''));
     $pppoe_id     = trim($_POST['pppoe_id'] ?? $client['pppoe_id']);
-    $pppoe_pass   = trim($_POST['pppoe_pass'] ?? ($client['pppoe_pass'] ?? ''));
+    $pppoe_pass   = trim($_POST['pppoe_pass'] ?? ($client['pppoe_pass'] ?? ($client['pppoe_password'] ?? '')));
     $package_id   = intval($_POST['package_id'] ?? $client['package_id']);
     $router_id    = intval($_POST['router_id']  ?? $client['router_id']);
-    $monthly_bill = is_numeric($_POST['monthly_bill'] ?? null) ? (0+$_POST['monthly_bill']) : (0+$client['monthly_bill']);
+    $monthly_bill_input = $_POST['monthly_bill'] ?? null;
+    $userProvidedBill = is_numeric($monthly_bill_input);
+    $monthly_bill = $userProvidedBill ? (float)$monthly_bill_input : (0+$client['monthly_bill']);
     $expiry_input = trim((string)($_POST['expiry_date'] ?? ''));
     $expiry_date  = $expiry_input !== '' ? normalize_day_only_date($expiry_input) : '';
     $status       = strtolower(trim($_POST['status'] ?? ($client['status'] ?? '')));
@@ -452,6 +470,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $client_code  = $HAS_CLIENT_CODE ? trim((string)($_POST['client_code'] ?? ($client['client_code'] ?? ''))) : '';
     if ($HAS_CLIENT_CODE && $client_code === '') {
         $client_code = client_code_from_pppoe($pppoe_id);
+    }
+
+    // Package lookup (align with add flow)
+    $selectedPackage = null;
+    if ($package_id > 0) {
+        foreach ($packages as $pkgRow) {
+            if ((int)$pkgRow['id'] === $package_id) {
+                $selectedPackage = $pkgRow;
+                break;
+            }
+        }
+        if (!$selectedPackage) {
+            $errors[] = 'Selected package is invalid.';
+        }
+    }
+    $package_price = 0.0;
+    if ($selectedPackage && is_numeric($selectedPackage['price'] ?? null)) {
+        $package_price = (float)$selectedPackage['price'];
+        if ($package_price > 0 && !$userProvidedBill) {
+            $monthly_bill = $package_price;
+            $_POST['monthly_bill'] = (string)$monthly_bill;
+        }
+    }
+    if (!$router_id && $selectedPackage && !empty($selectedPackage['router_id'])) {
+        $router_id = (int)$selectedPackage['router_id'];
+        $_POST['router_id'] = (string)$router_id;
+    }
+    if (!$router_id && count($routers) === 1) {
+        $router_id = (int)$routers[0]['id'];
+        $_POST['router_id'] = (string)$router_id;
     }
 
     if ($name === '')        $errors[] = 'Name is required.';
@@ -508,7 +556,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($HAS_BOX)         { $sets[] = 'box = :box';                $params[':box'] = $box; }
         if ($HAS_NID)         { $sets[] = 'nid = :nid';                $params[':nid'] = $nid === '' ? null : $nid; }
         if ($HAS_DOB)         { $sets[] = 'dob = :dob';                $params[':dob'] = $dob === '' ? null : $dob; }
-        if ($HAS_PPPOE_PASS)  { $sets[] = 'pppoe_pass = :pppoe_pass';  $params[':pppoe_pass'] = $pppoe_pass; }
+        if ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD)  {
+            $pppoe_store = ($pppoe_pass === '') ? $pppoe_id : $pppoe_pass;
+            if ($HAS_PPPOE_PASS) {
+                $sets[] = 'pppoe_pass = :pppoe_pass';
+                $params[':pppoe_pass'] = $pppoe_store;
+            }
+            if ($HAS_PPPOE_PASSWORD) {
+                $sets[] = 'pppoe_password = :pppoe_password';
+                $params[':pppoe_password'] = $pppoe_store;
+            }
+        }
         if ($HAS_PHOTO_URL)   { $sets[] = 'photo_url = :photo_url';    $params[':photo_url']  = $new_photo_url; }
         if ($HAS_UPDATED_AT)  { $sets[] = 'updated_at = NOW()'; }
         if ($expiry_date !== '') {
@@ -564,7 +622,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'expiry_date' => $effective_expiry,
             'status' => $status,
         ];
-        if ($HAS_PPPOE_PASS && $pppoe_pass !== $prevPppoePass) {
+        $pppoe_store_compare = ($pppoe_pass === '') ? $pppoe_id : $pppoe_pass;
+        if (($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD) && $pppoe_store_compare !== $prevPppoePass) {
             $newData['pppoe_pass_set'] = true;
         }
         $chgOld = [];
@@ -583,7 +642,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old_pkg_id = intval($client['package_id']);           // পুরনো প্যাকেজ আইডি (সেভের আগের)
         $routerChanged = $router_id && $router_id !== $prevRouterId;
         $pppoeChanged  = $pppoe_id !== $prevPppoeId;
-        $passChanged   = $HAS_PPPOE_PASS && $pppoe_pass !== $prevPppoePass;
+        $passChanged   = ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD) && $pppoe_store_compare !== $prevPppoePass;
         $packageChanged = $package_id && $package_id !== $old_pkg_id;
         $commentFields = ['name','mobile','area','address','package_id','monthly_bill','expiry_date'];
         $commentChanged = false;
@@ -624,7 +683,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'monthly_bill' => (string)$monthly_bill,
                 'expiry_date' => (string)$expiry_for_comment,
             ]);
-            $syncPass = $HAS_PPPOE_PASS ? ($pppoe_pass === '' ? null : $pppoe_pass) : null;
+            $syncPass = ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD) ? (($pppoe_pass === '') ? $pppoe_id : $pppoe_pass) : null;
             $secret = mikrotik_ensure_pppoe_secret((int)$router_id, $pppoe_id, $syncPass, $profileName, ['comment'=>$comment]);
             if (!$secret['ok']) {
                 $notice = 'Saved, but MikroTik sync failed: '.$secret['error'];
@@ -649,7 +708,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // (বাংলা) expiry_date অনুযায়ী due invoice create (যদি আগে না থাকে)
         if ($expiry_date !== '' && $monthly_bill >= 0) {
-            $inv_amount = (float)$monthly_bill;
+            // Prefer package price for auto invoice; fallback to monthly_bill
+            $inv_amount = $package_price > 0 ? (float)$package_price : (float)$monthly_bill;
             if ($inv_amount <= 0 && $package_id) {
                 try{
                     $stpAmt = db()->prepare("SELECT price FROM packages WHERE id=?");
@@ -700,9 +760,10 @@ if ($photo_url !== '' && str_starts_with($photo_url, '/uploads/clients/')) {
 $client_initial = mb_strtoupper(mb_substr($client['name'] ?? '?', 0, 1, 'UTF-8'));
 
 include __DIR__ . '/../partials/partials_header.php';
+// (বাংলা) স্টাইল একীভূত ফাইল থেকে লোড করি
+$customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time();
 ?>
-<?php $clientEditCssVer = @filemtime(__DIR__ . '/css/client_edit.css') ?: time(); ?>
-<link rel="stylesheet" href="/public/css/client_edit.css?v=<?= $clientEditCssVer ?>">
+<link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $customCssVer ?>">
 
 <div class="container-fluid py-3 text-start client-edit-shell">
   <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
@@ -743,6 +804,7 @@ include __DIR__ . '/../partials/partials_header.php';
 
   <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
     <input type="hidden" name="id" value="<?= (int)$client['id'] ?>">
+    <input type="hidden" name="csrf" value="<?= h($LOC_CSRF) ?>">
 
     <div class="row g-3">
       <!-- Account + Photo -->
@@ -766,7 +828,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <?php endif; ?>
             <div class="mb-2">
               <label class="form-label req">Name</label>
-              <input type="text" name="name" class="form-control form-control-sm" value="<?= h($client['name']) ?>" required>
+              <input type="text" name="name" class="form-control form-control-sm" value="<?= h($_POST['name'] ?? $client['name']) ?>" required>
             </div>
             <?php $form_area = isset($_POST['area']) ? (string)$_POST['area'] : (string)($client['area'] ?? ''); $area_opts_form = ensure_option_present($area_options, $form_area); ?>
             <div class="mb-2">
@@ -819,7 +881,7 @@ include __DIR__ . '/../partials/partials_header.php';
             <?php endif; ?>
             <div class="mb-2">
               <label class="form-label">Address</label>
-              <textarea name="address" class="form-control form-control-sm" rows="2"><?= h($client['address']) ?></textarea>
+              <textarea name="address" class="form-control form-control-sm" rows="2"><?= h($_POST['address'] ?? ($client['address'] ?? '')) ?></textarea>
             </div>
 
             <hr>
@@ -831,18 +893,18 @@ include __DIR__ . '/../partials/partials_header.php';
             </div>
             <div class="mb-2">
               <label class="form-label">Email</label>
-              <input type="email" name="email" class="form-control form-control-sm" value="<?= h($client['email']) ?>">
+              <input type="email" name="email" class="form-control form-control-sm" value="<?= h($_POST['email'] ?? ($client['email'] ?? '')) ?>">
             </div>
             <?php if ($HAS_NID): ?>
             <div class="mb-2">
               <label class="form-label">NID No.</label>
-              <input type="text" name="nid" class="form-control form-control-sm" value="<?= h($client['nid'] ?? '') ?>">
+              <input type="text" name="nid" class="form-control form-control-sm" value="<?= h($_POST['nid'] ?? ($client['nid'] ?? '')) ?>">
             </div>
             <?php endif; ?>
             <?php if ($HAS_DOB): ?>
             <div class="mb-2">
               <label class="form-label">DOB</label>
-              <input type="date" name="dob" class="form-control form-control-sm" value="<?= h($client['dob'] ?? '') ?>">
+              <input type="date" name="dob" class="form-control form-control-sm" value="<?= h($_POST['dob'] ?? ($client['dob'] ?? '')) ?>">
             </div>
             <?php endif; ?>
 
@@ -885,10 +947,11 @@ include __DIR__ . '/../partials/partials_header.php';
           <div class="p-3">
             <div class="mb-2">
               <label class="form-label req">Package</label>
+              <?php $form_pkg_id = isset($_POST['package_id']) ? (int)$_POST['package_id'] : (int)$client['package_id']; ?>
               <select name="package_id" class="form-select form-select-sm" required>
                 <option value="">-- Select --</option>
                 <?php foreach ($packages as $p): ?>
-                  <option value="<?= (int)$p['id'] ?>" <?= ((int)$client['package_id']===(int)$p['id'])?'selected':'' ?>>
+                  <option value="<?= (int)$p['id'] ?>" <?= ($form_pkg_id===(int)$p['id'])?'selected':'' ?>>
                     <?= h($p['name']) ?> <?= is_numeric($p['price'])? '— '.(0+$p['price']):'' ?>
                   </option>
                 <?php endforeach; ?>
@@ -897,7 +960,7 @@ include __DIR__ . '/../partials/partials_header.php';
             </div>
             <div class="mb-2">
               <label class="form-label req">Monthly Bill</label>
-              <input type="number" step="0.01" name="monthly_bill" class="form-control form-control-sm" value="<?= h($client['monthly_bill']) ?>" required>
+              <input type="number" step="0.01" name="monthly_bill" class="form-control form-control-sm" value="<?= h($_POST['monthly_bill'] ?? $client['monthly_bill']) ?>" required>
             </div>
             <div class="mb-2">
               <label class="form-label">Expiry Date</label>
@@ -943,10 +1006,11 @@ include __DIR__ . '/../partials/partials_header.php';
           <div class="p-3">
             <div class="mb-2">
               <label class="form-label">Router</label>
+              <?php $form_router_id = isset($_POST['router_id']) ? (int)$_POST['router_id'] : (int)$client['router_id']; ?>
               <select name="router_id" class="form-select form-select-sm">
                 <option value="">-- Select --</option>
                 <?php foreach ($routers as $r): ?>
-                  <option value="<?= (int)$r['id'] ?>" <?= ((int)$client['router_id']===(int)$r['id'])?'selected':'' ?>>
+                  <option value="<?= (int)$r['id'] ?>" <?= ($form_router_id===(int)$r['id'])?'selected':'' ?>>
                     <?= h($r['name']) ?>
                   </option>
                 <?php endforeach; ?>
@@ -955,13 +1019,13 @@ include __DIR__ . '/../partials/partials_header.php';
 
             <div class="mb-2">
               <label class="form-label req">PPPoE Username</label>
-              <input type="text" name="pppoe_id" class="form-control form-control-sm mono" value="<?= h($client['pppoe_id']) ?>" required>
+              <input type="text" name="pppoe_id" class="form-control form-control-sm mono" value="<?= h($_POST['pppoe_id'] ?? $client['pppoe_id']) ?>" required>
             </div>
 
-            <?php if ($HAS_PPPOE_PASS): ?>
+            <?php if ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD): ?>
             <div class="mb-2">
               <label class="form-label">PPPoE Password</label>
-              <input type="text" name="pppoe_pass" class="form-control form-control-sm mono" value="<?= h($pppoe_pass_display) ?>">
+              <input type="text" name="pppoe_pass" class="form-control form-control-sm mono" value="<?= h($_POST['pppoe_pass'] ?? $pppoe_pass_display) ?>">
             </div>
             <?php endif; ?>
 

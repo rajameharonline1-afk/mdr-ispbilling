@@ -26,6 +26,7 @@ $hasOnline  = in_array('is_online',   $clientCols, true);
 $hasLeft    = in_array('is_left',     $clientCols, true);
 $hasJoin    = in_array('join_date',   $clientCols, true);
 $hasExpire  = in_array('expiry_date', $clientCols, true);
+$clientCodeCol = pick_col($clientCols, ['client_code','code']);
 
 $AREA_COL       = pick_col($clientCols, ['area','zone','location']);
 $SUB_ZONE_COL   = pick_col($clientCols, ['sub_zone','subzone','sub_area']);
@@ -181,9 +182,13 @@ if ($status === 'active') {
 
 /* Basic search */
 if ($search !== '') {
-    $sql_base .= " AND (c.name LIKE ? OR c.pppoe_id LIKE ? OR c.mobile LIKE ?)";
     $like = "%$search%";
-    array_push($params, $like, $like, $like);
+    $parts = ["c.name LIKE ?", "c.pppoe_id LIKE ?", "c.mobile LIKE ?"];
+    if ($clientCodeCol !== '') {
+        $parts[] = "c.`{$clientCodeCol}` LIKE ?";
+    }
+    $sql_base .= " AND (" . implode(' OR ', $parts) . ")";
+    foreach ($parts as $_) { $params[] = $like; }
 }
 
 /* Advanced filters */
@@ -357,7 +362,29 @@ require __DIR__ . '/../partials/partials_header.php';
     </h4>
     <span class="text-muted small">Total: <?= number_format($total_records) ?></span>
 
-    <div class="ms-auto d-flex gap-2">
+    <form class="ms-auto d-flex gap-2 flex-wrap align-items-center" method="get" role="search" id="search-group">
+      <?php if (!empty($_GET['sort'])): ?>
+        <input type="hidden" name="sort" value="<?= htmlspecialchars($_GET['sort']) ?>">
+      <?php endif; ?>
+      <?php if (!empty($_GET['dir'])): ?>
+        <input type="hidden" name="dir" value="<?= htmlspecialchars($_GET['dir']) ?>">
+      <?php endif; ?>
+      <input type="hidden" name="live" value="<?= (int)$live ?>">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input
+          type="search"
+          class="form-control"
+          id="search-input"
+          name="search"
+          placeholder="Search name / PPPoE / mobile / client code"
+          value="<?= htmlspecialchars($search) ?>"
+          aria-label="Search clients">
+      </div>
+      <button class="btn btn-primary btn-sm" type="submit">Search</button>
+    </form>
+
+    <div class="d-flex gap-2">
       <?php
         $qsLiveOn  = $_GET; $qsLiveOn['live']=1;  $qsLiveOn['page']=1;
         $qsLiveOff = $_GET; $qsLiveOff['live']=0; $qsLiveOff['page']=1;
@@ -675,7 +702,7 @@ require __DIR__ . '/../partials/partials_header.php';
 
           <td data-label="Action">
             <div class="btn-group btn-group-sm" role="group">
-              <a href="client_view.php?id=<?= $client['pppoe_id']; ?>" class="btn btn-outline-primary" title="View Client">
+              <a href="client_view.php?id=<?= (int)$client['id']; ?>" class="btn btn-outline-primary" title="View Client">
                 <i class="bi bi-eye"></i>
               </a>
               <a href="client_edit.php?id=<?= (int)$client['id']; ?>" class="btn btn-outline-primary" title="Edit Client">

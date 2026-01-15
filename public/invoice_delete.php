@@ -147,10 +147,18 @@ try {
   }
 
   $pdo->commit();
-  $_SESSION['flash'] = 'Invoice deleted.';
+  $_SESSION['flash'] = json_encode([
+    'type' => 'success',
+    'title'=> 'Deleted',
+    'message' => 'Invoice removed successfully.'
+  ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
   if ($pdo->inTransaction()) $pdo->rollBack();
-  $_SESSION['flash_error'] = 'Delete failed: '.$e->getMessage();
+  $_SESSION['flash_error'] = json_encode([
+    'type' => 'error',
+    'title'=> 'Delete failed',
+    'message' => $e->getMessage()
+  ], JSON_UNESCAPED_UNICODE);
 }
 
 header('Location: /invoices.php');

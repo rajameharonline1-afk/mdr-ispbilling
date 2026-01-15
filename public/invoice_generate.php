@@ -168,8 +168,9 @@ if ($periodKeyCol) {
 foreach ($clients as $r) {
     if ((int)$r['is_left'] === 1) { $stats['left']++; continue; }
 
-    $amt = (float)$r['bill'];
-    if ($amt <= 0) $amt = (float)($r['pkg_price'] ?? 0);
+    // Prefer package price for auto billing; fallback to client monthly_bill
+    $amt = (float)($r['pkg_price'] ?? 0);
+    if ($amt <= 0) $amt = (float)$r['bill'];
     $zero = $amt <= 0;
 
     $hadOld = false; $oldAmt = null;

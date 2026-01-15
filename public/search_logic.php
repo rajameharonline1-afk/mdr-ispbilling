@@ -16,8 +16,8 @@ if (!function_exists('respond_json')) {
   }
 }
 
-$q = trim((string)($_REQUEST['query'] ?? $_REQUEST['q'] ?? ''));
-if ($q === '' || mb_strlen($q) < 2) {
+$q = trim((string)($_REQUEST['query'] ?? $_REQUEST['q'] ?? $_REQUEST['search'] ?? ''));
+if ($q === '' || mb_strlen($q) < 1) {
   respond_json(['status' => 'success', 'results' => []]);
 }
 
@@ -35,8 +35,8 @@ if (!function_exists('pick_col')) {
   }
 }
 
-$colId     = pick_col($cols, ['client_id','id','client_code']);
-$colCode   = pick_col($cols, ['client_code','code']);
+$colId     = pick_col($cols, ['id','client_id']);
+$colCode   = pick_col($cols, ['client_code','code','clientid']);
 $colName   = pick_col($cols, ['full_name','name','client_name']);
 $colMobile = pick_col($cols, ['mobile_number','mobile','phone']);
 $colPppoe  = pick_col($cols, ['pppoe_username','pppoe_id','username']);
