@@ -198,6 +198,9 @@
     if (modalInstance) return modalInstance;
     const bs = window.bootstrap || null;
     if (!modalEl || !bs || !bs.Modal) return null;
+    if (modalEl.parentElement !== document.body) {
+      document.body.appendChild(modalEl);
+    }
     modalInstance = new bs.Modal(modalEl);
     return modalInstance;
   }

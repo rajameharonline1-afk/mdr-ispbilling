@@ -36,20 +36,61 @@ function render_olt_table_block(array $groupedMacs, array $clientMacCache, int $
                 <tr>
                   <td data-label="ONU ID"><?= h(format_onu_identifier($row)); ?></td>
                   <td data-label="Client">
-                    <?php if (!empty($row['client_meta'])): $cm = $row['client_meta'];
+                    <?php
+                    $clientValue = '';
+                    $clientLinkId = null;
+                    if (!empty($row['client_meta'])) {
+                      $cm = $row['client_meta'];
                       $clientCodeDisplay = trim((string)($cm['client_code'] ?? ''));
-                      if ($clientCodeDisplay === '') {
-                        $clientCodeDisplay = (string)(int)($cm['id'] ?? 0);
-                      } ?>
-                      <a href="/public/client_view.php?id=<?= $cm['id']; ?>" class="fw-semibold text-decoration-none">
-                        <?= h($clientCodeDisplay); ?><?php if (($cm['name'] ?? '') !== ''): ?>: <?= h($cm['name']); ?><?php endif; ?>
+                      $clientNameDisplay = trim((string)($cm['name'] ?? ''));
+                      if ($clientCodeDisplay !== '') {
+                        $clientValue = $clientCodeDisplay . ($clientNameDisplay !== '' ? ':' . $clientNameDisplay : '');
+                      } elseif ($clientNameDisplay !== '') {
+                        $clientValue = $clientNameDisplay;
+                      }
+                      $clientIdInt = isset($cm['id']) ? (int)$cm['id'] : 0;
+                      $clientLinkId = $clientIdInt > 0 ? $clientIdInt : null;
+                    } elseif (isset($row['clients'])) {
+                      $clientsRaw = trim((string)$row['clients']);
+                      if ($clientsRaw !== '' && ctype_digit($clientsRaw)) {
+                        $maybeId = (int)$clientsRaw;
+                        if ($maybeId > 0) {
+                          $clientLinkId = $maybeId;
+                        }
+                        $codeLookup = trim((string)($row['client_code_lookup'] ?? ''));
+                        $nameLookup = trim((string)($row['client_name_lookup'] ?? ''));
+                        if ($codeLookup !== '') {
+                          $clientValue = $codeLookup . ($nameLookup !== '' ? ':' . $nameLookup : '');
+                        } elseif ($nameLookup !== '') {
+                          $clientValue = $nameLookup;
+                        }
+                      } else {
+                        $clientValue = $clientsRaw;
+                      }
+                    } else {
+                      $clientIdRaw = isset($row['client_id']) ? (int)$row['client_id'] : 0;
+                      $fallbackCode = trim((string)($row['client_code_lookup'] ?? $row['client_code'] ?? ''));
+                      $fallbackName = trim((string)($row['client_name_lookup'] ?? ''));
+                      if ($fallbackCode !== '') {
+                        $clientValue = $fallbackCode . ($fallbackName !== '' ? ':' . $fallbackName : '');
+                      } elseif ($fallbackName !== '') {
+                        $clientValue = $fallbackName;
+                      }
+                      if ($clientIdRaw > 0) {
+                        $clientLinkId = $clientIdRaw;
+                      }
+                    }
+                    $clientValueTrim = trim($clientValue);
+                    $clientMissing = $clientValueTrim === '' || $clientValueTrim === '-' || $clientValueTrim === '—';
+                    ?>
+                    <?php if ($clientMissing): ?>
+                      <span class="text-muted "> — </span>
+                    <?php elseif ($clientLinkId !== null): ?>
+                      <a href="/public/client_view.php?id=<?= $clientLinkId; ?>" class="fw-semibold text-decoration-none">
+                        <?= h($clientValue); ?>
                       </a>
-                    <?php elseif (!empty($row['clients'])): ?>
-                      <span class="fw-semibold"><?= h($row['clients']); ?></span>
-                    <?php elseif (!empty($row['client_id'])): ?>
-                      <span class="fw-semibold">ID: <?= (int)$row['client_id']; ?></span>
                     <?php else: ?>
-                      <span class="text-muted">—</span>
+                      <span class="fw-semibold"><?= h($clientValue); ?></span>
                     <?php endif; ?>
                   </td>
                   <td data-label="Area"><?= !empty($row['client_meta']) && ($row['client_meta']['area'] ?? '') !== '' ? h($row['client_meta']['area']) : '—' ?></td>
@@ -145,7 +186,7 @@ function render_olt_table_block(array $groupedMacs, array $clientMacCache, int $
           </tbody>
         </table>
       <?php else: ?>
-        <div class="p-4 text-center text-muted">এই মানদণ্ডে কোনো MAC পাওয়া যায়নি।</div>
+        <div class="p-4 text-center text-muted">ONU MAC পাওয়া যায়নি।</div>
       <?php endif; ?>
     </div>
   </div>
@@ -159,12 +200,12 @@ function render_olt_summary_block(?array $selectedOlt, array $ponSummary, array 
     return;
   }
 ?>
-  <div class="d-flex align-items-center justify-content-between olt-summary-bar p-3 mb-3 flex-wrap gap-2">
-    <div class="col-auto d-flex align-items-center gap-2 flex-wrap">
+  <div class="d-flex align-items-center justify-content-between olt-summary-block">
+    <div class=" accordion-body">
       <span class="fw-semibold">OLT NAME : <?= h($selectedOlt['name'] ?: 'Unnamed OLT'); ?> |IP: <?= h($selectedOlt['host'] ?? ''); ?></span>
     </div>
     <?php if (!empty($ponSummary)): ?>
-      <div class="col-auto d-flex align-items-center gap-2 flex-wrap">
+      <div class=" d-flex align-items-center gap-2 flex-wrap">
         <span class="text-muted small">PON Ports: <?= (int)$ponTotals['total_pons']; ?> • Total ONU: <?= (int)$ponTotals['total_onu']; ?></span>
         <?php foreach ($ponSummary as $ps): ?>
           <span class="badge text-bg-light border"><?= h($ps['label'] ?? 'PON :'); ?> • ONU : <?= (int)($ps['count'] ?? 0); ?></span>
@@ -217,9 +258,9 @@ require_once __DIR__ . '/../partials/partials_header.php';
     <div class="container-fluid olt-sticky-header">
       <div class="olt-filters-wrap mb-3">
         <form id="oltFiltersForm" class="card shadow-sm" method="get" action="">
-          <div class="card-body row g-3 align-items-end">
+          <div class="d-flex justify-content-between align-items-center gap-3 p-3 flex-wrap">
             <input type="hidden" name="client_code" id="clientCodeHidden" value="<?= h($filterClientCode); ?>">
-            <div class="col-md-3">
+            <div class="fw-semibold">
               <select name="olt_id" class="form-select" required>
                 <option value="0" disabled <?= $filterOlt === 0 ? 'selected' : ''; ?>>OLT সিলেক্ট করুন</option>
                 <?php foreach ($olts as $olt): ?>
@@ -231,7 +272,7 @@ require_once __DIR__ . '/../partials/partials_header.php';
               </select>
             </div>
 
-            <div class="col-md-3">
+            <div class="fw-semibold">
               <select name="pon" class="form-select" <?= $filterOlt === 0 ? 'disabled' : ''; ?>>
                 <option value="0" disabled <?= $filterPon === 0 ? 'selected' : ''; ?>>PON সিলেক্ট করুন</option>
                 <?php if (!empty($ponOptions) && $filterOlt > 0): ?>

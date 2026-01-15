@@ -973,6 +973,26 @@ if(!$tableMissing && $rows){
       }
     }
     $row['client_meta'] = match_client_for_mac_row($row, $clientLookup);
+    // Capture client code/name for later display when only client_id is present.
+    if (empty($row['client_meta']) && !empty($row['client_id'])) {
+      $cidLookup = (int)$row['client_id'];
+      if ($cidLookup > 0 && isset($clientLookup['byId'][$cidLookup])) {
+        $row['client_code_lookup'] = $clientLookup['byId'][$cidLookup]['client_code'] ?? '';
+        $row['client_name_lookup'] = $clientLookup['byId'][$cidLookup]['name'] ?? '';
+      }
+    }
+    // If "clients" column holds a numeric ID, map it to code/name for display.
+    if (empty($row['client_meta']) && empty($row['client_code_lookup']) && isset($row['clients'])) {
+      $clientsRaw = trim((string)$row['clients']);
+      if ($clientsRaw !== '' && ctype_digit($clientsRaw)) {
+        $cidLookup = (int)$clientsRaw;
+        if ($cidLookup > 0 && isset($clientLookup['byId'][$cidLookup])) {
+          $row['client_code_lookup'] = $clientLookup['byId'][$cidLookup]['client_code'] ?? '';
+          $row['client_name_lookup'] = $clientLookup['byId'][$cidLookup]['name'] ?? '';
+          $row['client_id_lookup'] = $cidLookup;
+        }
+      }
+    }
     if($filterClientCode !== '' && !row_matches_client_code($row, $filterClientCode)){
       continue;
     }

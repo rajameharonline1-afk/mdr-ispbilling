@@ -27,9 +27,7 @@
 .olt-table-wrap {
   position: relative;
   overflow-y: auto; /* ওপর-নিচে স্ক্রল করার জন্য */
-  max-height: 550px; /* একটি নির্দিষ্ট উচ্চতা দিন (আপনার প্রয়োজন মতো) */
-  border: 1px solid var(--olt-border);
-  border-radius: 12px;
+  max-height: 67vh; /* ভিউপোর্ট উচ্চতার 60% */
 }
 
 .olt-mac-table-page{
@@ -47,9 +45,7 @@
   z-index: 6;
   background: transparent;
 }
-
-
-.olt-mac-table thead th {
+.olt-table-header th {
   position: sticky; /* এটি হেডারকে এক জায়গায় আটকে রাখবে */
   top: 0;           /* স্ক্রিন বা কন্টেইনারের একদম উপরে আটকে থাকবে */
   z-index: 30;
@@ -62,12 +58,6 @@
   font-size: 0.82rem;
   line-height: 1.15;
 }
-.olt-mac-table tbody tr:hover td{
-  background: #eef6ff;
-  transition: background 0.15s ease;
-}
-
-.olt-mac-table code { color: #b91c1c; }
 
 .olt-mac-table th:nth-child(1), .olt-mac-table td:nth-child(1) { width: 5%; }
 .olt-mac-table th:nth-child(2), .olt-mac-table td:nth-child(2) { width: 12%; text-align: left; }
