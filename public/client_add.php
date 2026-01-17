@@ -47,6 +47,32 @@ function ensure_option_present(array $options, string $value): array {
     return $options;
 }
 
+// (বাংলা) MikroTik secret comment তৈরি — নির্দিষ্ট ফরম্যাটে সব তথ্য
+function build_mt_comment(array $data): string {
+    $code = trim((string)($data['client_code'] ?? ''));
+    if ($code === '' && !empty($data['pppoe_id'])) {
+        $digits = preg_replace('/\D+/', '', (string)$data['pppoe_id']);
+        if ($digits !== '') $code = substr($digits, -4);
+    }
+    $map = [
+        'client_code'  => 'Client Code',
+        'name'         => 'Client Name',
+        'mobile'       => 'Contact Number',
+        'area'         => 'Zone Name',
+        'address'      => 'Present Address',
+        'join_date'    => 'Joining Date',
+        'package_name' => 'Package Name',
+        'monthly_bill' => 'Monthly Bill',
+        'expiry_date'  => 'Bill Expiry Date',
+    ];
+    $lines = [];
+    foreach ($map as $k => $label) {
+        $val = $k === 'client_code' ? $code : trim((string)($data[$k] ?? ''));
+        $lines[] = $label.': '.$val;
+    }
+    return implode(' | ', $lines);
+}
+
 /**
  * Save uploaded photo using PPPoE ID as filename: <pppoe-id>.<ext>
  * Overwrites any existing same-name file.
@@ -555,8 +581,19 @@ if (!$errors) {
 
             if ($router_id && $pppoe_id) {
                 $profileName = ($ppp_profile !== '') ? $ppp_profile : ($selectedPackage ? package_ppp_profile_name($selectedPackage) : null);
-                $commentParts = array_filter([$name, $mobile], function($v){ return !empty($v); });
-                $comment = $commentParts ? implode(' | ', $commentParts) : '';
+                // (বাংলা) MikroTik কমেন্টে পূর্ণ তথ্য পাঠাই
+                $comment = build_mt_comment([
+                    'client_code'  => $HAS_CLIENT_CODE ? $client_code : '',
+                    'pppoe_id'     => $pppoe_id,
+                    'name'         => $name,
+                    'mobile'       => $mobile,
+                    'area'         => $area,
+                    'address'      => $address,
+                    'join_date'    => $join_date ?: '',
+                    'package_name' => $selectedPackage['name'] ?? '',
+                    'monthly_bill' => (string)$monthly_bill,
+                    'expiry_date'  => (string)$expiry_date,
+                ]);
                 $pppPass = ($pppoe_pass === '') ? $pppoe_id : $pppoe_pass;
                 $secret = mikrotik_ensure_pppoe_secret((int)$router_id, $pppoe_id, $pppPass, $profileName, ['comment'=>$comment]);
                 if (!$secret['ok']) {

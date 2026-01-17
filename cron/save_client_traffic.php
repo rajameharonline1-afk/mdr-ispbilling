@@ -19,7 +19,10 @@ if (!$TOKEN && getenv('CRON_TOKEN')) $TOKEN = getenv('CRON_TOKEN');
 if (!$TOKEN && is_readable(__DIR__.'/../storage/cron_token.txt')) {
     $TOKEN = trim((string)@file_get_contents(__DIR__.'/../storage/cron_token.txt'));
 }
-if (!$TOKEN && defined('CRON_TOKEN')) $TOKEN = (string)CRON_TOKEN;
+// (বাংলা) কনস্ট্যান্ট থাকলে constant() দিয়ে নিরাপদে পড়ি—না থাকলে undefined constant এরর এড়ায়
+if (!$TOKEN && defined('CRON_TOKEN')) {
+    $TOKEN = (string)constant('CRON_TOKEN');
+}
 
 $BASE_URL = rtrim($BASE_URL, '/');
 
@@ -27,14 +30,44 @@ $pdo = db();
 $stmt = $pdo->query("SELECT id FROM clients");
 $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$useCurl = function(string $url): array {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_USERAGENT => 'cron/save_client_traffic.php',
+    ]);
+    $out = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return [$out, $err, $code];
+};
+
 $okCnt = 0; $failCnt = 0;
 foreach ($clients as $client) {
     $client_id = (int)$client['id'];
     $url = $BASE_URL . "/api/client_live_status.php?id={$client_id}";
     if ($TOKEN) $url .= "&cron_token=" . urlencode($TOKEN);
 
-    $json = @file_get_contents($url);
-    if ($json === false) { echo "Failed HTTP for client {$client_id}\n"; $failCnt++; continue; }
+    $json = null;
+    $httpErr = '';
+    // প্রথমে curl চেষ্টা করি, fallback file_get_contents
+    [$out, $err, $code] = $useCurl($url);
+    if ($out !== false && $out !== null && $out !== '') {
+        $json = $out;
+    } else {
+        $httpErr = $err ?: "HTTP {$code}";
+        $json = @file_get_contents($url);
+    }
+    if ($json === false || $json === null || $json === '') {
+        echo "Failed HTTP for client {$client_id}" . ($httpErr ? " ({$httpErr})" : "") . "\n";
+        $failCnt++; continue;
+    }
 
     $data = json_decode($json, true);
     if (empty($data) || ($data['status'] ?? '') !== 'ok') {

@@ -9,9 +9,17 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
-require_once __DIR__ . '/../app/require_login.php';
-require_once __DIR__ . '/../app/db.php';
-require_once __DIR__ . '/../app/routeros_api.class.php';
+// (বাংলা) ক্রন/CLI টোকেন দিলে require_login এড়িয়ে যাওয়ার গার্ড
+$tokenParam = $_GET['cron_token'] ?? $_POST['cron_token'] ?? ($_SERVER['HTTP_X_CRON_TOKEN'] ?? '');
+require_once __DIR__ . '/../app/config.php';
+if ($tokenParam && defined('CRON_TOKEN') && $tokenParam === CRON_TOKEN) {
+    require_once __DIR__ . '/../app/db.php';
+    require_once __DIR__ . '/../app/routeros_api.class.php';
+} else {
+    require_once __DIR__ . '/../app/require_login.php';
+    require_once __DIR__ . '/../app/db.php';
+    require_once __DIR__ . '/../app/routeros_api.class.php';
+}
 
 function jexit(array $a): void {
 	echo json_encode($a, JSON_UNESCAPED_UNICODE); exit; 

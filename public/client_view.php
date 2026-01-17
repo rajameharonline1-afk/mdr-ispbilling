@@ -11,17 +11,25 @@ require_once __DIR__ . '/../app/mac_lookup.php';
 const ONU_MONITOR_CACHE_TTL = 300;
 
 /* ---------------- সহায়ক ফাংশন ---------------- */
-function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
-function validateClientId($id){ return (is_numeric($id) && (int)$id > 0) ? (int)$id : 0; }
+function h($s)
+{
+  return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+}
+function validateClientId($id)
+{
+  return (is_numeric($id) && (int)$id > 0) ? (int)$id : 0;
+}
 if (!function_exists('col_exists_local')) {
-  function col_exists_local(PDO $pdo, string $table, string $col): bool {
+  function col_exists_local(PDO $pdo, string $table, string $col): bool
+  {
     $st = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
     $st->execute([$col]);
     return (bool)$st->fetchColumn();
   }
 }
 if (!function_exists('onu_numeric')) {
-  function onu_numeric(?string $onu): int {
+  function onu_numeric(?string $onu): int
+  {
     if ($onu && preg_match('/(\d+)/', $onu, $m)) {
       return (int)$m[1];
     }
@@ -29,7 +37,8 @@ if (!function_exists('onu_numeric')) {
   }
 }
 if (!function_exists('first_non_empty')) {
-  function first_non_empty(array $row, array $keys) {
+  function first_non_empty(array $row, array $keys)
+  {
     foreach ($keys as $k) {
       if (array_key_exists($k, $row) && $row[$k] !== null && $row[$k] !== '') return $row[$k];
     }
@@ -37,7 +46,8 @@ if (!function_exists('first_non_empty')) {
   }
 }
 if (!function_exists('fmt_display_dt')) {
-  function fmt_display_dt($val): ?string {
+  function fmt_display_dt($val): ?string
+  {
     if ($val === null || $val === '') return null;
     $ts = strtotime((string)$val);
     if ($ts) return date('Y-m-d H:i:s', $ts);
@@ -46,10 +56,37 @@ if (!function_exists('fmt_display_dt')) {
   }
 }
 
+if (!function_exists('fmt_unit_trim')) {
+  function fmt_unit_trim(float $val, int $precision = 3): string
+  {
+    $s = number_format($val, $precision, '.', '');
+    return rtrim(rtrim($s, '0'), '.');
+  }
+}
+
+// (বাংলা) GB মান থেকে bits/size ইউনিটে রূপান্তর (Base-10)
+if (!function_exists('fmt_metric_bits_from_gb')) {
+  function fmt_metric_bits_from_gb($gb): string
+  {
+    if ($gb === null || $gb === '' || !is_numeric($gb)) return '—';
+    $val = (float)$gb * 8_000_000_000; // 1 GB = 8e9 bits (Base-10)
+    $units = ['b', 'Kb', 'Mb', 'Gb', 'Tb'];
+    $i = 0;
+    while ($val >= 1000 && $i < count($units) - 1) {
+      $val /= 1000;
+      $i++;
+    }
+    return fmt_unit_trim($val, 3) . ' ' . $units[$i];
+  }
+}
+
 /* ---------------- ইনপুট: ক্লায়েন্ট আইডি / PPPoE নাম ---------------- */
 $paramId   = trim((string)($_GET['id'] ?? ''));
 $paramPpp  = trim((string)($_GET['pppoe_id'] ?? ''));
-if ($paramId === '' && $paramPpp === '') { header("Location: /public/clients.php"); exit; }
+if ($paramId === '' && $paramPpp === '') {
+  header("Location: /public/clients.php");
+  exit;
+}
 
 /* ---------------- ডাটাবেজ সংযোগ + স্কিমা অ্যাওয়ারনেস ---------------- */
 $pdo = db();
@@ -57,16 +94,26 @@ $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 /* (বাংলা) প্যাকেজ/রাউটার টেবিলের নাম কলাম ডাইনামিকলি ঠিক করা */
 $pkgCols = $rtCols = [];
-try { $pkgCols = $pdo->query("SHOW COLUMNS FROM packages")->fetchAll(PDO::FETCH_COLUMN) ?: []; } catch (Throwable $e) {}
-try { $rtCols  = $pdo->query("SHOW COLUMNS FROM routers")->fetchAll(PDO::FETCH_COLUMN)  ?: []; } catch (Throwable $e) {}
+try {
+  $pkgCols = $pdo->query("SHOW COLUMNS FROM packages")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+} catch (Throwable $e) {
+}
+try {
+  $rtCols  = $pdo->query("SHOW COLUMNS FROM routers")->fetchAll(PDO::FETCH_COLUMN)  ?: [];
+} catch (Throwable $e) {
+}
 
 $pkgNameParts = [];
-foreach (['name','title','package_name'] as $c) { if (in_array($c,$pkgCols,true)) $pkgNameParts[] = "p.`$c`"; }
-$PKG_NAME_EXPR = $pkgNameParts ? ('COALESCE('.implode(',', $pkgNameParts).')') : 'NULL';
+foreach (['name', 'title', 'package_name'] as $c) {
+  if (in_array($c, $pkgCols, true)) $pkgNameParts[] = "p.`$c`";
+}
+$PKG_NAME_EXPR = $pkgNameParts ? ('COALESCE(' . implode(',', $pkgNameParts) . ')') : 'NULL';
 
 $rtNameParts = [];
-foreach (['name','identity','host','ip'] as $c) { if (in_array($c,$rtCols,true)) $rtNameParts[] = "r.`$c`"; }
-$ROUTER_NAME_EXPR = $rtNameParts ? ('COALESCE('.implode(',', $rtNameParts).')') : 'r.id';
+foreach (['name', 'identity', 'host', 'ip'] as $c) {
+  if (in_array($c, $rtCols, true)) $rtNameParts[] = "r.`$c`";
+}
+$ROUTER_NAME_EXPR = $rtNameParts ? ('COALESCE(' . implode(',', $rtNameParts) . ')') : 'r.id';
 
 /* ---------------- ক্লায়েন্ট + প্যাকেজ + রাউটার লোড ---------------- */
 $sqlBase = "SELECT c.*,
@@ -81,7 +128,7 @@ $sqlBase = "SELECT c.*,
 
 $lookups = [];
 $seen    = [];
-$addLookup = function(string $type, $value) use (&$lookups,&$seen) {
+$addLookup = function (string $type, $value) use (&$lookups, &$seen) {
   if ($value === '' || $value === null) return;
   $key = $type . ':' . $value;
   if (isset($seen[$key])) return;
@@ -105,38 +152,41 @@ if ($paramId !== '') {
 
 $client = null;
 foreach ($lookups as [$type, $value]) {
-  try{
+  try {
     $stmt = $pdo->prepare($sqlBase . ($type === 'id' ? " WHERE c.id = ? LIMIT 1" : " WHERE c.pppoe_id = ? LIMIT 1"));
     $stmt->execute([$value]);
     $client = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
-  }catch(Throwable $e){
+  } catch (Throwable $e) {
     $client = null;
   }
   if ($client) break;
 }
 
-if (!$client) { header("Location: /public/clients.php"); exit; }
+if (!$client) {
+  header("Location: /public/clients.php");
+  exit;
+}
 
 // (বাংলা) স্কিমা ভিন্ন হলেও ভিউতে মান দেখানোর জন্য সাধারণ ফিল্ডগুলোর ফ্যালব্যাক সেট করা হচ্ছে
-$addr = first_non_empty($client, ['address','present_address','addr','current_address']);
+$addr = first_non_empty($client, ['address', 'present_address', 'addr', 'current_address']);
 if ($addr !== null) $client['address'] = $addr;
-$client_area = first_non_empty($client, ['area','zone','zone_name']);
+$client_area = first_non_empty($client, ['area', 'zone', 'zone_name']);
 if ($client_area !== null) $client['area'] = $client_area;
-$client_sub_zone = first_non_empty($client, ['sub_zone','subzone','sub_zone_name']);
+$client_sub_zone = first_non_empty($client, ['sub_zone', 'subzone', 'sub_zone_name']);
 if ($client_sub_zone !== null) $client['sub_zone'] = $client_sub_zone;
-$client_box = first_non_empty($client, ['box','box_no','box_id']);
+$client_box = first_non_empty($client, ['box', 'box_no', 'box_id']);
 if ($client_box !== null) $client['box'] = $client_box;
-$expiry = first_non_empty($client, ['expiry_date','expire_date','next_due_date']);
+$expiry = first_non_empty($client, ['expiry_date', 'expire_date', 'next_due_date']);
 if ($expiry !== null) $client['expiry_date'] = $expiry;
-$joinDate = first_non_empty($client, ['join_date','created_at']);
+$joinDate = first_non_empty($client, ['join_date', 'created_at']);
 if ($joinDate !== null) $client['join_date'] = $joinDate;
-$creator = first_non_empty($client, ['created_by','added_by','user_id']);
+$creator = first_non_empty($client, ['created_by', 'added_by', 'user_id']);
 if ($creator !== null) $client['created_by'] = $creator;
-$mobile = first_non_empty($client, ['mobile','phone','contact','mobile_no','msisdn']);
+$mobile = first_non_empty($client, ['mobile', 'phone', 'contact', 'mobile_no', 'msisdn']);
 if ($mobile !== null) $client['mobile'] = $mobile;
 if (empty($client['router_name'])) {
   if (!empty($client['router_ip']))      $client['router_name'] = $client['router_ip'];
-  elseif (!empty($client['router_id']))  $client['router_name'] = 'Router #'.(int)$client['router_id'];
+  elseif (!empty($client['router_id']))  $client['router_name'] = 'Router #' . (int)$client['router_id'];
 }
 $pkgNameFromClient = $client['package_name'] ?? null;
 if (!$pkgNameFromClient && !empty($client['package'])) {
@@ -145,17 +195,21 @@ if (!$pkgNameFromClient && !empty($client['package'])) {
 
 $client_id = (int)$client['id'];
 $pppoe_id  = (string)($client['pppoe_id'] ?? '');
+// (বাংলা) Client Code না থাকলে ফাঁকা থাকবে, fallback হিসেবে client id ব্যবহার করা হবে না
+$client_code = trim((string)($client['client_code'] ?? ''));
 
-function norm_mac(?string $mac): ?string {
-  if(!$mac) return null;
+function norm_mac(?string $mac): ?string
+{
+  if (!$mac) return null;
   $hex = strtoupper(preg_replace('/[^0-9A-F]/', '', $mac));
-  if(strlen($hex)!==12) return null;
-  return implode(':', str_split($hex,2));
+  if (strlen($hex) !== 12) return null;
+  return implode(':', str_split($hex, 2));
 }
 
-function parse_onu_iface_triplet(?string $iface): array {
+function parse_onu_iface_triplet(?string $iface): array
+{
   $txt = strtoupper(trim((string)$iface));
-  if ($txt === '') return [null,null,null];
+  if ($txt === '') return [null, null, null];
   if (preg_match('/(?:EPON|GPON)\s*0*([0-9]+)\s*ONU\s*0*([0-9]+)/', $txt, $m)) {
     $rawPort = (int)$m[1];
     $slot    = ($rawPort >= 10) ? (int)floor($rawPort / 10) : null;
@@ -173,12 +227,13 @@ function parse_onu_iface_triplet(?string $iface): array {
   if (preg_match('/(\d+)\s*:\s*(\d+)/', $txt, $m))
     return [null, (int)$m[1], (int)$m[2]];
   if (preg_match('/(\d+)/', $txt, $m))
-    return [null,null,(int)$m[1]];
-  return [null,null,null];
+    return [null, null, (int)$m[1]];
+  return [null, null, null];
 }
 
-function parse_port_hint(?string $text): ?int {
-  if(!$text) return null;
+function parse_port_hint(?string $text): ?int
+{
+  if (!$text) return null;
   $txt = strtoupper((string)$text);
   if (preg_match('/PON\s*(\d+)/', $txt, $m)) return (int)$m[1];
   if (preg_match('/\/\s*(\d+)/', $txt, $m)) return (int)$m[1];
@@ -186,53 +241,55 @@ function parse_port_hint(?string $text): ?int {
   return null;
 }
 
-function fetch_onu_monitor_match(PDO $pdo, array $client, array $macCandidates): ?array {
+function fetch_onu_monitor_match(PDO $pdo, array $client, array $macCandidates): ?array
+{
   $oltId = (int)($client['olt_id'] ?? 0);
   if ($oltId <= 0) return null;
-  try{
+  try {
     $st = $pdo->prepare("SELECT data_json, generated_at FROM onu_monitor_cache WHERE olt_id=? LIMIT 1");
     $st->execute([$oltId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
-  }catch(Throwable $e){
+  } catch (Throwable $e) {
     return null;
   }
-  if(!$row) return null;
+  if (!$row) return null;
   $ts = strtotime((string)($row['generated_at'] ?? ''));
-  if(!$ts || (time()-$ts) > ONU_MONITOR_CACHE_TTL) return null;
+  if (!$ts || (time() - $ts) > ONU_MONITOR_CACHE_TTL) return null;
   $payload = json_decode($row['data_json'] ?? '', true);
-  if(!$payload || !is_array($payload['groups'] ?? null)) return null;
+  if (!$payload || !is_array($payload['groups'] ?? null)) return null;
 
   $macSet = [];
-  foreach($macCandidates as $mac => $dummy){
+  foreach ($macCandidates as $mac => $dummy) {
     $norm = norm_mac($mac);
-    if($norm) $macSet[$norm] = true;
+    if ($norm) $macSet[$norm] = true;
   }
-  if(!empty($client['caller_mac'])){
+  if (!empty($client['caller_mac'])) {
     $norm = norm_mac($client['caller_mac']);
-    if($norm) $macSet[$norm] = true;
+    if ($norm) $macSet[$norm] = true;
   }
 
   $targetPort = parse_port_hint($client['olt_port'] ?? '');
   $targetOnu  = is_numeric($client['olt_onu'] ?? null) ? (int)$client['olt_onu'] : null;
 
-  $best = null; $bestScore = -1;
-  foreach($payload['groups'] as $pon=>$group){
-    foreach(($group['list'] ?? []) as $row){
+  $best = null;
+  $bestScore = -1;
+  foreach ($payload['groups'] as $pon => $group) {
+    foreach (($group['list'] ?? []) as $row) {
       $iface = (string)($row['iface'] ?? '');
-      [$slot,$port,$onu] = parse_onu_iface_triplet($iface);
+      [$slot, $port, $onu] = parse_onu_iface_triplet($iface);
       $mac = norm_mac($row['mac'] ?? '');
       $score = 0;
-      if($mac && isset($macSet[$mac])) $score += 4;
-      if($targetOnu !== null && $onu !== null && $onu === $targetOnu) $score += 3;
-      if($targetPort !== null && $port !== null && $port === $targetPort) $score += 1;
-      if($score <= 0) continue;
-      if($score > $bestScore){
+      if ($mac && isset($macSet[$mac])) $score += 4;
+      if ($targetOnu !== null && $onu !== null && $onu === $targetOnu) $score += 3;
+      if ($targetPort !== null && $port !== null && $port === $targetPort) $score += 1;
+      if ($score <= 0) continue;
+      if ($score > $bestScore) {
         $bestScore = $score;
         $rxVal = null;
         $rawRx = $row['rx'] ?? null;
-        if(is_numeric($rawRx)){
+        if (is_numeric($rawRx)) {
           $rxVal = (float)$rawRx;
-        } elseif(is_string($rawRx) && preg_match('/-?\d+(?:\.\d+)?/', $rawRx, $m)) {
+        } elseif (is_string($rawRx) && preg_match('/-?\d+(?:\.\d+)?/', $rawRx, $m)) {
           $rxVal = (float)$m[0];
         }
         $best = [
@@ -242,7 +299,7 @@ function fetch_onu_monitor_match(PDO $pdo, array $client, array $macCandidates):
           'onu'   => $onu,
           'mac'   => $mac ?: ($row['mac'] ?? null),
           'rx'    => $rxVal,
-          'raw_rx'=> $rawRx,
+          'raw_rx' => $rawRx,
           'pon_label' => $pon,
         ];
       }
@@ -251,32 +308,36 @@ function fetch_onu_monitor_match(PDO $pdo, array $client, array $macCandidates):
   return $best;
 }
 
-function rx_badge_meta($value): array {
-  if($value === null || $value === '' || !is_numeric($value)){
+function rx_badge_meta($value): array
+{
+  if ($value === null || $value === '' || !is_numeric($value)) {
     return [null, null];
   }
   $num = (float)$value;
-  if($num >= -24 && $num <= -1){
+  if ($num >= -24 && $num <= -1) {
     return ['Good', 'text-bg-success'];
   }
-  if($num >= -26 && $num < -24){
+  if ($num >= -26 && $num < -24) {
     return ['Warn', 'text-bg-warning text-dark'];
   }
   return ['Critical', 'text-bg-danger'];
 }
 
-$invRow = null; $cacheRow = null;
+$invRow = null;
+$cacheRow = null;
 $macCandidates = [];
-$addMacCandidate = function($mac) use (&$macCandidates){
-  if(!$mac) return;
+$addMacCandidate = function ($mac) use (&$macCandidates) {
+  if (!$mac) return;
   $norm = norm_mac($mac);
-  if($norm){ $macCandidates[$norm] = 1; }
+  if ($norm) {
+    $macCandidates[$norm] = 1;
+  }
 };
 $addMacCandidate($client['caller_mac'] ?? null);
 $addMacCandidate($client['router_mac'] ?? null);
 $addMacCandidate($client['ap_mac'] ?? null);
 
-try{
+try {
   $stInv = $pdo->prepare("
     SELECT oi.*, omm.mac AS mapped_mac
     FROM onu_inventory oi
@@ -287,11 +348,13 @@ try{
   ");
   $stInv->execute([(int)$client['id']]);
   $invRow = $stInv->fetch(PDO::FETCH_ASSOC) ?: null;
-}catch(Throwable $e){ $invRow = null; }
+} catch (Throwable $e) {
+  $invRow = null;
+}
 
-if(!$invRow && $macCandidates){
-  try{
-    $in = implode(',', array_fill(0,count($macCandidates),'?'));
+if (!$invRow && $macCandidates) {
+  try {
+    $in = implode(',', array_fill(0, count($macCandidates), '?'));
     $sql = "
       SELECT oi.*, omm.mac AS mapped_mac
       FROM onu_mac_map omm
@@ -303,7 +366,8 @@ if(!$invRow && $macCandidates){
     $st = $pdo->prepare($sql);
     $st->execute(array_keys($macCandidates));
     $invRow = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-  }catch(Throwable $e){}
+  } catch (Throwable $e) {
+  }
 }
 
 $binding = [
@@ -314,25 +378,36 @@ $binding = [
   'mac'    => null,
   'source' => 'client',
 ];
-if($invRow){
-  if(!empty($invRow['olt_id'])){ $binding['olt_id'] = (int)$invRow['olt_id']; $binding['source'] = 'onu_inventory'; }
-  if(!empty($invRow['iface'])) { $binding['port'] = $invRow['iface']; $binding['source'] = 'onu_inventory'; }
-  if(isset($invRow['onu_id']) && $invRow['onu_id'] !== '') { $binding['onu'] = onu_numeric((string)$invRow['onu_id']); $binding['source'] = 'onu_inventory'; }
-  if(!empty($invRow['last_updated'])){ $binding['linked_at'] = $invRow['last_updated']; }
-  if(!empty($invRow['mapped_mac'])){
+if ($invRow) {
+  if (!empty($invRow['olt_id'])) {
+    $binding['olt_id'] = (int)$invRow['olt_id'];
+    $binding['source'] = 'onu_inventory';
+  }
+  if (!empty($invRow['iface'])) {
+    $binding['port'] = $invRow['iface'];
+    $binding['source'] = 'onu_inventory';
+  }
+  if (isset($invRow['onu_id']) && $invRow['onu_id'] !== '') {
+    $binding['onu'] = onu_numeric((string)$invRow['onu_id']);
+    $binding['source'] = 'onu_inventory';
+  }
+  if (!empty($invRow['last_updated'])) {
+    $binding['linked_at'] = $invRow['last_updated'];
+  }
+  if (!empty($invRow['mapped_mac'])) {
     $m = norm_mac($invRow['mapped_mac']) ?: $invRow['mapped_mac'];
     $binding['mac'] = $m;
   }
 }
 $preferredOltId = $binding['olt_id'] ?? 0;
-if(!empty($binding['mac'])) $macCandidates[$binding['mac']] = 1;
+if (!empty($binding['mac'])) $macCandidates[$binding['mac']] = 1;
 
-if($macCandidates){
-  try{
-    $in = implode(',', array_fill(0,count($macCandidates),'?'));
+if ($macCandidates) {
+  try {
+    $in = implode(',', array_fill(0, count($macCandidates), '?'));
     $sql = "SELECT * FROM olt_mac_cache WHERE mac IN ($in)";
     $params = array_keys($macCandidates);
-    if($preferredOltId > 0){
+    if ($preferredOltId > 0) {
       $sql .= " AND olt_id = ?";
       $params[] = $preferredOltId;
     }
@@ -340,28 +415,30 @@ if($macCandidates){
     $st = $pdo->prepare($sql);
     $st->execute($params);
     $cacheRow = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-    if(!$cacheRow && $preferredOltId > 0){
+    if (!$cacheRow && $preferredOltId > 0) {
       // fallback without olt_id filter if no match found
       $sql = "SELECT * FROM olt_mac_cache WHERE mac IN ($in) ORDER BY learned_at DESC LIMIT 1";
       $st = $pdo->prepare($sql);
       $st->execute(array_keys($macCandidates));
       $cacheRow = $st->fetch(PDO::FETCH_ASSOC) ?: null;
     }
-  }catch(Throwable $e){}
+  } catch (Throwable $e) {
+  }
 }
-if(!$cacheRow && $preferredOltId > 0 && isset($binding['onu']) && $binding['onu'] !== ''){
-  try{
+if (!$cacheRow && $preferredOltId > 0 && isset($binding['onu']) && $binding['onu'] !== '') {
+  try {
     $st = $pdo->prepare("SELECT * FROM olt_mac_cache WHERE olt_id=? AND onu=? ORDER BY learned_at DESC LIMIT 1");
     $st->execute([(int)$preferredOltId, (string)$binding['onu']]);
     $cacheRow = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-  }catch(Throwable $e){}
+  } catch (Throwable $e) {
+  }
 }
-if(!$cacheRow && $macCandidates){
-  try{
-    $in = implode(',', array_fill(0,count($macCandidates),'?'));
+if (!$cacheRow && $macCandidates) {
+  try {
+    $in = implode(',', array_fill(0, count($macCandidates), '?'));
     $sql = "SELECT * FROM olt_onu_client_macs WHERE mac IN ($in)";
     $params = array_keys($macCandidates);
-    if($preferredOltId > 0){
+    if ($preferredOltId > 0) {
       $sql .= " AND olt_id = ?";
       $params[] = $preferredOltId;
     }
@@ -369,13 +446,13 @@ if(!$cacheRow && $macCandidates){
     $st = $pdo->prepare($sql);
     $st->execute($params);
     $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-    if(!$row && $preferredOltId > 0){
+    if (!$row && $preferredOltId > 0) {
       $sql = "SELECT * FROM olt_onu_client_macs WHERE mac IN ($in) ORDER BY learned_at DESC LIMIT 1";
       $st = $pdo->prepare($sql);
       $st->execute(array_keys($macCandidates));
       $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
     }
-    if($row){
+    if ($row) {
       $family = strtoupper((string)($row['family'] ?? 'EPON'));
       $slot   = (int)($row['slot'] ?? 0);
       $iface = trim(sprintf('%s 0/%02d', $family, $slot));
@@ -387,67 +464,77 @@ if(!$cacheRow && $macCandidates){
         'learned_at' => $row['learned_at'] ?? null,
       ];
     }
-  }catch(Throwable $e){}
+  } catch (Throwable $e) {
+  }
 }
 
-if($cacheRow){
+if ($cacheRow) {
   $cacheOlt = (int)($cacheRow['olt_id'] ?? 0);
   $cacheOnu = onu_numeric($cacheRow['onu'] ?? '');
   $matchesOlt = ($preferredOltId <= 0) || !$cacheOlt || $cacheOlt === $preferredOltId;
   $matchesOnu = ($binding['onu'] === null) || $cacheOnu === PHP_INT_MAX || (int)$binding['onu'] === $cacheOnu;
-  if($matchesOlt && $matchesOnu){
-    if($cacheOlt){ $binding['olt_id'] = $cacheOlt; $preferredOltId = $cacheOlt; }
-    if(!empty($cacheRow['port'])) $binding['port'] = $cacheRow['port'];
-    if($cacheOnu !== PHP_INT_MAX) $binding['onu'] = $cacheOnu;
-    if(!empty($cacheRow['mac'])){
+  if ($matchesOlt && $matchesOnu) {
+    if ($cacheOlt) {
+      $binding['olt_id'] = $cacheOlt;
+      $preferredOltId = $cacheOlt;
+    }
+    if (!empty($cacheRow['port'])) $binding['port'] = $cacheRow['port'];
+    if ($cacheOnu !== PHP_INT_MAX) $binding['onu'] = $cacheOnu;
+    if (!empty($cacheRow['mac'])) {
       $binding['mac'] = norm_mac($cacheRow['mac']) ?: $cacheRow['mac'];
       $macCandidates[$binding['mac']] = 1;
     }
-    if(!empty($cacheRow['learned_at'])) $binding['linked_at'] = $cacheRow['learned_at'];
-    if($binding['source'] !== 'onu_inventory') $binding['source'] = 'olt_mac_cache';
+    if (!empty($cacheRow['learned_at'])) $binding['linked_at'] = $cacheRow['learned_at'];
+    if ($binding['source'] !== 'onu_inventory') $binding['source'] = 'olt_mac_cache';
   }
-} elseif($invRow){
-  if($binding['linked_at'] === null && !empty($invRow['last_updated'])) $binding['linked_at'] = $invRow['last_updated'];
+} elseif ($invRow) {
+  if ($binding['linked_at'] === null && !empty($invRow['last_updated'])) $binding['linked_at'] = $invRow['last_updated'];
 }
 
 $client['olt_id'] = $binding['olt_id'] ?: $client['olt_id'];
-if(!empty($binding['port'])) $client['olt_port'] = $binding['port'];
-if($binding['onu'] !== null && $binding['onu'] !== PHP_INT_MAX) $client['olt_onu'] = $binding['onu'];
-if(!empty($binding['linked_at'])) $client['last_linked_at'] = $binding['linked_at'];
-if(!empty($binding['mac'])) $macCandidates[$binding['mac']] = 1;
+if (!empty($binding['port'])) $client['olt_port'] = $binding['port'];
+if ($binding['onu'] !== null && $binding['onu'] !== PHP_INT_MAX) $client['olt_onu'] = $binding['onu'];
+if (!empty($binding['linked_at'])) $client['last_linked_at'] = $binding['linked_at'];
+if (!empty($binding['mac'])) $macCandidates[$binding['mac']] = 1;
 
 $monitorMatch = fetch_onu_monitor_match($pdo, $client, $macCandidates);
 $monitor_iface = null;
 $monitor_onu = null;
 $monitor_rx = null;
-if($monitorMatch){
+if ($monitorMatch) {
   $monitor_iface = $monitorMatch['iface'] ?? null;
   $monitor_onu   = $monitorMatch['onu'] ?? null;
   $monitor_rx    = $monitorMatch['rx'] ?? null;
-  if($monitor_iface){ $client['olt_port'] = $monitor_iface; $binding['port'] = $monitor_iface; }
-  if($monitor_onu !== null){   $client['olt_onu']  = $monitor_onu; $binding['onu'] = $monitor_onu; }
-  if(!empty($monitorMatch['mac'])){
+  if ($monitor_iface) {
+    $client['olt_port'] = $monitor_iface;
+    $binding['port'] = $monitor_iface;
+  }
+  if ($monitor_onu !== null) {
+    $client['olt_onu']  = $monitor_onu;
+    $binding['onu'] = $monitor_onu;
+  }
+  if (!empty($monitorMatch['mac'])) {
     $normMon = norm_mac($monitorMatch['mac']);
     $onu_mac = $normMon ?: $monitorMatch['mac'];
-    if($normMon) $macCandidates[$normMon] = 1;
-    elseif(is_string($monitorMatch['mac'])) $macCandidates[$monitorMatch['mac']] = 1;
-    if($binding['mac'] === null) $binding['mac'] = $onu_mac;
+    if ($normMon) $macCandidates[$normMon] = 1;
+    elseif (is_string($monitorMatch['mac'])) $macCandidates[$monitorMatch['mac']] = 1;
+    if ($binding['mac'] === null) $binding['mac'] = $onu_mac;
   }
 }
 
 /* (বাংলা) ইনফার্ড OLT আইডি থাকলে, সঠিক OLT তথ্য আবার লোড করি যেন UI তে নাম/হোস্ট/vendor মেলে */
 if (!empty($client['olt_id'])) {
   $client['olt_id'] = (int)$client['olt_id'];
-  try{
+  try {
     $stOlt = $pdo->prepare("SELECT name, host, vendor FROM olts WHERE id=? LIMIT 1");
     $stOlt->execute([$client['olt_id']]);
     $oltRow = $stOlt->fetch(PDO::FETCH_ASSOC);
-    if($oltRow){
+    if ($oltRow) {
       $client['olt_name']   = $oltRow['name']   ?? $client['olt_name']   ?? null;
       $client['olt_host']   = $oltRow['host']   ?? $client['olt_host']   ?? null;
       $client['olt_vendor'] = $oltRow['vendor'] ?? $client['olt_vendor'] ?? null;
     }
-  }catch(Throwable $e){
+  } catch (Throwable $e) {
     // ignore lookup failure
   }
 }
@@ -458,49 +545,61 @@ $client_initial = mb_strtoupper(mb_substr($client['name'] ?? '?', 0, 1, 'UTF-8')
 $m              = trim($client['mobile'] ?? '');
 
 /* ---------------- লাইভ ডাটা প্লেসহোল্ডার (AJAX পূরণ করবে) ---------------- */
-$live_ip = first_non_empty($client, ['ip_address','ip','ipv4','client_ip','last_ip']);
+$live_ip = first_non_empty($client, ['ip_address', 'ip', 'ipv4', 'client_ip', 'last_ip']);
 if ($live_ip === null || $live_ip === '') $live_ip = '—';
-$uptime_raw = first_non_empty($client, ['uptime','session_uptime']);
+$uptime_raw = first_non_empty($client, ['uptime', 'session_uptime']);
 if (!$uptime_raw && !empty($client['last_sync_time'])) $uptime_raw = $client['last_sync_time'];
 $uptime_display = $uptime_raw ? fmt_display_dt($uptime_raw) ?? (string)$uptime_raw : '—';
-$last_seen_raw = first_non_empty($client, ['last_logout_at','last_sync_time','last_seen']);
+$last_seen_raw = first_non_empty($client, ['last_logout_at', 'last_sync_time', 'last_seen']);
 $last_seen = fmt_display_dt($last_seen_raw) ?? '—';
 $is_online = false;
 if (isset($client['is_online'])) {
   $v = $client['is_online'];
-  $is_online = is_numeric($v) ? ((int)$v === 1) : in_array(strtolower((string)$v), ['yes','true','online','active'], true);
+  $is_online = is_numeric($v) ? ((int)$v === 1) : in_array(strtolower((string)$v), ['yes', 'true', 'online', 'active'], true);
 }
 // ট্রাফিক লগ ফ্যালব্যাক (client_traffic_log)
 $data_dl = $data_ul = null;
 $data_usage_asof = null;
-try{
+try {
   $st = $pdo->prepare("SELECT total_download_gb, total_upload_gb, log_time FROM client_traffic_log WHERE client_id=? ORDER BY log_time DESC LIMIT 1");
   $st->execute([$client_id]);
   $row = $st->fetch(PDO::FETCH_ASSOC);
-  if($row){
+  if ($row) {
     $data_dl = is_numeric($row['total_download_gb']) ? (float)$row['total_download_gb'] : null;
     $data_ul = is_numeric($row['total_upload_gb']) ? (float)$row['total_upload_gb'] : null;
     $data_usage_asof = $row['log_time'] ?? null;
   }
-}catch(Throwable $e){}
-$data_dl_text = ($data_dl !== null) ? (number_format($data_dl, 3).' GB') : '—';
-$data_ul_text = ($data_ul !== null) ? (number_format($data_ul, 3).' GB') : '—';
+} catch (Throwable $e) {
+}
+if ($data_dl && $data_usage_asof) {
+  $data_usage_asof = fmt_display_dt($data_usage_asof) ?? $data_usage_asof;
+} 
+
 if ($uptime_display === '—' && $data_usage_asof) {
   // যদি লাইভ আপটাইম না থাকে, শেষ ট্রাফিক লগের সময় দেখাই
   $uptime_display = 'Last log: ' . (fmt_display_dt($data_usage_asof) ?? $data_usage_asof);
 }
+$has_traffic_log = ($data_dl !== null) || ($data_ul !== null);
+$traffic_note = '';
+if (!$has_traffic_log) {
+  $traffic_note = 'No traffic log found yet (client_traffic_log খালি)';
+} elseif ($data_usage_asof) {
+  $traffic_note = 'Last log: ' . $data_usage_asof;
+}
+$data_dl_text_metric = fmt_metric_bits_from_gb($data_dl);
+$data_ul_text_metric = fmt_metric_bits_from_gb($data_ul);
 $rx_prefill = ($invRow && $invRow['last_rx_dbm'] !== null) ? (float)$invRow['last_rx_dbm'] : null;
-if($monitor_rx !== null){
+if ($monitor_rx !== null) {
   $rx_prefill = (float)$monitor_rx;
 }
 $rx_from_cache = null;
-if(is_array($cacheRow)){
+if (is_array($cacheRow)) {
   $rx_from_cache = $cacheRow['rx_power_dbm'] ?? ($cacheRow['rx_power'] ?? ($cacheRow['rx'] ?? null));
 }
-if($rx_prefill === null && $rx_from_cache !== null){
-  if(is_numeric($rx_from_cache)){
+if ($rx_prefill === null && $rx_from_cache !== null) {
+  if (is_numeric($rx_from_cache)) {
     $rx_prefill = (float)$rx_from_cache;
-  } elseif(is_string($rx_from_cache) && preg_match('/-?\d+(?:\.\d+)?/', $rx_from_cache, $m)) {
+  } elseif (is_string($rx_from_cache) && preg_match('/-?\d+(?:\.\d+)?/', $rx_from_cache, $m)) {
     $rx_prefill = (float)$m[0];
   }
 }
@@ -524,19 +623,19 @@ if ($pon_iface_raw) {
     if ($family) {
       if (strpos($pon_iface_raw, '/') !== false) {
         $seg = $pon_iface_raw;
-        if (strpos($seg, '0/') !== 0) $seg = '0/'.$seg;
-        $pon_display = $family.$seg;
+        if (strpos($seg, '0/') !== 0) $seg = '0/' . $seg;
+        $pon_display = $family . $seg;
       } else {
-        $pon_display = $family.'0/'.$pon_iface_raw;
+        $pon_display = $family . '0/' . $pon_iface_raw;
       }
     }
   }
   $pon_compact = strtoupper(str_replace(' ', '', $pon_display ?? $pon_iface_raw));
   $srcForPort = $pon_display ?? $pon_iface_raw;
   if (preg_match('/\/(\d+)(?::\d+)?$/', $srcForPort, $mm)) {
-    $pon_port_display = 'PON'.$mm[1];
+    $pon_port_display = 'PON' . $mm[1];
   } elseif (preg_match('/PON\s*(\d+)/i', $srcForPort, $mm)) {
-    $pon_port_display = 'PON'.$mm[1];
+    $pon_port_display = 'PON' . $mm[1];
   }
 }
 $onu_id_display = ($monitor_onu !== null ? $monitor_onu : null);
@@ -566,8 +665,8 @@ $initialOltBinding = [
 ];
 
 if (!empty($client['olt_id']) && !empty($client['olt_port']) && !empty($client['olt_onu'])) {
-  try{
-    if($rx_prefill === null){
+  try {
+    if ($rx_prefill === null) {
       $stRx = $pdo->prepare("SELECT last_rx_dbm FROM onu_inventory WHERE olt_id=? AND iface=? AND onu_id=? ORDER BY last_updated DESC LIMIT 1");
       $stRx->execute([(int)$client['olt_id'], trim((string)$client['olt_port']), (int)$client['olt_onu']]);
       $rx_prefill = $stRx->fetchColumn();
@@ -577,12 +676,12 @@ if (!empty($client['olt_id']) && !empty($client['olt_port']) && !empty($client['
         $rx_prefill = null;
       }
     }
-  }catch(Throwable $e){
+  } catch (Throwable $e) {
     $rx_prefill = null;
   }
 
-  try{
-    if(!$onu_mac){
+  try {
+    if (!$onu_mac) {
       $stMac = $pdo->prepare("
         SELECT omm.mac
         FROM onu_inventory oi
@@ -594,7 +693,7 @@ if (!empty($client['olt_id']) && !empty($client['olt_port']) && !empty($client['
       $stMac->execute([(int)$client['id']]);
       $onu_mac = $stMac->fetchColumn() ?: null;
     }
-  }catch(Throwable $e){
+  } catch (Throwable $e) {
     $onu_mac = null;
   }
 }
@@ -602,17 +701,17 @@ $rx_prefill_meta = rx_badge_meta($rx_prefill);
 $initialOltBinding['rx_power_dbm'] = $rx_prefill;
 $onu_mac = $onu_mac ?: ($client['caller_mac'] ?? null);
 $router_mac_raw = $client['router_mac']
-               ?? ($binding['mac'] ?? null)
-               ?? ($onu_mac ?: null)
-               ?? ($client['caller_mac'] ?? null)
-               ?? ($client['ap_mac'] ?? null)
-               ?? ($client['last_seen_mac'] ?? null)
-               ?? ($client['onu_mac'] ?? null);
+  ?? ($binding['mac'] ?? null)
+  ?? ($onu_mac ?: null)
+  ?? ($client['caller_mac'] ?? null)
+  ?? ($client['ap_mac'] ?? null)
+  ?? ($client['last_seen_mac'] ?? null)
+  ?? ($client['onu_mac'] ?? null);
 $router_mac_display = norm_mac($router_mac_raw);
-if(!$router_mac_display && $router_mac_raw){
+if (!$router_mac_display && $router_mac_raw) {
   $router_mac_display = trim((string)$router_mac_raw);
 }
-if(!$router_mac_display && $onu_mac){
+if (!$router_mac_display && $onu_mac) {
   $router_mac_display = norm_mac($onu_mac) ?: trim((string)$onu_mac);
 }
 $device_vendor = null;
@@ -647,7 +746,7 @@ try {
     $API = new RouterosAPI();
     $API->debug = false;
     if ($API->connect($rt_ip, $rt_user, $rt_pass, $rt_port)) {
-      $secret = $API->comm('/ppp/secret/print', ['?name'=>$pppoe_id, '.proplist'=>'password,disabled']);
+      $secret = $API->comm('/ppp/secret/print', ['?name' => $pppoe_id, '.proplist' => 'password,disabled']);
       if (is_array($secret) && isset($secret[0])) {
         $mk_secret_found = true;
         if (isset($secret[0]['password'])) {
@@ -655,7 +754,7 @@ try {
         }
         if (array_key_exists('disabled', $secret[0])) {
           $val = strtolower(trim((string)$secret[0]['disabled']));
-          $mk_secret_disabled = in_array($val, ['true','yes','1','on'], true);
+          $mk_secret_disabled = in_array($val, ['true', 'yes', '1', 'on'], true);
         }
       }
       $API->disconnect();
@@ -672,38 +771,54 @@ if ($mk_secret_found && $mk_secret_disabled !== null) {
   $stVal = $mk_secret_disabled ? 'inactive' : 'active';
 }
 
-if ($isLeft) { $badge='bg-dark'; $stLabel='Left'; }
-elseif (in_array($stVal, ['inactive','deactive','disabled','expired','blocked'], true)) { $badge='bg-danger';  $stLabel='Inactive'; }
-elseif (in_array($stVal, ['pending','hold'], true)) { $badge='bg-warning text-dark'; $stLabel='Pending';  }
-else { $badge='bg-success'; $stLabel='Active'; }
+if ($isLeft) {
+  $badge = 'bg-dark';
+  $stLabel = 'Left';
+} elseif (in_array($stVal, ['inactive', 'deactive', 'disabled', 'expired', 'blocked'], true)) {
+  $badge = 'bg-danger';
+  $stLabel = 'Inactive';
+} elseif (in_array($stVal, ['pending', 'hold'], true)) {
+  $badge = 'bg-warning text-dark';
+  $stLabel = 'Pending';
+} else {
+  $badge = 'bg-success';
+  $stLabel = 'Active';
+}
 
 /* ---------------- লেজার ব্যাজ রঙ নির্বাচন ---------------- */
 $ledger = (float)($client['ledger_balance'] ?? 0);
-if ($ledger < 0) { $ledgerClass='bg-danger';  $ledgerText='Due'; }
-elseif ($ledger > 0){ $ledgerClass='bg-success'; $ledgerText='Advance'; }
-else { $ledgerClass='bg-secondary'; $ledgerText='Clear'; }
+if ($ledger < 0) {
+  $ledgerClass = 'bg-danger';
+  $ledgerText = 'Due';
+} elseif ($ledger > 0) {
+  $ledgerClass = 'bg-success';
+  $ledgerText = 'Advance';
+} else {
+  $ledgerClass = 'bg-secondary';
+  $ledgerText = 'Clear';
+}
 
 /* ---------------- ইনভয়েস ব্যালেন্স (invoices.php-এর সাথে মিল) ---------------- */
 $invoice_balance = 0.0;
 try {
-  $invAmountCol = col_exists_local($pdo,'invoices','payable') ? 'payable'
-               : (col_exists_local($pdo,'invoices','net_amount') ? 'net_amount'
-               : (col_exists_local($pdo,'invoices','amount') ? 'amount'
-               : (col_exists_local($pdo,'invoices','total') ? 'total' : 'total')));
-  $payFk = col_exists_local($pdo,'payments','invoice_id') ? 'invoice_id'
-         : (col_exists_local($pdo,'payments','bill_id') ? 'bill_id' : null);
-  $hasPayDiscount = col_exists_local($pdo,'payments','discount');
+  $invAmountCol = col_exists_local($pdo, 'invoices', 'payable') ? 'payable'
+    : (col_exists_local($pdo, 'invoices', 'net_amount') ? 'net_amount'
+      : (col_exists_local($pdo, 'invoices', 'amount') ? 'amount'
+        : (col_exists_local($pdo, 'invoices', 'total') ? 'total' : 'total')));
+  $payFk = col_exists_local($pdo, 'payments', 'invoice_id') ? 'invoice_id'
+    : (col_exists_local($pdo, 'payments', 'bill_id') ? 'bill_id' : null);
+  $hasPayDiscount = col_exists_local($pdo, 'payments', 'discount');
   $payNetExpr = $hasPayDiscount
     ? "COALESCE(SUM(pm.amount - COALESCE(pm.discount,0)),0)"
     : "COALESCE(SUM(pm.amount),0)";
   $paidExpr = $payFk ? "(SELECT $payNetExpr FROM payments pm WHERE pm.`$payFk`=i.id)" : "0";
   $invWhere = [];
-  if (col_exists_local($pdo,'invoices','is_void')) $invWhere[] = "i.is_void=0";
-  if (col_exists_local($pdo,'invoices','is_deleted')) $invWhere[] = "i.is_deleted=0";
-  if (col_exists_local($pdo,'invoices','deleted_at')) $invWhere[] = "i.deleted_at IS NULL";
-  if (col_exists_local($pdo,'invoices','status')) $invWhere[] = "COALESCE(i.status,'') NOT IN ('void','deleted','cancelled','canceled')";
-  $whereSql = $invWhere ? (' AND '.implode(' AND ',$invWhere)) : '';
-  $st = $pdo->prepare("SELECT COALESCE(SUM(GREATEST(0, COALESCE(i.`$invAmountCol`,0) - $paidExpr)),0) FROM invoices i WHERE i.client_id=?".$whereSql);
+  if (col_exists_local($pdo, 'invoices', 'is_void')) $invWhere[] = "i.is_void=0";
+  if (col_exists_local($pdo, 'invoices', 'is_deleted')) $invWhere[] = "i.is_deleted=0";
+  if (col_exists_local($pdo, 'invoices', 'deleted_at')) $invWhere[] = "i.deleted_at IS NULL";
+  if (col_exists_local($pdo, 'invoices', 'status')) $invWhere[] = "COALESCE(i.status,'') NOT IN ('void','deleted','cancelled','canceled')";
+  $whereSql = $invWhere ? (' AND ' . implode(' AND ', $invWhere)) : '';
+  $st = $pdo->prepare("SELECT COALESCE(SUM(GREATEST(0, COALESCE(i.`$invAmountCol`,0) - $paidExpr)),0) FROM invoices i WHERE i.client_id=?" . $whereSql);
   $st->execute([$client_id]);
   $invoice_balance = (float)$st->fetchColumn();
 } catch (Throwable $e) {
@@ -715,23 +830,26 @@ $displayText  = $display_balance > 0 ? 'Due' : 'Clear';
 
 /* ---------------- পেমেন্ট লিংক (স্কিমা-অ্যাওয়ার ইনভয়েস খোঁজ + অ্যাডভান্স ফ্যালব্যাক) ---------------- */
 /* বাংলা: return URL সবসময় relative path রাখব—Host header এর উপর ভরসা নয় */
-$current_path = $_SERVER['REQUEST_URI'] ?? ('/public/client_view.php?id='.$pppoe_id);
+$current_path = $_SERVER['REQUEST_URI'] ?? ('/public/client_view.php?id=' . $pppoe_id);
 
 $payInvoiceId = 0;
-try{
+try {
   $invCols = $pdo->query("SHOW COLUMNS FROM invoices")->fetchAll(PDO::FETCH_COLUMN) ?: [];
-} catch(Throwable $e){ $invCols = []; }
+} catch (Throwable $e) {
+  $invCols = [];
+}
 
 /* বাংলা: ১) current month unpaid/partial/due খুঁজি ২) না পেলে latest unpaid/partial  */
-if (in_array('billing_month',$invCols,true)) {
-  $ms = date('Y-m-01'); $me = date('Y-m-t');
+if (in_array('billing_month', $invCols, true)) {
+  $ms = date('Y-m-01');
+  $me = date('Y-m-t');
   $q1 = $pdo->prepare("SELECT id FROM invoices 
                        WHERE client_id=? AND billing_month BETWEEN ? AND ?
                          AND LOWER(status) IN ('unpaid','partial','due','partially_paid')
                        ORDER BY id DESC LIMIT 1");
   $q1->execute([$client_id, $ms, $me]);
   $payInvoiceId = (int)($q1->fetchColumn() ?: 0);
-} elseif (in_array('month',$invCols,true) && in_array('year',$invCols,true)) {
+} elseif (in_array('month', $invCols, true) && in_array('year', $invCols, true)) {
   $q1 = $pdo->prepare("SELECT id FROM invoices
                        WHERE client_id=? AND month=? AND year=? 
                          AND LOWER(status) IN ('unpaid','partial','due','partially_paid')
@@ -739,7 +857,7 @@ if (in_array('billing_month',$invCols,true)) {
   $q1->execute([$client_id, (int)date('n'), (int)date('Y')]);
   $payInvoiceId = (int)($q1->fetchColumn() ?: 0);
 }
-if ($payInvoiceId <= 0){
+if ($payInvoiceId <= 0) {
   $q2 = $pdo->prepare("SELECT id FROM invoices
                        WHERE client_id=? AND LOWER(status) IN ('unpaid','partial','due','partially_paid')
                        ORDER BY id DESC LIMIT 1");
@@ -749,23 +867,25 @@ if ($payInvoiceId <= 0){
 
 /* নিরাপদ চেক: ইনভয়েস সত্যিই client_id এর সাথে মেলে কিনা */
 $validInvoiceId = 0;
-if ($payInvoiceId > 0){
+if ($payInvoiceId > 0) {
   $chk = $pdo->prepare("SELECT id FROM invoices WHERE id=? AND client_id=? LIMIT 1");
   $chk->execute([$payInvoiceId, $client_id]);
   $validInvoiceId = (int)($chk->fetchColumn() ?: 0);
 }
 
 /* link: সব সময় client_id; invoice থাকলে invoice_id যোগ, না থাকলে advance ফ্লো */
-$pay_url = '/public/payment_add.php?client_id='.(int)$client_id
-         . ($validInvoiceId>0 ? '&invoice_id='.$validInvoiceId : '&purpose=advance')
-         . '&return='.urlencode($current_path);
+$pay_url = '/public/payment_add.php?client_id=' . (int)$client_id
+  . ($validInvoiceId > 0 ? '&invoice_id=' . $validInvoiceId : '&purpose=advance')
+  . '&return=' . urlencode($current_path);
 
 /* ---------------- হেডার ---------------- */
 $page_title = 'Client View';
 
 
 /* ---------------- সিকিউরিটি: CSRF টোকেন ---------------- */
-if (session_status() === PHP_SESSION_NONE) { session_start(); }
+if (session_status() === PHP_SESSION_NONE) {
+  session_start();
+}
 if (empty($_SESSION['csrf_token'])) {
   $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
@@ -779,9 +899,9 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
 <link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $clientViewCssVer ?>">
 <div class="container py-3 text-start page-shell">
 
-  <!-- Header -->
+  <!-- (বাংলা) হেডার ব্লক: প্রোফাইল, সারাংশ ব্যাজ, অ্যাকশন -->
   <div class="mb-3 d-flex flex-wrap align-items-center gap-2 client-header">
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-3 flex-wrap flex-sm-nowrap client-meta-wrap w-100 w-lg-auto">
       <div class="header-avatar">
         <?php if ($photo_url): ?>
           <img src="<?= h($photo_url) ?>" referrerpolicy="no-referrer" alt="<?= h($client['name'] ?? 'Photo') ?>">
@@ -789,17 +909,21 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
           <img id="photoPreview" src="/assets/images/default-avatar.png" alt="Photo" style="width:100%;height:100%;object-fit:cover">
         <?php endif; ?>
       </div>
-      <div class="d-flex flex-column">
-        <div class="d-flex align-items-center gap-2">
+      <div class="d-flex flex-column gap-1 client-meta">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
           <i class="bi bi-person-vcard"></i>
-          <!-- <span class="fw-bold">Details:<?= h($client['name']) ?></span> -->
-          <span class="fw-bold">Customer Information</span>
-          
+          <span class="client-name"><?= h($client['name'] ?: 'Unknown Client') ?></span>
+          <span class="cv-chip cv-chip-status <?= $badge ?>"><i class="bi bi-activity"></i> <?= $stLabel ?></span>
+          <span class="cv-chip cv-chip-due <?= $displayClass ?>"><i class="bi bi-wallet2"></i> <?= number_format($display_balance, 2) ?> <?= $displayText ?></span>
+        </div>
+        <div class="client-meta-line">
+          <span class="ce-chip"><i class="bi bi-diagram-3"></i> Router: <?= h($client['router_name'] ?? 'N/A') ?></span>
+          <span class="ce-chip"><i class="bi bi-geo-alt"></i> Area: <?= h($client['area'] ?? '-') ?></span>
         </div>
       </div>
     </div>
 
-    <div class="ms-auto d-flex flex-wrap client-actions">
+    <div class="ms-auto d-flex flex-wrap client-actions w-100 w-lg-auto">
       <a href="/public/clients.php" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Back</a>
       <a href="/public/client_edit.php?id=<?= (int)$client['id'] ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil-square"></i> Edit Info</a>
       <a href="/public/audit_logs.php?client_id=<?= (int)$client['id'] ?>" class="btn btn-outline-dark btn-sm" target="_blank" rel="noopener"><i class="bi bi-clock-history"></i> Logs</a>
@@ -820,19 +944,32 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
     </div>
   <?php endif; ?>
 
+  <!-- (বাংলা) প্রধান তথ্য কার্ড গ্রিড -->
   <div class="row g-3 client-grid">
 
-    <!-- Account Information -->
+    <!-- (বাংলা) অ্যাকাউন্ট তথ্য -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title">Account Information</div>
         <div class="table-responsive p-2">
           <table class="table table-sm align-middle mb-0 table-kv table-borderless">
-            <colgroup><col><col></colgroup>
+            <colgroup>
+              <col>
+              <col>
+            </colgroup>
             <tbody>
-              <tr><td class="k"><i class="bi bi-upc-scan"></i> Client ID</td><td class="v mono"><?= h($client['id'] ?: '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-person"></i> Name</td><td class="v"><?= h($client['name'] ?: '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-geo-alt"></i> Address</td><td class="v"><?= nl2br(h($client['address'] ?: '-')) ?></td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-upc-scan"></i> Client Code</td>
+                <td class="v mono"><?= h($client_code ?: '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-person"></i> Name</td>
+                <td class="v"><?= h($client['name'] ?: '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-geo-alt"></i> Address</td>
+                <td class="v"><?= nl2br(h($client['address'] ?: '-')) ?></td>
+              </tr>
               <tr>
                 <td class="k"><i class="bi bi-telephone"></i> Mobile No.</td>
                 <td class="v">
@@ -840,18 +977,38 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
                     <span class="me-1"><?= h($m) ?></span><br>
                     <a class="btn btn-outline-secondary btn-sm me-1" href="tel:+88<?= h($m) ?>" title="Call"><i class="bi bi-telephone"></i></a>
                     <a class="btn btn-outline-secondary btn-sm me-1" href="sms:+88<?= h($m) ?>" title="SMS"><i class="bi bi-chat-dots"></i></a>
-                    <a class="btn btn-outline-success btn-sm" target="_blank" rel="noopener" href="https://wa.me/+88<?= preg_replace('/\D/','',$m) ?>" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>
-                  <?php else: ?>-<?php endif; ?>
+                    <a class="btn btn-outline-success btn-sm" target="_blank" rel="noopener" href="https://wa.me/+88<?= preg_replace('/\D/', '', $m) ?>" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>
+                    <?php else: ?>-<?php endif; ?>
                 </td>
               </tr>
-              <tr><td class="k"><i class="bi bi-envelope"></i> Email</td><td class="v"><?= h($client['email'] ?: '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-card-list"></i> NID No.</td><td class="v"><?= h($client['nid'] ?? '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-card-list"></i> DOB</td><td class="v"><?= h($client['dob'] ?? '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-map"></i> Area</td><td class="v"><?= h($client['area'] ?: '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-map"></i> Sub Zone</td><td class="v"><?= h($client['sub_zone'] ?? '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-box2"></i> Box</td><td class="v"><?= h($client['box'] ?? '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-map"></i> Join Date</td><td class="v"><?= h($client['join_date'] ?? '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-calendar2-week"></i> Update</td><td class="v"><?= h($client['updated_at'] ?? '-') ?></td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-envelope"></i> Email</td>
+                <td class="v"><?= h($client['email'] ?: '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-card-list"></i> NID No.</td>
+                <td class="v"><?= h($client['nid'] ?? '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-map"></i> Area</td>
+                <td class="v"><?= h($client['area'] ?: '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-map"></i> Sub Zone</td>
+                <td class="v"><?= h($client['sub_zone'] ?? '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-box2"></i> Box</td>
+                <td class="v"><?= h($client['box'] ?? '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-map"></i> Join Date</td>
+                <td class="v"><?= h($client['join_date'] ?? '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-calendar2-week"></i> Update</td>
+                <td class="v"><?= h($client['updated_at'] ?? '-') ?></td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -863,26 +1020,44 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
       </div>
     </div>
 
-    <!-- Billing Information -->
+    <!-- (বাংলা) বিলিং তথ্য -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
-        <div class="card-title d-flex justify-content-between align-items-center">Billing Information<span class="badge <?= $badge ?>"><?= $stLabel ?></span></div>
+        <div class="card-title d-flex justify-content-between align-items-center">Billing Information</div>
         <div class="table-responsive p-2">
           <table class="table table-sm align-middle mb-0 table-kv table-borderless">
-            <colgroup><col><col></colgroup>
+            <colgroup>
+              <col>
+              <col>
+            </colgroup>
             <tbody>
-              <tr><td class="k"><i class="bi bi-diagram-3"></i>Conn. Type</td><td class="v mono"><?= strtoupper($client['connection_type'] ?? 'PPPOE') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-box2-fill"></i>Package</td><td class="v fw-bold"><?= h($client['package_name'] ?: 'N/A') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-cash-coin"></i>Packg Price</td><td class="v"><?= h($client['monthly_bill'] ?: '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-arrow-repeat"></i>Bill Cycle</td><td class="v">Monthly</td></tr>
-              <tr><td class="k"><i class="bi bi-ui-checks"></i>Bill Type</td><td class="v">Prepaid</td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-diagram-3"></i>Conn. Type</td>
+                <td class="v mono"><?= strtoupper($client['connection_type'] ?? 'PPPOE') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-box2-fill"></i>Package</td>
+                <td class="v fw-bold"><?= h($client['package_name'] ?: 'N/A') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-cash-coin"></i>Packg Price</td>
+                <td class="v"><?= h($client['monthly_bill'] ?: '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-arrow-repeat"></i>Bill Cycle</td>
+                <td class="v">Monthly</td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-ui-checks"></i>Bill Type</td>
+                <td class="v">Prepaid</td>
+              </tr>
               <tr>
                 <td class="k"><i class="bi bi-flag"></i> Bill Status</td>
                 <td class="v">
                   <?php $expired = !empty($client['expiry_date']) && (strtotime($client['expiry_date']) < time()); ?>
                   <?php if ($expired): ?><span class="text-danger fw-bold">Expired</span>
                   <?php else: ?><span class="text-success">Running</span><?php endif; ?>
-                  <span class="ms-3"><i class="bi bi-circle-fill <?= ($stVal==='active')?'text-success':'text-danger' ?>"></i> <span class="ms-1"><?= ($stVal==='active')? 'Enabled':'Disabled' ?></span></span>
+                  <span class="ms-3"><i class="bi bi-circle-fill <?= ($stVal === 'active') ? 'text-success' : 'text-danger' ?>"></i> <span class="ms-1"><?= ($stVal === 'active') ? 'Enabled' : 'Disabled' ?></span></span>
                 </td>
               </tr>
               <tr>
@@ -892,9 +1067,10 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
                   <button class="btn btn-outline-secondary btn-sm ms-1" title="Calendar"><i class="bi bi-calendar3"></i></button>
                 </td>
               </tr>
-              <tr><td class="k"><i class="bi bi-wallet2"></i> Balance</td><td class="v"><span class="badge <?= $displayClass ?>"><?= number_format($display_balance,2) ?> (<?= $displayText ?>)</span></td></tr>
-              <tr><td class="k"><i class="bi bi-person-check"></i>Connect By</td><td class="v"><?= h($client['created_by'] ?? '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-geo"></i> Location</td><td class="v"><?= h($client['area'] ?: '-') ?></td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-person-check"></i>Connect By</td>
+                <td class="v"><?= h($client['created_by'] ?? '-') ?></td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -915,7 +1091,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
             <i class="bi bi-cash-coin"></i> Payments</a>
 
           <?php if (!$isLeft): ?>
-            <?php if ($stVal==='active'): ?>
+            <?php if ($stVal === 'active'): ?>
               <button class="btn btn-outline-danger btn-sm" onclick="changeStatus(this, <?= (int)$client['id'] ?>,'disable')"><i class="bi bi-x-octagon"></i> Disable</button>
               <button class="btn btn-outline-warning btn-sm" onclick="changeStatus(this, <?= (int)$client['id'] ?>,'kick')"><i class="bi bi-plug"></i> Disconnect</button>
             <?php else: ?>
@@ -926,13 +1102,16 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
       </div>
     </div>
 
-    <!-- Server Information -->
+    <!-- (বাংলা) সার্ভার/রাউটার তথ্য -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title">Server Information</div>
         <div class="table-responsive p-2">
           <table class="table table-sm align-middle mb-0 table-kv table-borderless">
-            <colgroup><col><col></colgroup>
+            <colgroup>
+              <col>
+              <col>
+            </colgroup>
             <tbody>
               <tr>
                 <td class="k"><i class="bi bi-hdd-network"></i> Server</td>
@@ -943,9 +1122,9 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
                 <td class="v mono">
                   <span id="pppoe-username"><?= h($client['pppoe_id'] ?: '-') ?></span>
                   <button type="button"
-                          class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
-                          data-copy-el="#pppoe-username"
-                          title="Copy Username">
+                    class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
+                    data-copy-el="#pppoe-username"
+                    title="Copy Username">
                     <i class="bi bi-clipboard"></i>
                   </button>
                 </td>
@@ -953,11 +1132,12 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
               <tr>
                 <td class="k"><i class="bi bi-key"></i> Password</td>
                 <td class="v mono">
-                  <?php $pp = $mk_secret_pass ?: ($client['pppoe_pass'] ?? ($client['pppoe_password'] ?? ($client['ppp_pass'] ?? ''))); // (বাংলা) স্কিমা ভিন্নতা গার্ড ?>
+                  <?php $pp = $mk_secret_pass ?: ($client['pppoe_pass'] ?? ($client['pppoe_password'] ?? ($client['ppp_pass'] ?? ''))); // (বাংলা) স্কিমা ভিন্নতা গার্ড 
+                  ?>
                   <span id="ppp-mask" data-revealed="0"><?= $pp ? str_repeat('•', max(6, strlen($pp))) : '-' ?></span>
                   <?php if ($pp): ?>
                     <button class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
-                            data-copy="<?= h($pp) ?>" title="Copy">
+                      data-copy="<?= h($pp) ?>" title="Copy">
                       <i class="bi bi-clipboard"></i>
                     </button>
                     <button class="btn btn-outline-secondary btn-sm ms-1" id="ppp-eye" title="Show/Hide">
@@ -971,32 +1151,52 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
                 <td class="v mono">
                   <span id="router-mac"><?= $router_mac_display ? h($router_mac_display) : '—' ?></span>
                   <button type="button" id="btn-copy-router" class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
-                          data-copy-el="#router-mac" title="Copy Router Mac">
+                    data-copy-el="#router-mac" title="Copy Router Mac">
                     <i class="bi bi-clipboard"></i>
                   </button>
                 </td>
               </tr>
-              <!-- <tr>
-                <td class="k"><i class="bi bi-ethernet"></i> Active Mac</td>
-                <td class="v mono">
-                  <span id="active-mac">—</span>
-                  <button id="btn-copy-active" class="btn btn-outline-secondary btn-sm ms-1 btn-copy"
-                          data-copy-el="#active-mac" title="Copy" style="display:none;">
-                    <i class="bi bi-clipboard"></i>
-                  </button>
-                </td>
-              </tr> -->
-              <tr><td class="k"><i class="bi bi-cpu"></i> Vendor</td><td class="v" id="device-vendor"><?= $device_vendor ? h($device_vendor) : '—' ?></td></tr>
-              <tr><td class="k"><i class="bi bi-pc-display"></i> IP Address</td><td class="v mono" id="live-ip"><?= h($live_ip) ?></td></tr>
-              <tr><td class="k"><i class="bi bi-stopwatch"></i> Uptime</td><td class="v" id="uptime"><?= h($uptime_display) ?></td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-cpu"></i> Vendor</td>
+                <td class="v" id="device-vendor"><?= $device_vendor ? h($device_vendor) : '—' ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-pc-display"></i> IP Address</td>
+                <td class="v mono" id="live-ip"><?= h($live_ip) ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-stopwatch"></i> Uptime</td>
+                <td class="v" id="uptime"><?= h($uptime_display) ?></td>
+              </tr>
               <tr>
                 <td class="k"><i class="bi bi-wifi"></i> Status</td>
-                <td class="v"><span id="live-status" class="badge <?= $is_online?'bg-success':'bg-danger' ?>"><?= $is_online?'Online':'Offline' ?></span></td>
+                <td class="v"><span id="live-status" class="badge <?= $is_online ? 'bg-success' : 'bg-danger' ?>"><?= $is_online ? 'Online' : 'Offline' ?></span></td>
               </tr>
-              <tr><td class="k"><i class="bi bi-alarm"></i>Last Logout</td><td class="v" id="last-seen"><?= h($last_seen) ?></td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-alarm"></i>Last Logout</td>
+                <td class="v" id="last-seen"><?= h($last_seen) ?></td>
+              </tr>
               <tr>
                 <td class="k"><i class="bi bi-bar-chart-line"></i> Data Used</td>
-                <td class="v"><span id="total-dl"><?= h($data_dl_text) ?></span> Download <br> <span id="total-ul"><?= h($data_ul_text) ?></span> Upload</td>
+                <td class="v">
+                  <div class="data-used-wrap">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                      <span class="speed-pill">
+                        <i class="bi bi-upload"></i><span>Total UL</span>
+                        <strong id="total-ul-metric"><?= h($data_ul_text_metric) ?></strong>
+                      </span>
+                      <span class="speed-pill">
+                        <i class="bi bi-download"></i><span>Total DL</span>
+                        <strong id="total-dl-metric"><?= h($data_dl_text_metric) ?></strong>
+                      </span>
+                    </div>
+                    <div class="small text-muted mt-1 data-note <?= $traffic_note ? '' : 'd-none' ?>" id="traffic-note"><?= h($traffic_note ?: '') ?></div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+                      <span class="speed-pill speed-pill-accent"><i class="bi bi-arrow-down-circle"></i><span>Down Speed</span><strong id="rx-rate">0 bps</strong></span>
+                      <span class="speed-pill speed-pill-accent"><i class="bi bi-arrow-up-circle"></i><span>Up Speed</span><strong id="tx-rate">0 bps</strong></span>
+                    </div>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1005,7 +1205,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
           <a href="/public/client_live_graph.php?id=<?= (int)$client['id'] ?>" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm"><i class="bi bi-graph-up"></i> Live Graph</a>
           <a href="#" class="btn btn-outline-secondary btn-sm"><i class="bi bi-link-45deg"></i> Bind Mac</a>
           <?php if (!$isLeft): ?>
-            <?php if ($stVal==='active'): ?>
+            <?php if ($stVal === 'active'): ?>
               <button class="btn btn-outline-warning btn-sm" onclick="changeStatus(this, <?= (int)$client['id'] ?>,'kick')"><i class="bi bi-plug"></i> Disconnect</button>
             <?php else: ?>
               <button class="btn btn-outline-success btn-sm" onclick="changeStatus(this, <?= (int)$client['id'] ?>,'enable')"><i class="bi bi-plug"></i> Connect</button>
@@ -1015,25 +1215,46 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
       </div>
     </div>
 
-    <!-- OLT Information -->
+    <!-- (বাংলা) OLT তথ্য -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card-block h-100">
         <div class="card-title">OLT Information</div>
         <div class="table-responsive p-2">
           <table class="table table-sm table-borderless table-kv mb-0">
             <tbody>
-              <tr><td class="k"><i class="bi bi-lightning-charge"></i> OLT</td><td class="v" id="olt-name"><?= $olt_linked && $olt_name ? h($olt_name) : ($olt_linked ? ('OLT #'.(int)$client['olt_id']) : '-') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-cpu"></i> Vendor</td><td class="v" id="olt-vendor"><?= $olt_linked && $olt_vendor ? h($olt_vendor) : '—' ?></td></tr>
-              <tr><td class="k"><i class="bi bi-hdd-network"></i> Host/IP</td><td class="v" id="olt-host"><?= $olt_linked && $olt_host ? h($olt_host) : '—' ?></td></tr>
-              <tr><td class="k"><i class="bi bi-diagram-2"></i> PON Port</td><td class="v" id="olt-port"><?= $pon_port_display ? h($pon_port_display) : ($pon_display ? h($pon_display) : ($pon_iface ? h($pon_iface) : '—')) ?></td></tr>
-              <tr><td class="k"><i class="bi bi-disc"></i> ONU ID</td><td class="v" id="olt-onu"><?= ($onu_id_display !== null && $onu_id_display !== '' ? h((string)$onu_id_display) : '—') ?></td></tr>
-              <tr><td class="k"><i class="bi bi-upc-scan"></i> ONU MAC</td><td class="v mono" id="olt-mac"><?= $onu_mac ? h(strtoupper($onu_mac)) : '—' ?></td></tr>
-              <tr><td class="k"><i class="bi bi-calendar2-week"></i> Last Linked</td><td class="v" id="olt-linked-at"><?= $last_linked_display ? h($last_linked_display) : '—' ?></td></tr>
+              <tr>
+                <td class="k"><i class="bi bi-lightning-charge"></i> OLT</td>
+                <td class="v" id="olt-name"><?= $olt_linked && $olt_name ? h($olt_name) : ($olt_linked ? ('OLT #' . (int)$client['olt_id']) : '-') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-cpu"></i> Vendor</td>
+                <td class="v" id="olt-vendor"><?= $olt_linked && $olt_vendor ? h($olt_vendor) : '—' ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-hdd-network"></i> Host/IP</td>
+                <td class="v" id="olt-host"><?= $olt_linked && $olt_host ? h($olt_host) : '—' ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-diagram-2"></i> PON Port</td>
+                <td class="v" id="olt-port"><?= $pon_port_display ? h($pon_port_display) : ($pon_display ? h($pon_display) : ($pon_iface ? h($pon_iface) : '—')) ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-disc"></i> ONU ID</td>
+                <td class="v" id="olt-onu"><?= ($onu_id_display !== null && $onu_id_display !== '' ? h((string)$onu_id_display) : '—') ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-upc-scan"></i> ONU MAC</td>
+                <td class="v mono" id="olt-mac"><?= $onu_mac ? h(strtoupper($onu_mac)) : '—' ?></td>
+              </tr>
+              <tr>
+                <td class="k"><i class="bi bi-calendar2-week"></i> Last Linked</td>
+                <td class="v" id="olt-linked-at"><?= $last_linked_display ? h($last_linked_display) : '—' ?></td>
+              </tr>
               <tr>
                 <td class="k"><i class="bi bi-broadcast-pin"></i> Last Rx (dBm)</td>
                 <td class="v">
-                  <span id="olt-last-rx-value"><?= $rx_prefill !== null ? h($rx_prefill).' dBm' : '—' ?></span>
-                  <?php if($rx_prefill_meta[0]): ?>
+                  <span id="olt-last-rx-value"><?= $rx_prefill !== null ? h($rx_prefill) . ' dBm' : '—' ?></span>
+                  <?php if ($rx_prefill_meta[0]): ?>
                     <span id="olt-last-rx-badge" class="badge <?= $rx_prefill_meta[1]; ?> ms-2"><?= $rx_prefill_meta[0]; ?></span>
                   <?php else: ?>
                     <span id="olt-last-rx-badge"></span>
@@ -1044,10 +1265,10 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
           </table>
         </div>
         <div class="card-actions d-flex flex-wrap gap-2">
-          <span id="olt-unlinked-hint" class="text-muted small" <?=$olt_linked?'style="display:none"':'';?>>No OLT linked</span>
-          <a id="olt-view-link" href="/olt/index.php" class="btn btn-outline-primary btn-sm <?=$olt_linked?'':'d-none';?>" target="_blank"><i class="bi bi-diagram-3"></i> View OLT</a>
-          <a id="olt-onu-monitor-link" href="/public/onu_monitor.php<?= $olt_linked ? ('?olt_id='.(int)$client['olt_id']) : ''; ?>" class="btn btn-outline-secondary btn-sm <?=$olt_linked?'':'d-none';?>" target="_blank"><i class="bi bi-broadcast-pin"></i> ONU Monitor</a>
-          <a id="olt-mac-cache-link" href="/public/olt_mac_table.php<?= $olt_linked ? ('?olt_id='.(int)$client['olt_id']) : ''; ?>" class="btn btn-outline-info btn-sm <?=$olt_linked?'':'d-none';?>" target="_blank"><i class="bi bi-table"></i> MAC Cache</a>
+          <span id="olt-unlinked-hint" class="text-muted small" <?= $olt_linked ? 'style="display:none"' : ''; ?>>No OLT linked</span>
+          <a id="olt-view-link" href="/olt/index.php" class="btn btn-outline-primary btn-sm <?= $olt_linked ? '' : 'd-none'; ?>" target="_blank"><i class="bi bi-diagram-3"></i> View OLT</a>
+          <a id="olt-onu-monitor-link" href="/public/onu_monitor.php<?= $olt_linked ? ('?olt_id=' . (int)$client['olt_id']) : ''; ?>" class="btn btn-outline-secondary btn-sm <?= $olt_linked ? '' : 'd-none'; ?>" target="_blank"><i class="bi bi-broadcast-pin"></i> ONU Monitor</a>
+          <a id="olt-mac-cache-link" href="/public/olt_mac_table.php<?= $olt_linked ? ('?olt_id=' . (int)$client['olt_id']) : ''; ?>" class="btn btn-outline-info btn-sm <?= $olt_linked ? '' : 'd-none'; ?>" target="_blank"><i class="bi bi-table"></i> MAC Cache</a>
         </div>
       </div>
     </div>
@@ -1055,6 +1276,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
   </div>
 </div>
 
+<!-- (বাংলা) বিল রিনিউ/ইনভয়েস তৈরির মডাল -->
 <!-- ===================== RENEW MODAL ===================== -->
 <div class="modal fade" id="renewModal" tabindex="-1" aria-labelledby="renewModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -1069,15 +1291,15 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
           <div class="col-6">
             <label class="form-label">Months</label>
             <select name="months" id="rn_months" class="form-select form-select-sm">
-              <?php for($i=1;$i<=12;$i++): ?>
-                <option value="<?= $i ?>" <?= $i===1?'selected':'' ?>><?= $i ?></option>
+              <?php for ($i = 1; $i <= 12; $i++): ?>
+                <option value="<?= $i ?>" <?= $i === 1 ? 'selected' : '' ?>><?= $i ?></option>
               <?php endfor; ?>
             </select>
           </div>
           <div class="col-6">
             <label class="form-label">Amount</label>
             <input type="number" step="0.01" name="amount" id="rn_amount" class="form-control form-control-sm"
-                   value="<?= is_numeric($client['monthly_bill']??null)? (0+$client['monthly_bill']) : 0 ?>">
+              value="<?= is_numeric($client['monthly_bill'] ?? null) ? (0 + $client['monthly_bill']) : 0 ?>">
           </div>
 
           <div class="col-6">
@@ -1093,7 +1315,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
           <div class="col-6">
             <label class="form-label">Invoice Date</label>
             <input type="date" name="invoice_date" id="rn_invoice_date" class="form-control form-control-sm"
-                   value="<?= date('Y-m-d') ?>">
+              value="<?= date('Y-m-d') ?>">
           </div>
 
           <div class="col-12">
@@ -1139,112 +1361,147 @@ $client_view_boot = [
 ];
 ?>
 <script>
-window.CLIENT_VIEW_BOOT = <?= json_encode($client_view_boot, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); ?>;
+  window.CLIENT_VIEW_BOOT = <?= json_encode($client_view_boot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
 </script>
 <script>
+  // (বাংলা) ক্লায়েন্ট ভিউর সব JS লজিক ইনলাইন রাখা হয়েছে, আলাদা ফাইলে নির্ভরতা নেই।
+  const BOOT = window.CLIENT_VIEW_BOOT || {};
+  const API_SINGLE = '/api/control.php'; // বাংলা: action endpoint
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const LIVE_STATUS_TIMEOUT_MS = 20000; // SNMP-heavy live status calls can take >10s; allow enough time
+  const INITIAL_OLT_BINDING = BOOT.initialOltBinding || null;
+  let currentOltBinding = INITIAL_OLT_BINDING && INITIAL_OLT_BINDING.olt_id ? INITIAL_OLT_BINDING : null;
+  const CLIENT_ID = BOOT.clientId || 0;
+  const MONTHLY_BILL = Number(BOOT.monthlyBill || 0);
+  const EXPIRY_DATE = BOOT.expiryDate || '';
+  const PPP_PLAIN = BOOT.pp || '';
+  const rxValueEl = document.getElementById('olt-last-rx-value');
+  const rxBadgeEl = document.getElementById('olt-last-rx-badge');
 
-// (বাংলা) ক্লায়েন্ট ভিউর সব JS লজিক ইনলাইন রাখা হয়েছে, আলাদা ফাইলে নির্ভরতা নেই।
-const BOOT = window.CLIENT_VIEW_BOOT || {};
-const API_SINGLE = '/api/control.php'; // বাংলা: action endpoint
-const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
-const LIVE_STATUS_TIMEOUT_MS = 20000; // SNMP-heavy live status calls can take >10s; allow enough time
-const INITIAL_OLT_BINDING = BOOT.initialOltBinding || null;
-let currentOltBinding = INITIAL_OLT_BINDING && INITIAL_OLT_BINDING.olt_id ? INITIAL_OLT_BINDING : null;
-const CLIENT_ID = BOOT.clientId || 0;
-const MONTHLY_BILL = Number(BOOT.monthlyBill || 0);
-const EXPIRY_DATE = BOOT.expiryDate || '';
-const PPP_PLAIN = BOOT.pp || '';
-const rxValueEl = document.getElementById('olt-last-rx-value');
-const rxBadgeEl = document.getElementById('olt-last-rx-badge');
-
-// ---------- RX ব্যাজ সহায়ক ----------
-function rxBadgeMeta(val){
-  if(val === null || val === undefined || val === '') return [null,null];
-  const num = Number(val);
-  if(!Number.isFinite(num)) return [null,null];
-  if(num >= -24 && num <= -1) return ['Good','text-bg-success'];
-  if(num >= -26 && num < -24) return ['Warn','text-bg-warning text-dark'];
-  return ['Critical','text-bg-danger'];
-}
-
-function updateRxDisplay(val, opts={force:false}){
-  const hasVal = val !== null && val !== undefined && val !== '' && Number.isFinite(Number(val));
-  if(!hasVal && !opts.force){
-    // নতুন মান না এলে আগের দেখানো মানই থাকুক
-    return;
+  // (বাংলা) bits/bytes ভিত্তিক নেটওয়ার্ক usage ফরম্যাটার (Base-10)
+  function formatNetworkUsage(valueInBits, displayAsBytes = false) {
+    if (valueInBits === null || valueInBits === undefined || isNaN(Number(valueInBits))) return '—';
+    let val = Number(valueInBits);
+    const units = displayAsBytes ? ['B', 'KB', 'MB', 'GB', 'TB'] : ['b', 'kb', 'Mb', 'Gb', 'Tb'];
+    if (displayAsBytes) val = val / 8;
+    let idx = 0;
+    while (val >= 1000 && idx < units.length - 1) {
+      val = val / 1000;
+      idx++;
+    }
+    return `${val.toFixed(2)} ${units[idx]}`;
   }
-  const txt = hasVal ? `${Number(val).toFixed(2)} dBm` : '—';
-  if(rxValueEl) rxValueEl.textContent = txt;
-  if(rxBadgeEl){
-    const [label, cls] = hasVal ? rxBadgeMeta(val) : [null,null];
-    rxBadgeEl.className = 'badge ms-2';
-    if(label && cls){
-      rxBadgeEl.textContent = label;
-      rxBadgeEl.className = `badge ms-2 ${cls}`;
-      rxBadgeEl.style.display = '';
-    } else {
-      rxBadgeEl.textContent = '';
-      rxBadgeEl.style.display = 'none';
+
+  // ---------- RX ব্যাজ সহায়ক ----------
+  function rxBadgeMeta(val) {
+    if (val === null || val === undefined || val === '') return [null, null];
+    const num = Number(val);
+    if (!Number.isFinite(num)) return [null, null];
+    if (num >= -24 && num <= -1) return ['Good', 'text-bg-success'];
+    if (num >= -26 && num < -24) return ['Warn', 'text-bg-warning text-dark'];
+    return ['Critical', 'text-bg-danger'];
+  }
+
+  function updateRxDisplay(val, opts = {
+    force: false
+  }) {
+    const hasVal = val !== null && val !== undefined && val !== '' && Number.isFinite(Number(val));
+    if (!hasVal && !opts.force) {
+      // নতুন মান না এলে আগের দেখানো মানই থাকুক
+      return;
+    }
+    const txt = hasVal ? `${Number(val).toFixed(2)} dBm` : '—';
+    if (rxValueEl) rxValueEl.textContent = txt;
+    if (rxBadgeEl) {
+      const [label, cls] = hasVal ? rxBadgeMeta(val) : [null, null];
+      rxBadgeEl.className = 'badge ms-2';
+      if (label && cls) {
+        rxBadgeEl.textContent = label;
+        rxBadgeEl.className = `badge ms-2 ${cls}`;
+        rxBadgeEl.style.display = '';
+      } else {
+        rxBadgeEl.textContent = '';
+        rxBadgeEl.style.display = 'none';
+      }
     }
   }
-}
 
-function renderOltBinding(binding){
-  if(!binding) return;
-  currentOltBinding = binding;
-  const nameEl   = document.getElementById('olt-name');
-  const hostEl   = document.getElementById('olt-host');
-  const vendorEl = document.getElementById('olt-vendor');
-  const portEl   = document.getElementById('olt-port');
-  const onuEl    = document.getElementById('olt-onu');
-  const macEl    = document.getElementById('olt-mac');
-  const linkEl   = document.getElementById('olt-linked-at');
-  const unlinked = document.getElementById('olt-unlinked-hint');
-  const viewL    = document.getElementById('olt-view-link');
-  const onuL     = document.getElementById('olt-onu-monitor-link');
-  const macL     = document.getElementById('olt-mac-cache-link');
+  function renderOltBinding(binding) {
+    if (!binding) return;
+    currentOltBinding = binding;
+    const nameEl = document.getElementById('olt-name');
+    const hostEl = document.getElementById('olt-host');
+    const vendorEl = document.getElementById('olt-vendor');
+    const portEl = document.getElementById('olt-port');
+    const onuEl = document.getElementById('olt-onu');
+    const macEl = document.getElementById('olt-mac');
+    const linkEl = document.getElementById('olt-linked-at');
+    const unlinked = document.getElementById('olt-unlinked-hint');
+    const viewL = document.getElementById('olt-view-link');
+    const onuL = document.getElementById('olt-onu-monitor-link');
+    const macL = document.getElementById('olt-mac-cache-link');
 
-  if(nameEl)   nameEl.textContent = binding.name || (binding.olt_id ? `OLT #${binding.olt_id}` : (nameEl.textContent || '—'));
-  if(hostEl)   hostEl.textContent = binding.host || hostEl.textContent || '—';
-  if(vendorEl) vendorEl.textContent = binding.vendor || vendorEl.textContent || '—';
-  if(portEl)   portEl.textContent = binding.port || binding.port_label || portEl.textContent || '—';
-  if(onuEl)    onuEl.textContent  = binding.onu ? ((binding.port || binding.port_label) ? `${binding.port || binding.port_label}:${binding.onu}` : binding.onu) : (onuEl.textContent || '—');
-  if(macEl)    macEl.textContent  = binding.mac ? binding.mac.toUpperCase() : (macEl.textContent || '—');
-  if(linkEl && binding.learned_at) linkEl.textContent = binding.learned_at;
-  updateRxDisplay(binding.rx_power_dbm);
+    if (nameEl) nameEl.textContent = binding.name || (binding.olt_id ? `OLT #${binding.olt_id}` : (nameEl.textContent || '—'));
+    if (hostEl) hostEl.textContent = binding.host || hostEl.textContent || '—';
+    if (vendorEl) vendorEl.textContent = binding.vendor || vendorEl.textContent || '—';
+    if (portEl) portEl.textContent = binding.port || binding.port_label || portEl.textContent || '—';
+    if (onuEl) onuEl.textContent = binding.onu ? ((binding.port || binding.port_label) ? `${binding.port || binding.port_label}:${binding.onu}` : binding.onu) : (onuEl.textContent || '—');
+    if (macEl) macEl.textContent = binding.mac ? binding.mac.toUpperCase() : (macEl.textContent || '—');
+    if (linkEl && binding.learned_at) linkEl.textContent = binding.learned_at;
+    updateRxDisplay(binding.rx_power_dbm);
 
-  if(binding.olt_id){
-    if(unlinked) unlinked.style.display = 'none';
-    if(viewL){ viewL.classList.remove('d-none'); viewL.href = '/olt/index.php'; }
-    if(onuL){ onuL.classList.remove('d-none'); onuL.href = `/public/onu_monitor.php?olt_id=${binding.olt_id}`; }
-    if(macL){ macL.classList.remove('d-none'); macL.href = `/public/olt_mac_table.php?olt_id=${binding.olt_id}`; }
+    if (binding.olt_id) {
+      if (unlinked) unlinked.style.display = 'none';
+      if (viewL) {
+        viewL.classList.remove('d-none');
+        viewL.href = '/olt/index.php';
+      }
+      if (onuL) {
+        onuL.classList.remove('d-none');
+        onuL.href = `/public/onu_monitor.php?olt_id=${binding.olt_id}`;
+      }
+      if (macL) {
+        macL.classList.remove('d-none');
+        macL.href = `/public/olt_mac_table.php?olt_id=${binding.olt_id}`;
+      }
+    }
   }
-}
 
-renderOltBinding(currentOltBinding);
+  renderOltBinding(currentOltBinding);
 
-/* ===== Toast ===== */
-function showToast(msg, type='success', timeout=2800){
-  const box = document.createElement('div');
-  box.className = 'app-toast ' + (type==='success' ? 'success' : 'error');
-  box.setAttribute('role','status');
-  box.textContent = msg || 'Done';
-  document.body.appendChild(box);
-  setTimeout(()=> box.classList.add('hide'), timeout-200);
-  setTimeout(()=> box.remove(), timeout);
-}
-/* Restore toast after reload */
-document.addEventListener('DOMContentLoaded', ()=>{
-  const t = sessionStorage.getItem('toast');
-  if (t){ try{ const o=JSON.parse(t); showToast(o.message, o.type||'success', 2800); }catch{} sessionStorage.removeItem('toast'); }
-});
+  /* ===== Toast ===== */
+  function showToast(msg, type = 'success', timeout = 2800) {
+    const box = document.createElement('div');
+    box.className = 'app-toast ' + (type === 'success' ? 'success' : 'error');
+    box.setAttribute('role', 'status');
+    box.textContent = msg || 'Done';
+    document.body.appendChild(box);
+    setTimeout(() => box.classList.add('hide'), timeout - 200);
+    setTimeout(() => box.remove(), timeout);
+  }
+  /* Restore toast after reload */
+  document.addEventListener('DOMContentLoaded', () => {
+    const t = sessionStorage.getItem('toast');
+    if (t) {
+      try {
+        const o = JSON.parse(t);
+        showToast(o.message, o.type || 'success', 2800);
+      } catch {}
+      sessionStorage.removeItem('toast');
+    }
+  });
 
-/* ===== Confirm dialog ===== */
-function customConfirm({title='Confirm', message='Are you sure?', okText='OK', cancelText='Cancel'}){
-  return new Promise((resolve)=>{
-    const bd = document.createElement('div');
-    bd.className = 'app-confirm-backdrop';
-    bd.innerHTML = `
+  /* ===== Confirm dialog ===== */
+  function customConfirm({
+    title = 'Confirm',
+    message = 'Are you sure?',
+    okText = 'OK',
+    cancelText = 'Cancel'
+  }) {
+    return new Promise((resolve) => {
+      const bd = document.createElement('div');
+      bd.className = 'app-confirm-backdrop';
+      bd.innerHTML = `
       <div class="app-confirm-box" role="dialog" aria-modal="true" aria-label="${title}">
         <div class="app-confirm-title">${title}</div>
         <div class="app-confirm-text">${message}</div>
@@ -1253,302 +1510,493 @@ function customConfirm({title='Confirm', message='Are you sure?', okText='OK', c
           <button class="app-btn primary" data-act="ok">${okText}</button>
         </div>
       </div>`;
-    document.body.appendChild(bd);
-    const close=(v)=>{ document.removeEventListener('keydown', onKey); bd.remove(); resolve(v); };
-    const onKey=(e)=>{ if(e.key==='Escape') close(false); if(e.key==='Enter') close(true); };
-    bd.addEventListener('click', e=>{ if(e.target.dataset.act==='ok') close(true); if(e.target.dataset.act==='cancel'||e.target===bd) close(false); });
-    document.addEventListener('keydown', onKey);
-    setTimeout(()=> bd.querySelector('[data-act="ok"]')?.focus(), 10);
-  });
-}
+      document.body.appendChild(bd);
+      const close = (v) => {
+        document.removeEventListener('keydown', onKey);
+        bd.remove();
+        resolve(v);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') close(false);
+        if (e.key === 'Enter') close(true);
+      };
+      bd.addEventListener('click', e => {
+        if (e.target.dataset.act === 'ok') close(true);
+        if (e.target.dataset.act === 'cancel' || e.target === bd) close(false);
+      });
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => bd.querySelector('[data-act="ok"]')?.focus(), 10);
+    });
+  }
 
-/* ===== Enable/Disable/Kick — POST + CSRF ===== */
-async function changeStatus(btn, id, action){
-  const ok = await customConfirm({
-    title: (action==='disable')?'Disable client?':(action==='kick'?'Disconnect client?':'Enable client?'),
-    message: `Are you sure you want to ${action} this client?`,
-    okText: (action==='disable')?'Disable':'Yes', cancelText: 'Cancel'
-  });
-  if(!ok) return;
+  /* ===== Enable/Disable/Kick — POST + CSRF ===== */
+  async function changeStatus(btn, id, action) {
+    const ok = await customConfirm({
+      title: (action === 'disable') ? 'Disable client?' : (action === 'kick' ? 'Disconnect client?' : 'Enable client?'),
+      message: `Are you sure you want to ${action} this client?`,
+      okText: (action === 'disable') ? 'Disable' : 'Yes',
+      cancelText: 'Cancel'
+    });
+    if (!ok) return;
 
-  const oldHTML = btn.innerHTML; btn.disabled = true; btn.innerHTML = '...';
+    const oldHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '...';
 
-  fetch(API_SINGLE, {
-    method: 'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body: new URLSearchParams({ action, id: String(id), csrf_token: CSRF })
-  })
-    .then(r=>r.json())
-    .then(data=>{
-      if (data.status === 'success'){
-        const msg = data.message || 'Done';
-        sessionStorage.setItem('toast', JSON.stringify({message: msg, type:'success'}));
+    fetch(API_SINGLE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          action,
+          id: String(id),
+          csrf_token: CSRF
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'success') {
+          const msg = data.message || 'Done';
+          sessionStorage.setItem('toast', JSON.stringify({
+            message: msg,
+            type: 'success'
+          }));
+          location.reload();
+        } else {
+          showToast(data.message || 'Operation failed', 'error', 3000);
+          btn.disabled = false;
+          btn.innerHTML = oldHTML;
+        }
+      })
+      .catch(() => {
+        showToast('Request failed', 'error', 3000);
+        btn.disabled = false;
+        btn.innerHTML = oldHTML;
+      });
+  }
+
+  /* ===== Auto-control trigger — POST + CSRF ===== */
+  async function autoRecheck(btn, id) {
+    const ok = await customConfirm({
+      title: 'Auto re-evaluate?',
+      message: 'Run auto control now based on current ledger balance.',
+      okText: 'Run now',
+      cancelText: 'Cancel'
+    });
+    if (!ok) return;
+
+    const old = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '...';
+
+    try {
+      const res = await fetch('/api/auto_control_client.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          client_id: String(id),
+          csrf_token: CSRF
+        })
+      });
+      const j = await res.json();
+      if (j.ok) {
+        sessionStorage.setItem('toast', JSON.stringify({
+          message: j.msg || ('Action: ' + (j.action || 'done')),
+          type: 'success'
+        }));
         location.reload();
       } else {
-        showToast(data.message || 'Operation failed', 'error', 3000);
-        btn.disabled=false; btn.innerHTML=oldHTML;
+        showToast(j.msg || 'Auto control failed', 'error', 3000);
+        btn.disabled = false;
+        btn.innerHTML = old;
       }
-    })
-    .catch(()=>{
+    } catch (e) {
       showToast('Request failed', 'error', 3000);
-      btn.disabled=false; btn.innerHTML=oldHTML;
-    });
-}
+      btn.disabled = false;
+      btn.innerHTML = old;
+    }
+  }
 
-/* ===== Auto-control trigger — POST + CSRF ===== */
-async function autoRecheck(btn, id){
-  const ok = await customConfirm({
-    title: 'Auto re-evaluate?',
-    message: 'Run auto control now based on current ledger balance.',
-    okText: 'Run now', cancelText: 'Cancel'
+  /* ===== Copy ===== */
+  async function __copyTextRobust(t) {
+    t = (t || '').trim();
+    if (!t || t === '-' || t === '—') throw new Error('empty');
+    if (navigator.clipboard && window.isSecureContext !== false) {
+      await navigator.clipboard.writeText(t);
+      return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, t.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (!ok) throw new Error('fallback-failed');
+  }
+  document.addEventListener('click', async function(e) {
+    const btn = e.target.closest('.btn-copy');
+    if (!btn) return;
+    let text = (btn.getAttribute('data-copy') || '').trim();
+    if (!text) {
+      const sel = btn.getAttribute('data-copy-el');
+      if (sel) {
+        const el = document.querySelector(sel);
+        if (el) text = (el.textContent || '').trim();
+      }
+    }
+    try {
+      await __copyTextRobust(text);
+      showToast('copied', 'success', 1600);
+    } catch (err) {
+      showToast('copy failed', 'error', 1800);
+    }
   });
-  if(!ok) return;
 
-  const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = '...';
-
-  try{
-    const res = await fetch('/api/auto_control_client.php', {
-      method:'POST',
-      headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({client_id: String(id), csrf_token: CSRF})
-    });
-    const j = await res.json();
-    if (j.ok){
-      sessionStorage.setItem('toast', JSON.stringify({message: j.msg || ('Action: '+(j.action||'done')), type:'success'}));
-      location.reload();
+  /* ===== Password eye toggle ===== */
+  document.getElementById('ppp-eye')?.addEventListener('click', () => {
+    const m = document.getElementById('ppp-mask');
+    if (!m) return;
+    const maskVal = PPP_PLAIN ? '•'.repeat(Math.max(6, PPP_PLAIN.length)) : '-';
+    if (m.dataset.revealed === '1') {
+      m.textContent = maskVal;
+      m.dataset.revealed = '0';
     } else {
-      showToast(j.msg || 'Auto control failed', 'error', 3000);
-      btn.disabled=false; btn.innerHTML=old;
+      m.textContent = PPP_PLAIN || '-';
+      m.dataset.revealed = '1';
     }
-  } catch(e){
-    showToast('Request failed', 'error', 3000);
-    btn.disabled=false; btn.innerHTML=old;
-  }
-}
+  });
 
-/* ===== Copy ===== */
-async function __copyTextRobust(t){
-  t = (t || '').trim();
-  if (!t || t === '-' || t === '—') throw new Error('empty');
-  if (navigator.clipboard && window.isSecureContext !== false) {
-    await navigator.clipboard.writeText(t);
-    return;
-  }
-  const ta = document.createElement('textarea');
-  ta.value = t; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.opacity='0';
-  document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, t.length);
-  const ok = document.execCommand('copy');
-  document.body.removeChild(ta);
-  if (!ok) throw new Error('fallback-failed');
-}
-document.addEventListener('click', async function(e){
-  const btn = e.target.closest('.btn-copy');
-  if(!btn) return;
-  let text = (btn.getAttribute('data-copy') || '').trim();
-  if (!text) {
-    const sel = btn.getAttribute('data-copy-el');
-    if (sel) {
-      const el = document.querySelector(sel);
-      if (el) text = (el.textContent || '').trim();
-    }
-  }
-  try { await __copyTextRobust(text); showToast('copied','success',1600); }
-  catch(err){ showToast('copy failed','error',1800); }
-});
+  /* ===== Live status via API (10s; backoff) ===== */
+  let liveTimer = null,
+    inflight = false,
+    backoff = 10000;
 
-/* ===== Password eye toggle ===== */
-document.getElementById('ppp-eye')?.addEventListener('click', ()=>{
-  const m = document.getElementById('ppp-mask');
-  if (!m) return;
-  const maskVal = PPP_PLAIN ? '•'.repeat(Math.max(6, PPP_PLAIN.length)) : '-';
-  if (m.dataset.revealed === '1') {
-    m.textContent = maskVal;
-    m.dataset.revealed = '0';
-  } else {
-    m.textContent = PPP_PLAIN || '-';
-    m.dataset.revealed = '1';
-  }
-});
+  function loadLiveStatus() {
+    if (inflight) return;
+    inflight = true;
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), LIVE_STATUS_TIMEOUT_MS);
+    const formatBps = (val) => {
+      if (val === null || val === undefined) return '0 bps';
+      const txt = String(val).trim();
+      if (txt === '') return '0 bps';
+      // যদি সার্ভার ইউনিটসহ পাঠায় (e.g., "12 Mbps") 그대로 দেখাই
+      if (/[a-z]/i.test(txt)) return txt;
+      const num = Number(txt);
+      if (!Number.isFinite(num)) return '0 bps';
+      const abs = Math.abs(num);
+      if (abs < 1000) return `${num.toFixed(2)} bps`;
+      if (abs < 1_000_000) return `${(num / 1_000).toFixed(2)} Kbps`;
+      if (abs < 1_000_000_000) return `${(num / 1_000_000).toFixed(2)} Mbps`;
+      return `${(num / 1_000_000_000).toFixed(2)} Gbps`;
+    };
 
-/* ===== Live status via API (10s; backoff) ===== */
-let liveTimer = null, inflight = false, backoff = 10000;
-function loadLiveStatus(){
-  if(inflight) return;
-  inflight = true;
-  const ctl = new AbortController();
-  const t = setTimeout(()=>ctl.abort(), LIVE_STATUS_TIMEOUT_MS);
+    fetch(`/api/client_live_status.php?id=${CLIENT_ID}`, {
+        cache: 'no-store',
+        signal: ctl.signal
+      })
+      .then(res => res.json()).then(d => {
+        const dv = document.getElementById('device-vendor');
+        if (dv && d.device_vendor && d.device_vendor.trim() !== '') {
+          dv.textContent = d.device_vendor;
+        }
 
-  fetch(`/api/client_live_status.php?id=${CLIENT_ID}`, {cache:'no-store', signal: ctl.signal})
-    .then(res=>res.json()).then(d=>{
-      const dv = document.getElementById('device-vendor');
-      if (dv && d.device_vendor && d.device_vendor.trim() !== '') {
-        dv.textContent = d.device_vendor;
-      }
+        const rmacEl = document.getElementById('router-mac');
+        const amacEl = document.getElementById('active-mac');
+        const rBtn = document.getElementById('btn-copy-router');
+        const aBtn = document.getElementById('btn-copy-active');
 
-      const rmacEl = document.getElementById('router-mac');
-      const amacEl = document.getElementById('active-mac');
-      const rBtn   = document.getElementById('btn-copy-router');
-      const aBtn   = document.getElementById('btn-copy-active');
+        const rmac = (d.router_mac && d.router_mac.trim() !== '') ? d.router_mac : (d.arp_mac || d.caller_id || '—');
+        const amac = (d.active_mac && d.active_mac.trim() !== '') ? d.active_mac : (d.caller_id || d.arp_mac || '—');
 
-      const rmac = (d.router_mac && d.router_mac.trim()!=='') ? d.router_mac : (d.arp_mac || d.caller_id || '—');
-      const amac = (d.active_mac && d.active_mac.trim()!=='') ? d.active_mac : (d.caller_id || d.arp_mac || '—');
+        const keepText = (el) => el && el.textContent && el.textContent.trim() && el.textContent.trim() !== '—';
+        if (rmacEl) {
+          if (rmac && rmac !== '—') rmacEl.textContent = rmac;
+          else if (!keepText(rmacEl)) rmacEl.textContent = '—';
+        }
+        if (amacEl) {
+          if (amac && amac !== '—') amacEl.textContent = amac;
+          else if (!keepText(amacEl)) amacEl.textContent = '—';
+        }
 
-      const keepText = (el) => el && el.textContent && el.textContent.trim() && el.textContent.trim() !== '—';
-      if (rmacEl){
-        if (rmac && rmac !== '—') rmacEl.textContent = rmac;
-        else if (!keepText(rmacEl)) rmacEl.textContent = '—';
-      }
-      if (amacEl){
-        if (amac && amac !== '—') amacEl.textContent = amac;
-        else if (!keepText(amacEl)) amacEl.textContent = '—';
-      }
+        if (rBtn) {
+          if (rmac && rmac !== '—') {
+            rBtn.style.display = '';
+            rBtn.setAttribute('data-copy', rmac);
+            rBtn.removeAttribute('data-copy-el');
+          } else {
+            rBtn.style.display = 'none';
+            rBtn.setAttribute('data-copy', '');
+          }
+        }
+        if (aBtn) {
+          if (amac && amac !== '—') {
+            aBtn.style.display = '';
+            aBtn.setAttribute('data-copy', amac);
+            aBtn.removeAttribute('data-copy-el');
+          } else {
+            aBtn.style.display = 'none';
+            aBtn.setAttribute('data-copy', '');
+          }
+        }
 
-      if (rBtn){
-        if (rmac && rmac!=='—'){ rBtn.style.display=''; rBtn.setAttribute('data-copy', rmac); rBtn.removeAttribute('data-copy-el'); }
-        else { rBtn.style.display='none'; rBtn.setAttribute('data-copy',''); }
-      }
-      if (aBtn){
-        if (amac && amac!=='—'){ aBtn.style.display=''; aBtn.setAttribute('data-copy', amac); aBtn.removeAttribute('data-copy-el'); }
-        else { aBtn.style.display='none'; aBtn.setAttribute('data-copy',''); }
-      }
+        if (dv && (dv.textContent === '—' || dv.textContent === '' || dv.textContent === 'Unknown Vendor') && rmac && rmac !== '—') {
+          fetch('/api/mac_vendor.php?mac=' + encodeURIComponent(rmac), {
+              cache: 'no-store'
+            })
+            .then(r => r.json()).then(j => {
+              if (j && j.vendor) dv.textContent = j.vendor;
+            }).catch(() => {});
+        }
 
-      if (dv && (dv.textContent==='—' || dv.textContent==='' || dv.textContent==='Unknown Vendor') && rmac && rmac!=='—'){
-        fetch('/api/mac_vendor.php?mac='+encodeURIComponent(rmac), {cache:'no-store'})
-          .then(r=>r.json()).then(j=>{ if (j && j.vendor) dv.textContent = j.vendor; }).catch(()=>{});
-      }
-
-      const ip = document.getElementById('live-ip');
-      const up = document.getElementById('uptime');
-      const st = document.getElementById('live-status');
-      const ls = document.getElementById('last-seen');
+        const ip = document.getElementById('live-ip');
+        const up = document.getElementById('uptime');
+        const st = document.getElementById('live-status');
+        const ls = document.getElementById('last-seen');
       const dl = document.getElementById('total-dl');
       const ul = document.getElementById('total-ul');
-      const rx = document.getElementById('rx-rate');
-      const tx = document.getElementById('tx-rate');
-      const namePill = document.getElementById('name-online');
-      const binding = d.olt_binding;
+      const dlMetric = document.getElementById('total-dl-metric');
+      const ulMetric = document.getElementById('total-ul-metric');
+      const dlGb = document.getElementById('total-dl-gb');
+      const ulGb = document.getElementById('total-ul-gb');
+        const rx = document.getElementById('rx-rate');
+        const tx = document.getElementById('tx-rate');
+        const namePill = document.getElementById('name-online');
+        const trafficNote = document.getElementById('traffic-note');
+        const binding = d.olt_binding;
 
-      const keep = (el) => el && el.textContent && el.textContent.trim() && el.textContent.trim() !== '—';
-      const setOrKeep = (el, val, fmt=(v)=>v) => {
-        if(!el) return;
-        if(val !== null && val !== undefined && String(val).trim() !== ''){
+        const keep = (el) => el && el.textContent && el.textContent.trim() && el.textContent.trim() !== '—';
+      const setOrKeep = (el, val, fmt = (v) => v) => {
+        if (!el) return;
+        if (val !== null && val !== undefined && String(val).trim() !== '') {
           el.textContent = fmt(val);
-        } else if(!keep(el)) {
+        } else if (!keep(el)) {
           el.textContent = '—';
         }
+      };
+      const formatBitsSize = (val) => {
+        if (val === null || val === undefined) return '—';
+        const num = Number(val);
+        if (!Number.isFinite(num)) return '—';
+        const abs = Math.abs(num);
+        const fmt = (v)=> Number(v.toFixed(3)).toString();
+        if (abs < 1_000) return fmt(num) + ' b';
+        if (abs < 1_000_000) return fmt(num/1_000) + ' Kb';
+        if (abs < 1_000_000_000) return fmt(num/1_000_000) + ' Mb';
+        if (abs < 1_000_000_000_000) return fmt(num/1_000_000_000) + ' Gb';
+        return fmt(num/1_000_000_000_000) + ' Tb';
       };
 
       setOrKeep(ip, d.ip);
       setOrKeep(up, d.uptime);
       setOrKeep(ls, d.last_seen);
-      setOrKeep(dl, d.total_download_gb, (v)=>v+' GB');
-      setOrKeep(ul, d.total_upload_gb, (v)=>v+' GB');
-      if(rx) rx.textContent = d.rx_rate || '0 Kbps';
-      if(tx) tx.textContent = d.tx_rate || '0 Kbps';
-      updateRxDisplay(d.rx_power_dbm);
-      if(binding && binding.olt_id){
-        renderOltBinding(binding);
-      }
+      setOrKeep(dlGb, d.total_download_gb, (v) => '(~' + Number(v).toFixed(3) + ' GB)');
+      setOrKeep(ulGb, d.total_upload_gb, (v) => '(~' + Number(v).toFixed(3) + ' GB)');
+      const bitsFromGb = (v) => {
+        const num = Number(v);
+        if (!Number.isFinite(num)) return null;
+        return num * 8_000_000_000; // 1 GB = 8e9 bits (বেস ১০০০)
+      };
 
-      if(st){
-        st.textContent = d.online ? 'Online':'Offline';
-        st.className   = 'badge ' + (d.online ? 'bg-success' : 'bg-danger');
-      }
-      if(namePill){
-        namePill.innerHTML = `<i class="bi bi-wifi"></i> ${d.online ? 'Online' : 'Offline'}`;
-        namePill.className = 'badge ' + (d.online ? 'bg-success' : 'bg-secondary');
-        namePill.style.backgroundColor = d.online ? '#198754' : '#6c757d';
-      }
+      // (বাংলা) MikroTik / API আসা ডাটা bits বা bytes হলে দ্রুত ফরম্যাটার (Base-10, bytes হলে 1024)
+      const formatMikrotikData = (val, isByte = false) => {
+        if (val === null || val === undefined || val === '') return '0';
+        let num = Number(val);
+        if (!Number.isFinite(num)) return '0';
+        const unit = isByte ? 1024 : 1000;
+        const suffix = isByte ? ['B', 'KB', 'MB', 'GB', 'TB'] : ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps'];
+        if (num === 0) return `0 ${suffix[0]}`;
+        const i = Math.min(Math.floor(Math.log(Math.abs(num)) / Math.log(unit)), suffix.length - 1);
+        const formattedValue = (num / Math.pow(unit, i)).toFixed(2);
+        return `${parseFloat(formattedValue)} ${suffix[i]}`;
+      };
+      const dlBits = bitsFromGb(d.total_download_gb);
+      const ulBits = bitsFromGb(d.total_upload_gb);
+        if (dlMetric) dlMetric.textContent = dlBits !== null ? formatBitsSize(dlBits) : '—';
+        if (ulMetric) ulMetric.textContent = ulBits !== null ? formatBitsSize(ulBits) : '—';
+        if (trafficNote) {
+          const hasTotals = (d.total_download_gb !== null && d.total_download_gb !== undefined)
+                            || (d.total_upload_gb !== null && d.total_upload_gb !== undefined);
+          if (hasTotals) {
+            trafficNote.classList.add('d-none');
+            trafficNote.textContent = '';
+          }
+        }
+        // Rx/Tx স্পিড: কেডি পিবিপিএস বা স্ট্রিং ইউনিট — সবশেষে bps এ নরমালাইজ
+        const normalizeRate = (rawVal, kbpsVal, bpsVal) => {
+          if (rawVal !== undefined && rawVal !== null && rawVal !== '') return rawVal;
+          if (bpsVal !== undefined && bpsVal !== null && bpsVal !== '') return bpsVal;
+          if (kbpsVal !== undefined && kbpsVal !== null && kbpsVal !== '') {
+            const n = Number(kbpsVal);
+            return Number.isFinite(n) ? n * 1000 : kbpsVal;
+          }
+          return null;
+        };
+        // (বাংলা) নির্দেশনা অনুযায়ী rx_kbps এর মান Down Speed এ, tx_kbps এর মান Up Speed এ দেখাব—এখানে swap করছি
+        const rxVal = normalizeRate(d.tx_rate, d.tx_kbps, d.tx_bps ?? d.tx); // Down Speed: tx উৎস
+        const txVal = normalizeRate(d.rx_rate, d.rx_kbps, d.rx_bps ?? d.rx); // Up Speed: rx উৎস
+        if (rx) rx.textContent = formatBps(rxVal);
+        if (tx) tx.textContent = formatBps(txVal);
+        updateRxDisplay(d.rx_power_dbm);
+        if (binding && binding.olt_id) {
+          renderOltBinding(binding);
+        }
 
-      backoff = 10000;
-    })
-    .catch(()=>{ backoff = Math.min(backoff * 1.5, 30000); })
-    .finally(()=>{ clearTimeout(t); inflight=false; });
-}
-function startLive(){ if (!liveTimer) liveTimer = setInterval(loadLiveStatus, backoff); }
-function stopLive(){ if (liveTimer) { clearInterval(liveTimer); liveTimer = null; } }
-document.addEventListener('visibilitychange', ()=> {
-  if (document.hidden) stopLive(); else { loadLiveStatus(); startLive(); }
-});
-setInterval(()=>{ if (liveTimer){ clearInterval(liveTimer); liveTimer = setInterval(loadLiveStatus, backoff); } }, 3000);
+        if (st) {
+          st.textContent = d.online ? 'Online' : 'Offline';
+          st.className = 'badge ' + (d.online ? 'bg-success' : 'bg-danger');
+        }
+        if (namePill) {
+          namePill.innerHTML = `<i class="bi bi-wifi"></i> ${d.online ? 'Online' : 'Offline'}`;
+          namePill.className = 'badge ' + (d.online ? 'bg-success' : 'bg-secondary');
+          namePill.style.backgroundColor = d.online ? '#198754' : '#6c757d';
+        }
 
-loadLiveStatus(); startLive();
-
-/* ===== Renew submit (invoice+renew) ===== */
-(function(){
-  const renewModalEl = document.getElementById('renewModal');
-  if (renewModalEl && renewModalEl.parentElement !== document.body) {
-    document.body.appendChild(renewModalEl);
-  }
-
-  const monthsEl = document.getElementById('rn_months');
-  const amountEl = document.getElementById('rn_amount');
-  const invDateEl= document.getElementById('rn_invoice_date');
-  const formEl   = document.getElementById('renewForm');
-
-  const monthlyBill = MONTHLY_BILL;
-  const expCur = EXPIRY_DATE;
-
-  function addMonths(dateStr, m){
-    if(!dateStr) return '';
-    const d = new Date(dateStr+'T00:00:00');
-    if(isNaN(d)) return '';
-    const dd = new Date(d.getTime()); dd.setMonth(dd.getMonth() + m);
-    return `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}-${String(dd.getDate()).padStart(2,'0')}`;
-  }
-  function todayYMD(){
-    const d=new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  function maxDate(a,b){ if(!a) return b; if(!b) return a; return (a>b)?a:b; }
-
-  document.getElementById('renewModal')?.addEventListener('shown.bs.modal', ()=>{
-    const m = parseInt(monthsEl.value||'1',10);
-    if (!amountEl.dataset.touched) amountEl.value = (monthlyBill * (isNaN(m)?1:m)).toFixed(2);
-    const base = maxDate(todayYMD(), (expCur||'')); // base = today বা current expiry এর বড় যেটা
-    document.getElementById('rn_exp_new').textContent = base ? addMonths(base, isNaN(m)?1:m) : '—';
-    document.getElementById('rn_exp_current').textContent = (expCur||'—');
-  });
-
-  monthsEl?.addEventListener('change', ()=>{
-    const m = parseInt(monthsEl.value||'1',10);
-    if (!amountEl.dataset.touched) amountEl.value = (monthlyBill * (isNaN(m)?1:m)).toFixed(2);
-    const base = maxDate(todayYMD(), (expCur||'')); 
-    document.getElementById('rn_exp_new').textContent = base ? addMonths(base, isNaN(m)?1:m) : '—';
-  });
-  amountEl?.addEventListener('input', ()=>{ amountEl.dataset.touched = '1'; });
-
-  formEl?.addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    const months = parseInt(monthsEl.value||'1',10);
-    const amount = Number(amountEl.value||'0');
-    const method = document.getElementById('rn_method').value || 'Cash';
-    const note   = document.getElementById('rn_note').value || '';
-    const invdt  = invDateEl.value || todayYMD();
-    if(isNaN(months) || months<=0){ showToast('Invalid months','error'); return; }
-    if(isNaN(amount) || amount<=0){ showToast('Invalid amount','error'); return; }
-
-    try{
-      const res = await fetch('/api/renew.php', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ client_id: CLIENT_ID, months, amount, method, note, invoice_date: invdt, csrf_token: CSRF })
+        backoff = 10000;
+      })
+      .catch(() => {
+        backoff = Math.min(backoff * 1.5, 30000);
+      })
+      .finally(() => {
+        clearTimeout(t);
+        inflight = false;
       });
-      const data = await res.json();
-      if (data.status === 'success'){
-        showToast(data.message || 'Renewed & Invoiced','success',2200);
-        const url = data.invoice_id
-          ? `/public/invoice_view.php?id=${encodeURIComponent(data.invoice_id)}`
-          : `/public/invoices.php?client_id=${CLIENT_ID}`;
-        setTimeout(()=> window.location.href = url, 700);
-      } else {
-        showToast(data.message || 'Renew failed','error',3000);
-      }
-    }catch(err){ showToast('Request failed','error',3000); }
+  }
+
+  function startLive() {
+    if (!liveTimer) liveTimer = setInterval(loadLiveStatus, backoff);
+  }
+
+  function stopLive() {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopLive();
+    else {
+      loadLiveStatus();
+      startLive();
+    }
   });
-})();
+  setInterval(() => {
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = setInterval(loadLiveStatus, backoff);
+    }
+  }, 3000);
 
+  loadLiveStatus();
+  startLive();
 
+  /* ===== Renew submit (invoice+renew) ===== */
+  (function() {
+    const renewModalEl = document.getElementById('renewModal');
+    if (renewModalEl && renewModalEl.parentElement !== document.body) {
+      document.body.appendChild(renewModalEl);
+    }
+
+    const monthsEl = document.getElementById('rn_months');
+    const amountEl = document.getElementById('rn_amount');
+    const invDateEl = document.getElementById('rn_invoice_date');
+    const formEl = document.getElementById('renewForm');
+
+    const monthlyBill = MONTHLY_BILL;
+    const expCur = EXPIRY_DATE;
+
+    function addMonths(dateStr, m) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr + 'T00:00:00');
+      if (isNaN(d)) return '';
+      const dd = new Date(d.getTime());
+      dd.setMonth(dd.getMonth() + m);
+      return `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}-${String(dd.getDate()).padStart(2,'0')}`;
+    }
+
+    function todayYMD() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    function maxDate(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+      return (a > b) ? a : b;
+    }
+
+    document.getElementById('renewModal')?.addEventListener('shown.bs.modal', () => {
+      const m = parseInt(monthsEl.value || '1', 10);
+      if (!amountEl.dataset.touched) amountEl.value = (monthlyBill * (isNaN(m) ? 1 : m)).toFixed(2);
+      const base = maxDate(todayYMD(), (expCur || '')); // base = today বা current expiry এর বড় যেটা
+      document.getElementById('rn_exp_new').textContent = base ? addMonths(base, isNaN(m) ? 1 : m) : '—';
+      document.getElementById('rn_exp_current').textContent = (expCur || '—');
+    });
+
+    monthsEl?.addEventListener('change', () => {
+      const m = parseInt(monthsEl.value || '1', 10);
+      if (!amountEl.dataset.touched) amountEl.value = (monthlyBill * (isNaN(m) ? 1 : m)).toFixed(2);
+      const base = maxDate(todayYMD(), (expCur || ''));
+      document.getElementById('rn_exp_new').textContent = base ? addMonths(base, isNaN(m) ? 1 : m) : '—';
+    });
+    amountEl?.addEventListener('input', () => {
+      amountEl.dataset.touched = '1';
+    });
+
+    formEl?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const months = parseInt(monthsEl.value || '1', 10);
+      const amount = Number(amountEl.value || '0');
+      const method = document.getElementById('rn_method').value || 'Cash';
+      const note = document.getElementById('rn_note').value || '';
+      const invdt = invDateEl.value || todayYMD();
+      if (isNaN(months) || months <= 0) {
+        showToast('Invalid months', 'error');
+        return;
+      }
+      if (isNaN(amount) || amount <= 0) {
+        showToast('Invalid amount', 'error');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/renew.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            client_id: CLIENT_ID,
+            months,
+            amount,
+            method,
+            note,
+            invoice_date: invdt,
+            csrf_token: CSRF
+          })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          showToast(data.message || 'Renewed & Invoiced', 'success', 2200);
+          const url = data.invoice_id ?
+            `/public/invoice_view.php?id=${encodeURIComponent(data.invoice_id)}` :
+            `/public/invoices.php?client_id=${CLIENT_ID}`;
+          setTimeout(() => window.location.href = url, 700);
+        } else {
+          showToast(data.message || 'Renew failed', 'error', 3000);
+        }
+      } catch (err) {
+        showToast('Request failed', 'error', 3000);
+      }
+    });
+  })();
 </script>
 <?php include __DIR__ . '/../partials/client_recent.php'; ?>
 <?php include __DIR__ . '/../partials/client_ledger_widget.php'; ?>

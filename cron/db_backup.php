@@ -7,8 +7,12 @@ require_once __DIR__ . '/../app/PHPMailer/src/Exception.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
+
 // XAMPP mysqldump path
-$mysqldumpPath = 'C:/xampp/mysql/bin/mysqldump.exe';
+// $mysqldumpPath = 'C:/xampp/mysql/bin/mysqldump.exe';
+
+// সার্ভার (Linux) এর জন্য সঠিক mysqldump বাইনারি পথ
+$mysqldumpPath = '/usr/bin/mysqldump';
 
 // Backup ফাইল লোকেশন
 $backupDir  = __DIR__ . '/backups/';

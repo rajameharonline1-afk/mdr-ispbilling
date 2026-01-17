@@ -131,6 +131,90 @@ function ensure_default_account_id(PDO $pdo, int $received_by): int {
   $pdo->prepare($sql)->execute($params);
   return (int)$pdo->lastInsertId();
 }
+
+function account_select_options(PDO $pdo, ?int $me_id = null): array {
+  // বাংলা: অ্যাকাউন্ট সিলেক্ট বক্সের জন্য নমনীয় কলাম-পিক + হোল্ডার লেবেল; খালি হলে default Cash তৈরি করে
+  if (!tbl_exists($pdo, 'accounts')) return [];
+  try {
+    $cols = $pdo->query("SHOW COLUMNS FROM accounts")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+  } catch (Throwable $e) {
+    return [];
+  }
+
+  $idCol = null;
+  foreach (['id','account_id','acc_id','aid'] as $c) {
+    if (in_array($c, $cols, true)) { $idCol = $c; break; }
+  }
+  if ($idCol === null) return [];
+
+  $nameCol = null;
+  foreach (['name','account_name','title','label','account_title'] as $c) {
+    if (in_array($c, $cols, true)) { $nameCol = $c; break; }
+  }
+  $holderCol = null;
+  foreach (['account_holder','holder','holder_name','owner','owner_name','account_holder_name','acc_holder'] as $c) {
+    if (in_array($c, $cols, true)) { $holderCol = $c; break; }
+  }
+  $hasUser  = in_array('user_id', $cols, true);
+  $hasAct   = in_array('is_active', $cols, true);
+  $hasPrio  = in_array('priority', $cols, true);
+
+  $select = ["`$idCol` AS id"];
+  if ($nameCol)   $select[] = "`$nameCol` AS acc_name";
+  if ($holderCol) $select[] = "`$holderCol` AS acc_holder";
+  if ($hasUser)   $select[] = 'user_id';
+
+  $order = [];
+  if ($hasAct)  $order[] = 'COALESCE(is_active,1) DESC';
+  if ($hasPrio) $order[] = 'priority DESC';
+  if ($nameCol) $order[] = "`$nameCol`"; else $order[] = 'id';
+
+  $sql = "SELECT ".implode(',', $select)." FROM accounts";
+  if ($order) $sql .= " ORDER BY ".implode(', ', $order);
+  $rows = [];
+  try { $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: []; } catch (Throwable $e) { $rows = []; }
+  if (!$rows) {
+    try {
+      $fallback_acc = ensure_default_account_id($pdo, (int)($me_id ?? 0));
+      if ($fallback_acc > 0) {
+        $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+      }
+    } catch (Throwable $e) { /* ignore */ }
+  }
+
+  // user display map (if linked)
+  $userMap = [];
+  if ($hasUser && tbl_exists($pdo,'users')) {
+    try {
+      $ucols = $pdo->query("SHOW COLUMNS FROM users")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+      $pick = null;
+      foreach (['name','full_name','username','email'] as $c) { if (in_array($c,$ucols,true)) { $pick=$c; break; } }
+      if ($pick) {
+        $st = $pdo->query("SELECT id, `$pick` AS nm FROM users");
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $u) {
+          $uid = (int)$u['id'];
+          $nm  = trim((string)($u['nm'] ?? ''));
+          $userMap[$uid] = $nm!=='' ? $nm : ("User#$uid");
+        }
+      }
+    } catch (Throwable $e) { /* ignore */ }
+  }
+
+  foreach ($rows as &$r) {
+    $aid = (int)($r['id'] ?? 0);
+    $nm  = trim((string)($r['acc_name'] ?? ''));
+    if ($nm === '') $nm = ($aid>0 ? "Account#{$aid}" : 'Account');
+    $holder = trim((string)($r['acc_holder'] ?? ''));
+    $uid = (int)($r['user_id'] ?? 0);
+    if ($holder === '' && $uid>0 && isset($userMap[$uid])) {
+      $holder = $userMap[$uid];
+    }
+    $r['label'] = $holder !== '' ? "{$nm} — {$holder}" : $nm;
+  }
+  unset($r);
+
+  return $rows;
+}
 function is_duplicate_method_txn(PDO $pdo, string $method, string $txn_id): bool {
   $method = trim($method);
   $txn_id = trim($txn_id);
@@ -219,14 +303,7 @@ if (!$method_is_post) {
 
     // accounts for select
     $me_id = (int)($_SESSION['user']['id'] ?? 0);
-    $accs = [];
-    if (tbl_exists($pdo,'accounts')) {
-      $order = [];
-      if (col_exists($pdo,'accounts','is_active')) $order[]='COALESCE(is_active,1) DESC';
-      if (col_exists($pdo,'accounts','priority'))  $order[]='priority DESC';
-      $order[]='name';
-      $accs = $pdo->query("SELECT id,name FROM accounts ORDER BY ".implode(', ',$order))->fetchAll(PDO::FETCH_ASSOC);
-    }
+    $accs = account_select_options($pdo, $me_id);
     $pref_acc = 0;
     if ($me_id && tbl_exists($pdo,'accounts') && col_exists($pdo,'accounts','user_id')) {
       $m=$pdo->prepare("SELECT id FROM accounts WHERE user_id=? LIMIT 1");
@@ -264,8 +341,8 @@ if (!$method_is_post) {
               <label class="form-label">Account <span class="text-danger">*</span></label>
               <select name="account_id" class="form-select" required>
                 <option value="">— Select Account —</option>
-                <?php foreach($accs as $a): $aid=(int)$a['id']; ?>
-                  <option value="<?= $aid ?>" <?= $pref_acc && $pref_acc===$aid ? 'selected':'' ?>><?= h($a['name']) ?></option>
+                <?php foreach($accs as $a): $aid=(int)$a['id']; $lbl = trim((string)($a['label'] ?? ($a['name'] ?? ''))); if($lbl==='') $lbl = "Account#{$aid}"; ?>
+                  <option value="<?= $aid ?>" <?= $pref_acc && $pref_acc===$aid ? 'selected':'' ?>><?= h($lbl) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -337,15 +414,7 @@ if (!$method_is_post) {
 
   // Accounts (for select)
   $me_id = (int)($_SESSION['user']['id'] ?? 0);
-  $accs = [];
-  if (tbl_exists($pdo,'accounts')) {
-    $order = [];
-    if (col_exists($pdo,'accounts','is_active')) $order[]='COALESCE(is_active,1) DESC';
-    if (col_exists($pdo,'accounts','priority'))  $order[]='priority DESC';
-    $order[]='name';
-    $sql = "SELECT id,name FROM accounts ORDER BY ".implode(', ',$order);
-    $accs = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
-  }
+  $accs = account_select_options($pdo, $me_id);
   $pref_acc = 0;
   if ($me_id && tbl_exists($pdo,'accounts') && col_exists($pdo,'accounts','user_id')) {
     $m=$pdo->prepare("SELECT id FROM accounts WHERE user_id=? LIMIT 1");
@@ -409,8 +478,8 @@ if (!$method_is_post) {
               <label class="form-label">Account <span class="text-danger">*</span></label>
               <select name="account_id" class="form-select" required>
                 <option value="">— Select Account —</option>
-                <?php foreach($accs as $a): $aid=(int)$a['id']; ?>
-                  <option value="<?= $aid ?>" <?= $pref_acc && $pref_acc===$aid ? 'selected':'' ?>><?= h($a['name']) ?></option>
+                <?php foreach($accs as $a): $aid=(int)$a['id']; $lbl = trim((string)($a['label'] ?? ($a['name'] ?? ''))); if($lbl==='') $lbl = "Account#{$aid}"; ?>
+                  <option value="<?= $aid ?>" <?= $pref_acc && $pref_acc===$aid ? 'selected':'' ?>><?= h($lbl) ?></option>
                 <?php endforeach; ?>
               </select>
               <div class="form-text">Received money will be credited to this account.</div>

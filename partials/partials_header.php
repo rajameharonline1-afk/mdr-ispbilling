@@ -689,6 +689,7 @@ if ($__resolved_active !== '') {
                       <li><a href="/tools/sync_clients_router_mac.php" class="btn btn-menu"><i class="bi bi-plug"></i> Sync Clients Router MAC</a></li>
                       <li><a href="/tools/seed_admin.php" class="btn btn-menu"><i class="bi bi-person-badge"></i> Seed Admin User</a></li>
                       <li><a href="/tools/seed_portal_user.php" class="btn btn-menu"><i class="bi bi-people"></i> Seed Portal User</a></li>
+                      <li><a href="/public/cron_dashboard.php" class="btn btn-menu<?php echo is_active('cron_dashboard'); ?>"><i class="bi bi-clock-history"></i> Cron Dashboard</a></li>
                     </ul>
                   </li>
                 <?php } ?>

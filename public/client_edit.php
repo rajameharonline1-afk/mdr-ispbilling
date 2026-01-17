@@ -644,7 +644,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pppoeChanged  = $pppoe_id !== $prevPppoeId;
         $passChanged   = ($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD) && $pppoe_store_compare !== $prevPppoePass;
         $packageChanged = $package_id && $package_id !== $old_pkg_id;
-        $commentFields = ['name','mobile','area','address','package_id','monthly_bill','expiry_date'];
+        // (বাংলা) MikroTik কমেন্টের জন্য যেসব ফিল্ড বদলালে সিক্রেট রিফ্রেশ করতে হবে
+        $commentFields = ['name','mobile','area','address','package_id','monthly_bill','expiry_date','client_code','join_date'];
         $commentChanged = false;
         foreach ($commentFields as $field) {
             if (array_key_exists($field, $chgNew)) { $commentChanged = true; break; }
@@ -766,8 +767,9 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
 <link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $customCssVer ?>">
 
 <div class="container-fluid py-3 text-start client-edit-shell">
-  <div class="mb-3 d-flex flex-wrap align-items-center gap-2">
-    <div class="d-flex align-items-center gap-2">
+  <!-- (বাংলা) হেডার: ক্লায়েন্ট সারাংশ + কুইক মেটা + অ্যাকশন -->
+  <div class="mb-3 d-flex flex-wrap align-items-center gap-2 ce-header">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
       <div class="header-avatar">
         <?php if ($photo_url): ?>
           <img id="topPreview" src="<?= h($photo_url) ?>" alt="<?= h($client['name'] ?? 'Photo') ?>">
@@ -775,7 +777,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
           <img id="photoPreview" src="/assets/images/default-avatar.png" alt="Photo" style="width:100%;height:100%;object-fit:cover">
         <?php endif; ?>
       </div>
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
         <i class="bi bi-person-lines-fill"></i>
         <span class="fw-bold">Edit Client — <?= h($client['name']) ?></span>
         <?php if ($SHOW_CLIENT_CODE && !empty($client['client_code'])): ?>
@@ -783,9 +785,21 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
         <?php endif; ?>
       </div>
     </div>
-    <div class="ms-auto d-flex flex-wrap gap-2">
-      <a href="/public/client_view.php?id=<?= (int)$client['id'] ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-eye"></i> View</a>
-      <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php"><i class="bi bi-arrow-left"></i> Back</a>
+    <div class="d-flex flex-column flex-lg-row gap-2 ms-lg-auto w-100 w-lg-auto">
+      <div class="d-flex flex-wrap gap-2 ce-meta-line">
+        <span class="ce-chip"><i class="bi bi-person-badge"></i> PPPoE: <?= h($client['pppoe_id'] ?? '-') ?></span>
+        <span class="ce-chip"><i class="bi bi-diagram-3"></i> Router: <?= h($client['router_name'] ?? 'N/A') ?></span>
+        <span class="ce-chip"><i class="bi bi-geo-alt"></i> Area: <?= h($client['area'] ?? '-') ?></span>
+        <?php if (!empty($client['status'])): ?>
+          <span class="ce-chip <?= strtolower((string)$client['status'])==='active'?'bg-success text-white':'bg-secondary' ?>">
+            <i class="bi bi-activity"></i> <?= h(ucfirst((string)$client['status'])) ?>
+          </span>
+        <?php endif; ?>
+      </div>
+      <div class="ms-auto d-flex flex-wrap gap-2 ce-actions">
+        <a href="/public/client_view.php?id=<?= (int)$client['id'] ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-eye"></i> View</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php"><i class="bi bi-arrow-left"></i> Back</a>
+      </div>
     </div>
   </div>
 
@@ -795,13 +809,14 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
     <div class="alert alert-success" id="pageNotice"><i class="bi bi-check2-circle"></i> <?= h($notice) ?></div>
   <?php endif; ?>
 
-  <?php if (!$HAS_PHOTO_URL): ?>
+<?php if (!$HAS_PHOTO_URL): ?>
     <div class="alert alert-warning py-2">
       <strong>Heads up:</strong> photo cannot be saved because <code>clients.photo_url</code> column is missing.
       Run once: <code>ALTER TABLE clients ADD COLUMN photo_url VARCHAR(255) NULL;</code>
     </div>
   <?php endif; ?>
 
+  <!-- (বাংলা) মূল ফর্ম: তিনটি কার্ডে ভাগ -->
   <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
     <input type="hidden" name="id" value="<?= (int)$client['id'] ?>">
     <input type="hidden" name="csrf" value="<?= h($LOC_CSRF) ?>">
@@ -812,7 +827,6 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
         <div class="card-block h-100">
           <div class="card-title d-flex justify-content-between align-items-center">
             <span>Account</span>
-            <span class="text-muted small">Client Code: <span class="mono">#<?= h($client['client_code'] ?? client_code_from_pppoe((string)($client['pppoe_id'] ?? ''))); ?></span></span>
           </div>
           <div class="p-3">
             <?php if ($HAS_CLIENT_CODE): ?>
@@ -823,7 +837,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
                      class="form-control form-control-sm"
                      value="<?= h($_POST['client_code'] ?? ($client['client_code'] ?? '')) ?>"
                      required>
-              <div class="form-text small">Blank হলে PPPoE username-এর শেষ ৪ ডিজিট ব্যবহার হবে।</div>
+              <!-- <div class="form-text small">Blank হলে PPPoE username-এর শেষ ৪ ডিজিট ব্যবহার হবে।</div> -->
             </div>
             <?php endif; ?>
             <div class="mb-2">
@@ -924,7 +938,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
                   </div>
                   <div class="flex-grow-1">
                     <input type="file" name="photo" id="photo" accept="image/*" class="form-control form-control-sm mb-1" <?= $HAS_PHOTO_URL?'':'disabled' ?>>
-                    <div class="form-text small">Supported: JPG, PNG, WebP • Max 3MB</div>
+                    <div class="form-text small">Supported: JPG, PNG • Max 3MB</div>
                     <?php if ($HAS_PHOTO_URL && $photo_url): ?>
                       <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" value="1" id="remove_photo" name="remove_photo">
@@ -978,7 +992,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
                      class="form-control form-control-sm"
                      value="<?= h($exp_display) ?>"
                      placeholder="YYYY-MM-DD">
-              <div class="form-text small">Calendar থেকে পূর্ণ তারিখ সিলেক্ট করুন (ফাঁকা রাখলে আপডেট হবে না)।</div>
+              <!-- <div class="form-text small">Calendar থেকে পূর্ণ তারিখ সিলেক্ট করুন (ফাঁকা রাখলে আপডেট হবে না)।</div> -->
             </div>
             <div class="mb-2">
               <label class="form-label">Status</label>
@@ -1034,6 +1048,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
       </div>
     </div>
 
+    <!-- (বাংলা) ফর্ম অ্যাকশন বাটন -->
     <div class="d-flex justify-content-between align-items-center mt-3">
       <span class="text-muted small">
         <?php if ($SHOW_CLIENT_CODE && !empty($client['client_code'])): ?>

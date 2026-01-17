@@ -734,6 +734,9 @@ thead th a:hover{ text-decoration:underline; }
 (function(){
   const editModal = document.getElementById('editAmountModal');
   if (editModal) {
+    if (editModal.parentElement !== document.body) {
+      document.body.appendChild(editModal);
+    }
     editModal.addEventListener('show.bs.modal', event => {
       const btn = event.relatedTarget;
       const id = btn.getAttribute('data-id');
@@ -745,33 +748,38 @@ thead th a:hover{ text-decoration:underline; }
 
   const modal = document.getElementById('payModal');
   const form  = document.getElementById('payForm');
+  if (modal && modal.parentElement !== document.body) {
+    document.body.appendChild(modal);
+  }
 
-  modal.addEventListener('show.bs.modal', event => {
-    const btn = event.relatedTarget;
-    const id   = btn.getAttribute('data-id');
-    const name = btn.getAttribute('data-client');
-    const total= parseFloat(btn.getAttribute('data-total')||'0');
-    const paid = parseFloat(btn.getAttribute('data-paid')||'0');
-    const remaining = Math.max(0, (total - paid)).toFixed(2);
+  if (modal) {
+    modal.addEventListener('show.bs.modal', event => {
+      const btn = event.relatedTarget;
+      const id   = btn.getAttribute('data-id');
+      const name = btn.getAttribute('data-client');
+      const total= parseFloat(btn.getAttribute('data-total')||'0');
+      const paid = parseFloat(btn.getAttribute('data-paid')||'0');
+      const remaining = Math.max(0, (total - paid)).toFixed(2);
 
-    document.getElementById('pay_invoice_id').value = id;
-    document.getElementById('pay_client_name').textContent = name || '—';
-    document.getElementById('pay_total').value = total.toFixed(2);
-    document.getElementById('pay_paid').value  = paid.toFixed(2);
-    document.getElementById('pay_amount').value = remaining;
+      document.getElementById('pay_invoice_id').value = id;
+      document.getElementById('pay_client_name').textContent = name || '—';
+      document.getElementById('pay_total').value = total.toFixed(2);
+      document.getElementById('pay_paid').value  = paid.toFixed(2);
+      document.getElementById('pay_amount').value = remaining;
 
-    // default now (YYYY-MM-DDTHH:MM)
-    const now = new Date();
-    const pad = n => String(n).padStart(2,'0');
-    const local = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+'T'+pad(now.getHours())+':'+pad(now.getMinutes());
-    document.getElementById('pay_paid_at').value = local;
+      // default now (YYYY-MM-DDTHH:MM)
+      const now = new Date();
+      const pad = n => String(n).padStart(2,'0');
+      const local = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+'T'+pad(now.getHours())+':'+pad(now.getMinutes());
+      document.getElementById('pay_paid_at').value = local;
 
-    document.getElementById('pay_method').value = '';
-    document.getElementById('pay_txn').value = '';
-    document.getElementById('pay_remarks').value = '';
-  });
+      document.getElementById('pay_method').value = '';
+      document.getElementById('pay_txn').value = '';
+      document.getElementById('pay_remarks').value = '';
+    });
+  }
 
-  form.addEventListener('submit', async (e)=>{
+  form?.addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(form);
     // Force JSON response from payment_add.php

@@ -65,7 +65,7 @@ include __DIR__ . '/../partials/partials_header.php';
               <span class="legend legend-tx ms-3"></span> TX
             </span>
             <span class="text-muted">Window: <span id="chartWindow">~2 মিনিট</span></span>
-            <span class="text-muted">Polling: 1s</span>
+            <span class="text-muted">Polling: 0.5s</span>
           </div>
         </div>
 
@@ -90,7 +90,7 @@ include __DIR__ . '/../partials/partials_header.php';
     <span class="legend legend-tx ms-3"></span> TX
   </span>
   <span class="text-muted">Window: <span id="chartWindow">~2 মিনিট</span></span>
-  <span class="text-muted">Polling: 1s</span>
+  <span class="text-muted">Polling: 0.5s</span>
 
   <!-- ⬇️ নতুন Peak labels -->
   <span class="ms-3">Peak RX: <b id="rxPeakLabel">0 Kbps</b></span>
@@ -111,8 +111,8 @@ include __DIR__ . '/../partials/partials_header.php';
   window.LIVE_GRAPH = {
     clientId: <?= (int)$client_id ?>,
     apiUrl: '/api/client_live_status.php',
-    intervalMs: 1000,  // আপনি আগেই ১ সেকেন্ডে সেট করেছেন
-    maxPoints: 120     // ~২ মিনিট (1s ইন্টারভাল)
+    intervalMs: 1000,   // আরো দ্রুত (0.5s) পোলিং
+    maxPoints: 120     // ~১ মিনিট (0.5s ইন্টারভাল)
   };
 </script>
 <script src="/assets/js/live_graph.js"></script>
