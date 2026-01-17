@@ -40,14 +40,14 @@ if ($return_var === 0) {
         $mail->isSMTP();
         $mail->Host       = 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = '01732197767s@gmail.com'; // তোমার Gmail
-        $mail->Password   = 'hzdtuyfiatqhjggd';   // Gmail App Password
+        $mail->Username   = 'rajameharonline1@gmail.com'; // তোমার Gmail
+        $mail->Password   = 'hugq uppy kdre axkw';   // Gmail App Password
         $mail->SMTPSecure = 'tls';
         $mail->Port       = 587;
 
         // Recipients
-        $mail->setFrom('01732197767s@gmail.com', 'Auto Backup');
-        $mail->addAddress('01732197767s@gmail.com', 'Admin');
+        $mail->setFrom('rajameharonline1@gmail.com', 'Auto Backup');
+        $mail->addAddress('rajameharonline1@gmail.com', 'Admin');
 
         // Attach backup file
         $mail->addAttachment($backupFile);

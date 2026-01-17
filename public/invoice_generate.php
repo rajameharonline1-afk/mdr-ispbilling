@@ -73,7 +73,7 @@ if (!$invCols) {
 }
 
 // amount/number/date/period discovery
-$amountCol = first_existing(['total','amount','payable','grand_total','net_total'], $invCols);
+$amountCol = first_existing(['total','total_amount','amount','payable','grand_total','net_total'], $invCols);
 $invNumCol = first_existing(['invoice_number','invoice_no','number','no'], $invCols);
 // generic date-like columns we may use if present
 $invDateCol = first_existing(['invoice_date','inv_date','date','bill_date'], $invCols);
@@ -221,6 +221,9 @@ if ($commit) {
 
         // build INSERT column list
         $insCols = ['client_id', $amountCol];
+        // include total_amount if present and not the primary amount column
+        $extraTotalAmount = ($amountCol !== 'total_amount' && in_array('total_amount', array_keys($invCols), true));
+        if ($extraTotalAmount && !in_array('total_amount', $insCols, true)) $insCols[] = 'total_amount';
         if ($invNumCol) $insCols[] = $invNumCol;
 
         // include all period/date columns required by unique key
@@ -265,6 +268,8 @@ if ($commit) {
                 if ($col === 'client_id') {
                     $vals[] = $cid;
                 } elseif ($col === $amountCol) {
+                    $vals[] = (float)$row['amount'];
+                } elseif ($extraTotalAmount && $col === 'total_amount') {
                     $vals[] = (float)$row['amount'];
                 } elseif ($invNumCol && $col === $invNumCol) {
                     $vals[] = make_next_invoice_number($pdo, $month, $invNumCol, $reserved);

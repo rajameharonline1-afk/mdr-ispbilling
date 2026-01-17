@@ -37,6 +37,11 @@ if ($tokenParam && defined('CRON_TOKEN') && $tokenParam === CRON_TOKEN) {
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function dbh(){ return db(); }
+function close_session_if_open(): void {
+  if (session_status() === PHP_SESSION_ACTIVE) {
+    @session_write_close(); // release lock so other tabs stay responsive
+  }
+}
 function is_ajax(): bool {
   return (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
     || ($_POST['ajax'] ?? '') === '1'
@@ -50,6 +55,11 @@ if (!empty($_SERVER['SCRIPT_NAME'])) {
   }
 }
 $CRON_SCHEDULE_FILE = __DIR__ . '/../storage/cron_schedules.json';
+$CRON_ENABLE_FILE   = __DIR__ . '/../storage/cron_enabled.json';
+$CURRENT_USER_ID = (int)($_SESSION['user']['id'] ?? 0);
+$CURRENT_SESSION_ID = session_id();
+// release session lock early so other tabs remain responsive during long jobs
+close_session_if_open();
 
 function load_schedules(string $file, array $jobs): array {
   if (!is_file($file)) {
@@ -71,15 +81,34 @@ function save_schedules(string $file, array $map): bool {
   if (!is_dir($dir)) @mkdir($dir, 0775, true);
   return (bool)@file_put_contents($file, json_encode($map, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
 }
+function load_enabled(string $file, array $jobs): array {
+  $def = [];
+  foreach ($jobs as $k=>$j) { $def[$k] = true; }
+  if (!is_file($file)) return $def;
+  $txt = @file_get_contents($file);
+  $data = $txt ? json_decode($txt, true) : [];
+  if (!is_array($data)) return $def;
+  foreach ($def as $k=>$_) {
+    if (!isset($data[$k])) $data[$k] = true;
+  }
+  return $data;
+}
+function save_enabled(string $file, array $map): bool {
+  $dir = dirname($file);
+  if (!is_dir($dir)) @mkdir($dir, 0775, true);
+  return (bool)@file_put_contents($file, json_encode($map, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
+}
 
-/* ---------- (ঐচ্ছিক) Admin-only গার্ড ----------
-   যদি আপনার সিস্টেমে $_SESSION['user']['role']=='admin' থাকে, আনকমেন্ট করুন
-// if (($_SESSION['user']['role'] ?? '') !== 'admin') {
-//   http_response_code(403);
-//   echo 'Forbidden';
-//   exit;
-// }
-*/
+/* ---------- Admin-only গার্ড (UI access) ---------- */
+// টোকেন/CLI এলে স্কিপ; শুধু লগইন UI তে অ্যাডমিন বাধ্যতামূলক
+if (!$IS_CLI && $tokenParam === '') {
+  if (($_SESSION['user']['role'] ?? '') !== 'admin') {
+    http_response_code(403);
+    echo 'Forbidden';
+    exit;
+  }
+}
+
 
 /* ---------- Ensure log table ---------- */
 // (বাংলা) ক্রন রান লগ টেবিল — না থাকলে বানাই
@@ -118,7 +147,8 @@ $jobs = [
   'invoice_month' => [
     'title' => 'Generate Monthly Invoices (commit)',
     // (বাংলা) {month} প্লেসহোল্ডার রিপ্লেস হবে; নিচে ফর্মে month নেওয়া হচ্ছে
-    'url'   => '/public/invoice_generate.php?month={month}&commit=1',
+    // JSON API পথ ব্যবহার করছি যাতে HTML আউটপুট না আসে
+    'url'   => '/cron/generate_invoices.php?month={month}&mode=replace',
     'method'=> 'GET',
     'desc'  => 'Create/replace invoices for a given month and update ledgers.',
     'timeout' => 240,
@@ -284,8 +314,8 @@ $jobs = [
     'url'   => '/api/olt_mac_refresh_telnet.php?mode=fast',
     'method'=> 'GET',
     'desc'  => 'Refresh OLT MAC cache via telnet (onu_inventory/onu_mac_map টেবিল প্রয়োজন)।',
-    'timeout' => 300,
-    'supports' => [],
+    'timeout' => 600, // heavy job; cap at 10m to avoid UI hang
+    'supports' => ['olt_id','skip_pppoe'], // allow narrowing to a specific OLT / skipping PPPoE link phase
   ],
 ];
 
@@ -318,13 +348,20 @@ function render_log_cell($text, int $limit = 160): string {
 function render_history_rows(array $rows): string {
   ob_start();
   if (!$rows) {
-    echo '<tr><td colspan="9" class="text-center text-muted">No runs recorded.</td></tr>';
+    echo '<tr><td colspan="10" class="text-center text-muted">No runs recorded.</td></tr>';
   } else {
     foreach($rows as $r){ ?>
       <tr>
         <td>#<?=h((string)$r['id'])?></td>
         <td><code><?=h($r['job_key'])?></code></td>
         <td><?=h($r['title'])?></td>
+        <td>
+          <?php if ((int)($r['triggered_by'] ?? 0) === 0): ?>
+            <span class="badge bg-info text-dark">Auto</span>
+          <?php else: ?>
+            <span class="badge bg-secondary">Manual</span>
+          <?php endif; ?>
+        </td>
         <td>
           <?php if ($r['status']): ?>
             <span class="badge bg-<?= $r['status']==='success'?'success':'danger' ?>"><?=h($r['status'])?></span>
@@ -343,13 +380,81 @@ function render_history_rows(array $rows): string {
   return ob_get_clean();
 }
 
+function render_running_rows(array $rows, array $jobs): string {
+  if (!$rows) {
+    return '<tr><td colspan="6" class="text-muted text-center">No jobs are running right now.</td></tr>';
+  }
+  ob_start();
+  $nowTs = time();
+  foreach ($rows as $r) {
+    $jobKey = $r['job_key'];
+    $timeout = (int)($jobs[$jobKey]['timeout'] ?? 120);
+    $started = $r['started_at'] ?? '';
+    $elapsed = '';
+    $remaining = '';
+    if ($started) {
+      $elapsedMs = (int)round(($nowTs - strtotime($started)) * 1000);
+      $elapsed = $elapsedMs . ' ms';
+      $remainingMs = max(0, ($timeout * 1000) - $elapsedMs);
+      $remaining = $remainingMs . ' ms';
+    }
+    ?>
+    <tr data-job="<?=h($jobKey)?>">
+      <td>#<?=h((string)$r['id'])?></td>
+      <td><code><?=h($jobKey)?></code></td>
+      <td><?=h($r['title'])?></td>
+      <td><?=h((string)$r['started_at'])?></td>
+      <td class="text-end"><?=h((string)$timeout)?> s</td>
+      <td class="text-end">
+        <div class="small">Elapsed: <?=h($elapsed ?: '—')?></div>
+        <div class="small text-muted">Remaining: <?=h($remaining ?: '—')?></div>
+      </td>
+    </tr>
+    <?php
+  }
+  return ob_get_clean();
+}
+
+function render_recent_rows(array $rows): string {
+  if (!$rows) {
+    return '<tr><td colspan="7" class="text-muted text-center">No recent cron_runner jobs.</td></tr>';
+  }
+  ob_start();
+  foreach ($rows as $r) { ?>
+    <tr>
+      <td>#<?=h((string)$r['id'])?></td>
+      <td><code><?=h($r['job_key'])?></code></td>
+      <td><?=h($r['title'])?></td>
+      <td>
+        <?php if ($r['status']): ?>
+          <span class="badge bg-<?= $r['status']==='success'?'success':'danger' ?>"><?=h($r['status'])?></span>
+        <?php else: ?>
+          <span class="badge bg-secondary">running</span>
+        <?php endif; ?>
+      </td>
+      <td><?=h((string)$r['started_at'])?></td>
+      <td><?=h((string)($r['finished_at'] ?? ''))?></td>
+      <td class="text-end"><?=h($r['duration_ms'] !== null ? (string)$r['duration_ms'].' ms' : '')?></td>
+    </tr>
+  <?php }
+  return ob_get_clean();
+}
+
 /* (বাংলা) লোকাল HTTP কল — cURL প্রেফার্ড; নইলে file_get_contents */
 function http_call(string $url, string $method = 'GET', array $post = [], int $timeout = 120): array {
   $full = local_url($url);
   $method = strtoupper($method);
   $cookie = '';
-  if (session_status() === PHP_SESSION_ACTIVE && session_id() !== '') {
+  global $CURRENT_SESSION_ID;
+  if ($CURRENT_SESSION_ID !== '') {
+    $cookie = 'PHPSESSID=' . $CURRENT_SESSION_ID;
+  } elseif (session_status() === PHP_SESSION_ACTIVE && session_id() !== '') {
     $cookie = 'PHPSESSID=' . session_id();
+  }
+  // If token is present, prefer token-only to avoid session lock coupling
+  if ($cookie && (($_GET['token'] ?? '') || ($_POST['token'] ?? '') || getenv('CRON_TOKEN'))) {
+    // drop session cookie when token available
+    $cookie = '';
   }
   // টোকেন ফওয়ার্ড (CLI token → downstream)
   global $tokenForward;
@@ -377,11 +482,11 @@ function http_call(string $url, string $method = 'GET', array $post = [], int $t
     if ($cookie !== '') {
       curl_setopt($ch, CURLOPT_COOKIE, $cookie);
     }
-    if ($method === 'POST') {
-      curl_setopt($ch, CURLOPT_POST, true);
-      curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
-    }
-    $out = curl_exec($ch);
+  if ($method === 'POST') {
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
+  }
+  $out = curl_exec($ch);
     $err = curl_error($ch);
     $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
@@ -416,7 +521,11 @@ $flash_success = '';
 $flash_error   = '';
 $isAjaxReq     = is_ajax();
 $tokenForward  = $tokenParam ?: '';
+if ($tokenForward === '' && defined('CRON_TOKEN')) {
+  $tokenForward = CRON_TOKEN; // fallback to global cron token for authenticated UI runs
+}
 $schedules     = []; // পরে লোড হবে
+$enabledMap    = []; // পরে লোড হবে
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
   $job_key = trim($_POST['run_job']);
@@ -425,7 +534,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
   } else {
     $job = $jobs[$job_key];
     $title = $job['title'];
-    $user_id = (int)($_SESSION['user']['id'] ?? 0);
+    $user_id = $CURRENT_USER_ID;
 
     // (বাংলা) ইনপুট: month সাপোর্ট করলে নিন
     $url = $job['url'];
@@ -441,6 +550,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
     } else {
       $url = str_replace('{month}', $current_month, $url); // যদি ভুলে থেকেও placeholder থাকে
     }
+    // Optional: OLT filter
+    if (!empty($job['supports']) && in_array('olt_id', $job['supports'], true)) {
+      $oltId = trim($_POST['olt_id'] ?? '');
+      if ($oltId !== '' && !preg_match('/^\d+$/', $oltId)) {
+        $flash_error = 'Invalid OLT ID.';
+        goto after_run;
+      }
+      if ($oltId !== '') {
+        $url .= (str_contains($url, '?') ? '&' : '?') . 'olt_id=' . urlencode($oltId);
+        $title .= " [OLT {$oltId}]";
+      }
+    }
+    if (!empty($job['supports']) && in_array('skip_pppoe', $job['supports'], true)) {
+      $skipPppoe = isset($_POST['skip_pppoe']) && $_POST['skip_pppoe'] === '1';
+      if ($skipPppoe) {
+        $url .= (str_contains($url, '?') ? '&' : '?') . 'skip_pppoe=1';
+        $title .= ' [skip_pppoe]';
+      }
+    }
     // টোকেন থাকলে URL এ যুক্ত করি (GET কলের জন্য)
     if ($tokenForward) {
       $url .= (str_contains($url, '?') ? '&' : '?') . 'token=' . urlencode($tokenForward);
@@ -452,6 +580,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
     $run_id = (int)dbh()->lastInsertId();
 
     // Execute
+    close_session_if_open();
     $started = microtime(true);
     @set_time_limit(max(60, (int)($job['timeout'] ?? 120)));
     try {
@@ -514,6 +643,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_schedule'])) {
   }
 }
 
+// Save enable/disable
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_enable'])) {
+  $job_key = trim($_POST['save_enable']);
+  $enable  = ($_POST['enabled'] ?? '1') === '1';
+  if (!isset($jobs[$job_key])) {
+    $flash_error = 'Unknown job for enable toggle.';
+  } else {
+    $enabledMap = load_enabled($CRON_ENABLE_FILE, $jobs);
+    $enabledMap[$job_key] = $enable;
+    if (save_enabled($CRON_ENABLE_FILE, $enabledMap)) {
+      $flash_success = "Job '{$jobs[$job_key]['title']}' ".($enable?'enabled':'disabled').'.';
+    } else {
+      $flash_error = 'Failed to save enable file.';
+    }
+  }
+  if ($isAjaxReq) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+      'ok' => $flash_error === '',
+      'message' => $flash_success ?: ($flash_error ?: 'Failed'),
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+  }
+}
+
 // Ajax POST response (job run)
 if ($isAjaxReq && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
   header('Content-Type: application/json; charset=utf-8');
@@ -547,6 +701,11 @@ $st = dbh()->prepare("SELECT * FROM cron_runs $where_sql ORDER BY id DESC LIMIT 
 $st->execute($params);
 $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
+// Currently running (unfinished) — only cron_runner triggered (triggered_by=0)
+$running = dbh()->query("SELECT * FROM cron_runs WHERE finished_at IS NULL AND IFNULL(triggered_by,0)=0 ORDER BY id DESC LIMIT 20")->fetchAll(PDO::FETCH_ASSOC);
+// Recent runs by cron_runner
+$recentCron = dbh()->query("SELECT * FROM cron_runs WHERE IFNULL(triggered_by,0)=0 ORDER BY id DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
+
 // Last run per job
 $last = [];
 $stl = dbh()->query("
@@ -559,6 +718,7 @@ foreach ($stl->fetchAll(PDO::FETCH_ASSOC) as $r) {
   $last[$r['job_key']] = $r;
 }
 $schedules = $schedules ?: load_schedules($CRON_SCHEDULE_FILE, $jobs);
+$enabledMap = $enabledMap ?: load_enabled($CRON_ENABLE_FILE, $jobs);
 
 // Ajax history partial
 if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'history') {
@@ -581,6 +741,19 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
   echo json_encode(['ok'=>true,'last'=>$lr], JSON_UNESCAPED_UNICODE);
   exit;
 }
+
+// Ajax: running list (unfinished rows)
+if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
+  $running = dbh()->query("SELECT * FROM cron_runs WHERE finished_at IS NULL AND IFNULL(triggered_by,0)=0 ORDER BY id DESC LIMIT 20")->fetchAll(PDO::FETCH_ASSOC);
+  $recentCron = dbh()->query("SELECT * FROM cron_runs WHERE IFNULL(triggered_by,0)=0 ORDER BY id DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode([
+    'ok' => true,
+    'running_body' => render_running_rows($running, $jobs),
+    'recent_body' => render_recent_rows($recentCron),
+  ], JSON_UNESCAPED_UNICODE);
+  exit;
+}
 ?>
 <?php require_once __DIR__ . '/../partials/partials_header.php'; ?>
 <style>
@@ -588,6 +761,8 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
   .table-condensed td, .table-condensed th {padding: .5rem .6rem;}
   .table-code code {white-space: nowrap;}
   .jobs-table { min-width: 1300px; table-layout: auto; }
+  .jobs-table th.schedule-col, .jobs-table td.schedule-col {min-width: 190px;}
+  .jobs-table th.last-col, .jobs-table td.last-col {min-width: 220px;}
   .jobs-table th.action-col, .jobs-table td.action-col {min-width: 240px; white-space: nowrap; }
   .jobs-table thead th{
     background:#1e3f5e;
@@ -606,29 +781,64 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
   .jobs-table .endpoint-col .text-muted{display:block; margin-top:2px;}
   .jobs-table .action-col{position:sticky; right:0; background:#fff;}
   .jobs-table .action-col .btn{box-shadow:none;}
+  .jobs-table .schedule-val code{font-size:.92rem;}
+  .jobs-table .last-meta{display:flex; flex-direction:column; gap:2px; align-items:flex-start;}
+  .jobs-table .last-meta .badge{font-size:.75rem; text-transform:uppercase;}
+  .jobs-table .last-meta .small{line-height:1.25; word-break:break-word;}
   .schedule-form input.form-control{min-width:110px;}
-  .jobs-table .last-meta{display:flex; flex-direction:column; align-items:flex-start; gap:2px;}
-  .jobs-table .last-meta .small{line-height:1.2; word-break:break-word;}
+  /* Toast-style flash: top-right, never pushing page header */
+  #flash-dock{
+    position:fixed;
+    right:16px;
+    top:16px;
+    width:min(380px, calc(100% - 32px));
+    z-index:1080;
+    pointer-events:none;
+  }
+  #flash-dock .alert{
+    pointer-events:auto;
+    box-shadow:0 0.5rem 1.5rem rgba(0,0,0,0.25);
+    margin-top:8px;
+  }
+  /* Responsive cards for jobs table on small screens */
+  @media (max-width: 991px){
+    .jobs-table{min-width:100%; width:100%;}
+    .jobs-table thead{display:none;}
+    .jobs-table tbody tr{
+      display:block;
+      margin-bottom:12px;
+      border:1px solid #e9ecef;
+      border-radius:10px;
+      box-shadow:0 6px 20px rgba(0,0,0,0.04);
+      overflow:hidden;
+    }
+    .jobs-table tbody td{
+      display:flex;
+      gap:10px;
+      align-items:flex-start;
+      justify-content:space-between;
+      padding:10px 12px;
+      border-bottom:1px solid #f0f2f5;
+    }
+    .jobs-table tbody td:last-child{border-bottom:none;}
+    .jobs-table tbody td::before{
+      content:attr(data-label);
+      font-weight:600;
+      color:#4b5563;
+      flex:0 0 110px;
+      text-transform:uppercase;
+      font-size:.78rem;
+      letter-spacing:.01em;
+    }
+    .jobs-table .action-col{position:static; text-align:left;}
+    .jobs-table .action-col .d-flex{width:100%; flex-direction:column; align-items:flex-start;}
+  }
 </style>
 <div class="container-fluid my-4">
-  <div class="d-flex align-items-center justify-content-between">
+  <div class="d-flex align-items-center justify-content-start">
     <h3 class="mb-0">Cron Dashboard</h3>
-    <div class="d-flex gap-2">
-      <a href="?<?=h(http_build_query($_GET))?>" class="btn btn-outline-secondary">
-        <i class="bi bi-arrow-clockwise"></i> Refresh
-      </a>
-      <button type="button" class="btn btn-outline-dark" id="btn-hard-refresh">
-        <i class="bi bi-arrow-repeat"></i> Hard Refresh
-      </button>
-    </div>
   </div>
 
-  <?php if ($flash_success): ?>
-    <div class="alert alert-success mt-3"><?=h($flash_success)?></div>
-  <?php endif; ?>
-  <?php if ($flash_error): ?>
-    <div class="alert alert-danger mt-3"><?=h($flash_error)?></div>
-  <?php endif; ?>
   <div id="flash-dock"></div>
 
   <!-- Jobs -->
@@ -642,6 +852,8 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
               <th>Job</th>
               <th>Description</th>
               <th>Endpoint</th>
+              <th class="schedule-col">Schedule</th>
+              <th class="last-col">Last Run</th>
               <th class="text-end action-col">Action</th>
             </tr>
           </thead>
@@ -652,19 +864,50 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
             if (!empty($j['supports']) && in_array('month', $j['supports'], true)) {
               $url_preview = str_replace('{month}', $current_month, $url_preview);
             }
+            $scheduleStr = $schedules[$key] ?? ($j['schedule'] ?? '*/5 * * * *');
+            $defaultSchedule = $j['schedule'] ?? '*/5 * * * *';
+            $lrStatus = strtolower((string)($lr['status'] ?? ''));
+            $lrBadge = $lrStatus==='success' ? 'bg-success' : ($lrStatus==='failed' ? 'bg-danger' : 'bg-secondary');
+            $lrLabel = $lrStatus !== '' ? $lrStatus : ($lr ? 'running' : '');
+            $isEnabled = $enabledMap[$key] ?? true;
           ?>
             <tr>
-              <td class="job-col">
+              <td class="job-col" data-label="Job">
                 <div class="job-title"><?=h($j['title'])?></div>
                 <div class="job-key text-muted"><?=h($key)?></div>
               </td>
-              <td><?=h($j['desc'])?></td>
-              <td>
+              <td data-label="Description"><?=h($j['desc'])?></td>
+              <td data-label="Endpoint">
                 <code><?=h($j['method'] ?? 'GET')?> <?=h($url_preview)?></code>
                 <div class="text-muted small">Timeout: <?=h((string)($j['timeout'] ?? 120))?>s</div>
               </td>
-              <td class="text-end action-col">
+              <td class="schedule-col" data-label="Schedule">
+                <div class="schedule-val" data-schedule-display="<?=h($key)?>">
+                  <code><?=h($scheduleStr)?></code>
+                </div>
+                <div class="text-muted small">Default: <?=h($defaultSchedule)?></div>
+              </td>
+              <td class="last-col" data-label="Last Run">
+                <div class="last-meta" data-last-display="<?=h($key)?>">
+                  <?php if ($lr): ?>
+                    <div><span class="badge <?=$lrBadge?>"><?=h($lrLabel ?: 'running')?></span></div>
+                    <div class="small text-muted">Start: <?=h($lr['started_at'] ?? '—')?></div>
+                    <div class="small text-muted">End: <?=h($lr['finished_at'] ?? '—')?></div>
+                    <div class="small text-muted">Duration: <?=h($lr['duration_ms'] !== null ? (string)$lr['duration_ms'].' ms' : '—')?></div>
+                  <?php else: ?>
+                    <span class="text-muted small">No runs yet</span>
+                  <?php endif; ?>
+                </div>
+              </td>
+              <td class="text-end action-col" data-label="Action">
                 <div class="d-flex flex-column align-items-end gap-2">
+                  <form class="enable-form d-flex align-items-center gap-2" method="post">
+                    <input type="hidden" name="save_enable" value="<?=h($key)?>">
+                    <div class="form-check form-switch m-0">
+                      <input class="form-check-input enable-toggle" type="checkbox" role="switch" name="enabled" value="1" <?= $isEnabled ? 'checked' : '' ?> data-job="<?=h($key)?>">
+                      <label class="form-check-label small">Auto</label>
+                    </div>
+                  </form>
                   
 
                   <button type="button"
@@ -680,7 +923,9 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
                           data-output="<?=h(mb_substr((string)($lr['output'] ?? ''),0,1000))?>"
                           data-error="<?=h(mb_substr((string)($lr['error'] ?? ''),0,1000))?>"
                           data-supports-month="<?=!empty($j['supports']) && in_array('month',$j['supports'],true) ? '1' : '0'?>"
-                          data-schedule="<?=h($schedules[$key] ?? ($j['schedule'] ?? '*/5 * * * *'))?>">
+                          data-supports-olt="<?=!empty($j['supports']) && in_array('olt_id',$j['supports'],true) ? '1' : '0'?>"
+                          data-supports-skip_pppoe="<?=!empty($j['supports']) && in_array('skip_pppoe',$j['supports'],true) ? '1' : '0'?>"
+                          data-schedule="<?=h($scheduleStr)?>">
                     <i class="bi bi-clock-history"></i> Schedule
                   </button>
                 </div>
@@ -719,6 +964,57 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
   </form>
 
   <!-- History table -->
+  <div class="card shadow-sm mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>Currently running</span>
+      <div class="d-flex gap-3 align-items-center">
+        <small class="text-muted">Live from cron_runs (unfinished rows)</small>
+        <span class="badge bg-secondary" id="next-tick">Next check in —</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>ID</th>
+              <th>Job</th>
+              <th>Title</th>
+              <th>Started</th>
+              <th class="text-end">Timeout</th>
+              <th class="text-end">Timing</th>
+            </tr>
+          </thead>
+          <tbody id="running-body">
+            <?= render_running_rows($running, $jobs) ?>
+          </tbody>
+        </table>
+      </div>
+      <div class="mt-3">
+        <div class="fw-semibold mb-1">Recent cron_runner jobs</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-striped align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>ID</th>
+                <th>Job</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Finished</th>
+                <th class="text-end">Duration</th>
+              </tr>
+            </thead>
+            <tbody id="recent-body">
+              <?= render_recent_rows($recentCron) ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History table -->
   <div class="card shadow-sm">
     <div class="card-header">Last Runs</div>
     <div class="card-body">
@@ -729,6 +1025,7 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
               <th style="width:90px;">ID</th>
               <th>Job</th>
               <th>Title</th>
+              <th>Source</th>
               <th>Status</th>
               <th>Started</th>
               <th>Finished</th>
@@ -769,233 +1066,6 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
     </div>
   </div>
 </div>
-<?php require_once __DIR__ . '/../partials/partials_footer.php'; ?>
-<script>
-(function(){
-  const flashDock = document.getElementById('flash-dock');
-  function showFlash(type, text){
-    if (!flashDock) return;
-    const div = document.createElement('div');
-    div.className = 'alert alert-' + (type === 'success' ? 'success' : 'danger') + ' mt-3';
-    div.textContent = text || (type === 'success' ? 'Done' : 'Failed');
-    flashDock.innerHTML = '';
-    flashDock.appendChild(div);
-    setTimeout(() => { if (flashDock.contains(div)) div.remove(); }, 4000);
-  }
-  async function refreshHistory(){
-    const params = new URLSearchParams(window.location.search);
-    params.set('ajax','history');
-    try{
-      const res = await fetch(window.location.pathname + '?' + params.toString(), {
-        headers: {'X-Requested-With':'XMLHttpRequest'}
-      });
-      const j = await res.json();
-      if (j && j.ok && j.history_body){
-        const body = document.getElementById('history-body');
-        if (body) body.innerHTML = j.history_body;
-      }
-    }catch(e){}
-  }
-  document.querySelectorAll('.job-run-form').forEach(form => {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const btn = form.querySelector('button[type="submit"]') || form.querySelector('button');
-      const spin = btn?.querySelector('.btn-spinner');
-      if (btn) btn.disabled = true;
-      if (spin) spin.classList.remove('d-none');
-      const fd = new FormData(form);
-      fd.append('ajax','1');
-      try{
-        const res = await fetch(window.location.href, {
-          method: 'POST',
-          body: fd,
-          headers: {'X-Requested-With':'XMLHttpRequest'}
-        });
-        const text = await res.text();
-        let j = null;
-        try { j = JSON.parse(text); } catch(_) {}
-        if (j && j.ok){
-          showFlash('success', j.message || 'Job finished');
-          refreshHistory();
-        } else {
-          showFlash('danger', (j && j.message) ? j.message : 'Job failed');
-        }
-      }catch(err){
-        showFlash('danger', 'Request failed');
-      }finally{
-        if (btn) btn.disabled = false;
-        if (spin) spin.classList.add('d-none');
-      }
-    });
-  });
-
-  // Schedule save forms
-  document.querySelectorAll('.schedule-form').forEach(form => {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const btn = form.querySelector('button[type="submit"]') || form.querySelector('button');
-      const spin = btn?.querySelector('.btn-spinner');
-      if (btn) btn.disabled = true;
-      if (spin) spin.classList.remove('d-none');
-      const fd = new FormData(form);
-      fd.append('ajax','1');
-      try{
-        const res = await fetch(window.location.href, {
-          method: 'POST',
-          body: fd,
-          headers: {'X-Requested-With':'XMLHttpRequest'}
-        });
-        const text = await res.text();
-        let j = null;
-        try { j = JSON.parse(text); } catch(_) {}
-        if (j && j.ok){
-          showFlash('success', j.message || 'Schedule saved');
-        } else {
-          showFlash('danger', (j && j.message) ? j.message : 'Schedule save failed');
-        }
-      }catch(err){
-        showFlash('danger', 'Request failed');
-      }finally{
-        if (btn) btn.disabled = false;
-        if (spin) spin.classList.add('d-none');
-      }
-    });
-  });
-
-  // View last run modal
-  const lrModal = document.getElementById('lastRunModal');
-  lrModal?.addEventListener('show.bs.modal', (e) => {
-    const btn = e.relatedTarget;
-    if (!btn) return;
-    const get = (k) => btn.getAttribute('data-' + k) || '';
-    const title = get('title');
-    const job = get('job');
-    const status = (get('status') || '').toLowerCase();
-    const start = get('start') || '—';
-    const end = get('end') || '—';
-    const dur = get('duration') ? get('duration') + ' ms' : '—';
-    const output = get('output') || '—';
-    const error = get('error') || '—';
-
-    lrModal.querySelector('#lr-title').textContent = title || '—';
-    lrModal.querySelector('#lr-job').textContent = job ? '(' + job + ')' : '';
-    const badge = lrModal.querySelector('#lr-status');
-    badge.textContent = status || '—';
-    badge.className = 'badge ' + (status === 'success' ? 'bg-success' : (status === 'failed' ? 'bg-danger' : 'bg-secondary'));
-    lrModal.querySelector('#lr-start').textContent = start;
-    lrModal.querySelector('#lr-end').textContent = end;
-    lrModal.querySelector('#lr-duration').textContent = dur;
-    lrModal.querySelector('#lr-output').textContent = output;
-    lrModal.querySelector('#lr-error').textContent = error;
-    const schedInput = lrModal.querySelector('#lr-schedule-input');
-    const saveKey = lrModal.querySelector('#lr-save-key');
-    if (saveKey) saveKey.value = job;
-    if (schedInput) schedInput.value = get('schedule') || '*/5 * * * *';
-    const monthWrap = lrModal.querySelector('#lr-month-wrap');
-    if (monthWrap) monthWrap.classList.toggle('d-none', get('supports-month') !== '1');
-    const runJob = lrModal.querySelector('#lr-run-job');
-    if (runJob) runJob.value = job;
-
-    // AJAX দিয়ে সর্বশেষ রান নিয়ে আসি (always refresh)
-    if (job) {
-      fetch(window.location.pathname + '?ajax=last&job=' + encodeURIComponent(job), {
-        headers:{'X-Requested-With':'XMLHttpRequest'}
-      }).then(r=>r.json()).then(j=>{
-        if (j && j.ok && j.last) {
-          const lr = j.last;
-          const st = (lr.status || '').toLowerCase();
-          badge.textContent = st || '—';
-          badge.className = 'badge ' + (st==='success'?'bg-success':(st==='failed'?'bg-danger':'bg-secondary'));
-          lrModal.querySelector('#lr-start').textContent = lr.started_at || '—';
-          lrModal.querySelector('#lr-end').textContent = lr.finished_at || '—';
-          lrModal.querySelector('#lr-duration').textContent = lr.duration_ms ? (lr.duration_ms + ' ms') : '—';
-          lrModal.querySelector('#lr-output').textContent = (lr.output || '').substring(0,1000) || '—';
-          lrModal.querySelector('#lr-error').textContent = (lr.error || '').substring(0,1000) || '—';
-        } else {
-          badge.textContent = '—';
-          badge.className = 'badge bg-secondary';
-          lrModal.querySelector('#lr-start').textContent = '—';
-          lrModal.querySelector('#lr-end').textContent = '—';
-          lrModal.querySelector('#lr-duration').textContent = '—';
-          lrModal.querySelector('#lr-output').textContent = 'No runs yet';
-          lrModal.querySelector('#lr-error').textContent = '—';
-        }
-      }).catch(()=>{});
-    }
-  });
-
-  // Hard refresh button: force page reload (cache bypass)
-  document.getElementById('btn-hard-refresh')?.addEventListener('click', () => {
-    window.location.reload(true);
-  });
-
-  // Modal schedule save
-  const lrSchedForm = document.getElementById('lr-schedule-form');
-  lrSchedForm?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = lrSchedForm.querySelector('button[type="submit"]') || lrSchedForm.querySelector('button');
-    const spin = btn?.querySelector('.btn-spinner');
-    if (btn) btn.disabled = true;
-    if (spin) spin.classList.remove('d-none');
-    const fd = new FormData(lrSchedForm);
-    fd.append('ajax','1');
-    try{
-      const res = await fetch(window.location.href, {
-        method: 'POST',
-        body: fd,
-        headers: {'X-Requested-With':'XMLHttpRequest'}
-      });
-      const text = await res.text();
-      let j = null;
-      try { j = JSON.parse(text); } catch(_) {}
-      if (j && j.ok){
-        showFlash('success', j.message || 'Schedule saved');
-      } else {
-        showFlash('danger', (j && j.message) ? j.message : 'Schedule save failed');
-      }
-    }catch(err){
-      showFlash('danger', 'Request failed');
-    }finally{
-      if (btn) btn.disabled = false;
-      if (spin) spin.classList.add('d-none');
-    }
-  });
-
-  // Modal run form
-  const lrRunForm = document.getElementById('lr-run-form');
-  lrRunForm?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = lrRunForm.querySelector('button[type="submit"]') || lrRunForm.querySelector('button');
-    const spin = btn?.querySelector('.btn-spinner');
-    if (btn) btn.disabled = true;
-    if (spin) spin.classList.remove('d-none');
-    const fd = new FormData(lrRunForm);
-    fd.append('ajax','1');
-    try{
-      const res = await fetch(window.location.href, {
-        method: 'POST',
-        body: fd,
-        headers: {'X-Requested-With':'XMLHttpRequest'}
-      });
-      const text = await res.text();
-      let j = null;
-      try { j = JSON.parse(text); } catch(_) {}
-      if (j && j.ok){
-        showFlash('success', j.message || 'Job finished');
-        refreshHistory();
-      } else {
-        showFlash('danger', (j && j.message) ? j.message : 'Job failed');
-      }
-    }catch(err){
-      showFlash('danger', 'Request failed');
-    }finally{
-      if (btn) btn.disabled = false;
-      if (spin) spin.classList.add('d-none');
-    }
-  });
-})();
-</script>
-
 <!-- Last Run Modal -->
 <div class="modal fade" id="lastRunModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -1030,6 +1100,14 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
               <span class="small">Month</span>
               <input type="month" name="month" id="lr-month-input" class="form-control form-control-sm">
             </div>
+            <div id="lr-olt-wrap" class="d-flex align-items-center gap-1 d-none">
+              <span class="small">OLT ID</span>
+              <input type="number" min="1" step="1" name="olt_id" id="lr-olt-input" class="form-control form-control-sm" style="width:100px;">
+            </div>
+            <div id="lr-skip-pppoe-wrap" class="form-check d-none">
+              <input class="form-check-input" type="checkbox" value="1" id="lr-skip-pppoe" name="skip_pppoe">
+              <label class="form-check-label small" for="lr-skip-pppoe">Skip PPPoE link</label>
+            </div>
             <button class="btn btn-primary btn-sm" type="submit">
               <span class="spinner-border spinner-border-sm d-none btn-spinner" role="status" aria-hidden="true"></span>
               <i class="bi bi-play-fill"></i> Run now
@@ -1047,3 +1125,399 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'last' && !empty($_GET['job'])) {
     </div>
   </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const flashDock = document.getElementById('flash-dock');
+  const lrModal = document.getElementById('lastRunModal');
+  const lrSchedForm = document.getElementById('lr-schedule-form');
+  const lrRunForm = document.getElementById('lr-run-form');
+  const lrSchedInput = document.getElementById('lr-schedule-input');
+  const lrRunJobInput = document.getElementById('lr-run-job');
+  const lrSaveKeyInput = document.getElementById('lr-save-key');
+  const lrMonthWrap = document.getElementById('lr-month-wrap');
+  const lrMonthInput = document.getElementById('lr-month-input');
+  const lrOltWrap = document.getElementById('lr-olt-wrap');
+  const lrOltInput = document.getElementById('lr-olt-input');
+  const lrSkipPppoeWrap = document.getElementById('lr-skip-pppoe-wrap');
+  const lrSkipPppoeInput = document.getElementById('lr-skip-pppoe');
+  const runningBody = document.getElementById('running-body');
+  const nextTickEl = document.getElementById('next-tick');
+  const recentBody = document.getElementById('recent-body');
+  let activeBtn = null;
+
+  function showFlash(type, text){
+    const dock = flashDock || document.createElement('div');
+    if (!dock.id) dock.id = 'flash-dock';
+    if (!dock.parentElement) document.body.appendChild(dock);
+    const div = document.createElement('div');
+    div.className = 'alert alert-' + (type === 'success' ? 'success' : 'danger') + ' mb-0';
+    div.textContent = text || (type === 'success' ? 'Done' : 'Failed');
+    dock.appendChild(div);
+    setTimeout(() => { div.remove(); }, 4000);
+  }
+
+  async function refreshHistory(){
+    const params = new URLSearchParams(window.location.search);
+    params.set('ajax','history');
+    try{
+      const res = await fetch(window.location.pathname + '?' + params.toString(), {
+        headers: {'X-Requested-With':'XMLHttpRequest'}
+      });
+      const j = await res.json();
+      if (j && j.ok && j.history_body){
+        const body = document.getElementById('history-body');
+        if (body) body.innerHTML = j.history_body;
+      }
+    }catch(e){}
+  }
+
+  function updateScheduleDisplay(jobKey, schedule){
+    const cell = document.querySelector(`[data-schedule-display="${jobKey}"] code`);
+    if (cell) cell.textContent = schedule;
+    const btn = activeBtn || document.querySelector(`.view-last-btn[data-job="${jobKey}"]`);
+    btn?.setAttribute('data-schedule', schedule);
+  }
+
+  function updateLastSummary(jobKey, lastRun){
+    const holder = document.querySelector(`[data-last-display="${jobKey}"]`);
+    if (!holder) return;
+    holder.innerHTML = '';
+    if (!lastRun){
+      const span = document.createElement('span');
+      span.className = 'text-muted small';
+      span.textContent = 'No runs yet';
+      holder.appendChild(span);
+      return;
+    }
+    const status = (lastRun.status || '').toLowerCase();
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (status==='success'?'bg-success':(status==='failed'?'bg-danger':'bg-secondary'));
+    badge.textContent = status || 'running';
+    const badgeWrap = document.createElement('div');
+    badgeWrap.appendChild(badge);
+    holder.appendChild(badgeWrap);
+    const meta = [
+      ['Start', lastRun.started_at || '—'],
+      ['End', lastRun.finished_at || '—'],
+      ['Duration', lastRun.duration_ms ? (lastRun.duration_ms + ' ms') : '—'],
+    ];
+    meta.forEach(([label,val])=>{
+      const div=document.createElement('div');
+      div.className='small text-muted';
+      div.textContent = `${label}: ${val}`;
+      holder.appendChild(div);
+    });
+  }
+
+  function fillModalFrom(btn){
+    if (!btn || !lrModal) return;
+    const get = (k) => btn.getAttribute('data-' + k) || '';
+    const job = get('job');
+    activeBtn = btn;
+
+    const titleEl = lrModal.querySelector('#lr-title');
+    const jobEl = lrModal.querySelector('#lr-job');
+    if (titleEl) titleEl.textContent = get('title') || '—';
+    if (jobEl) jobEl.textContent = job ? '(' + job + ')' : '';
+
+    if (lrRunJobInput) lrRunJobInput.value = job;
+    if (lrSaveKeyInput) lrSaveKeyInput.value = job;
+    if (lrSchedInput) lrSchedInput.value = get('schedule') || '*/5 * * * *';
+
+    if (lrMonthWrap) {
+      const supportsMonth = get('supports-month') === '1';
+      lrMonthWrap.classList.toggle('d-none', !supportsMonth);
+      if (supportsMonth && lrMonthInput && !lrMonthInput.value) {
+        lrMonthInput.value = new Date().toISOString().slice(0,7);
+      }
+    }
+    if (lrOltWrap) {
+      const supportsOlt = get('supports-olt') === '1';
+      lrOltWrap.classList.toggle('d-none', !supportsOlt);
+      if (!supportsOlt && lrOltInput) lrOltInput.value = '';
+    }
+    if (lrSkipPppoeWrap) {
+      const supportsSkip = get('supports-skip_pppoe') === '1';
+      lrSkipPppoeWrap.classList.toggle('d-none', !supportsSkip);
+      if (!supportsSkip && lrSkipPppoeInput) lrSkipPppoeInput.checked = false;
+    }
+
+    updateModalFromLast({
+      status: get('status') || '',
+      started_at: get('start') || '—',
+      finished_at: get('end') || '—',
+      duration_ms: get('duration') || '',
+      output: get('output') || '—',
+      error: get('error') || '—',
+    });
+  }
+
+  function updateModalFromLast(lastRun){
+    if (!lrModal) return;
+    const badge = lrModal.querySelector('#lr-status');
+    const startEl = lrModal.querySelector('#lr-start');
+    const endEl = lrModal.querySelector('#lr-end');
+    const durationEl = lrModal.querySelector('#lr-duration');
+    const outputEl = lrModal.querySelector('#lr-output');
+    const errorEl = lrModal.querySelector('#lr-error');
+    if (!lastRun){
+      badge && (badge.textContent = '—', badge.className='badge bg-secondary');
+      startEl && (startEl.textContent = '—');
+      endEl && (endEl.textContent = '—');
+      durationEl && (durationEl.textContent = '—');
+      outputEl && (outputEl.textContent = 'No runs yet');
+      errorEl && (errorEl.textContent = '—');
+      return;
+    }
+    const status = (lastRun.status || '').toLowerCase();
+    if (badge){
+      badge.textContent = status || '—';
+      badge.className = 'badge ' + (status==='success'?'bg-success':(status==='failed'?'bg-danger':'bg-secondary'));
+    }
+    startEl && (startEl.textContent = lastRun.started_at || '—');
+    endEl && (endEl.textContent = lastRun.finished_at || '—');
+    durationEl && (durationEl.textContent = lastRun.duration_ms ? (lastRun.duration_ms + ' ms') : '—');
+    outputEl && (outputEl.textContent = (lastRun.output || '').substring(0,1000) || '—');
+    errorEl && (errorEl.textContent = (lastRun.error || '').substring(0,1000) || '—');
+  }
+
+  async function fetchLastRun(jobKey){
+    if (!jobKey) return;
+    try{
+      const res = await fetch(window.location.pathname + '?ajax=last&job=' + encodeURIComponent(jobKey), {
+        headers:{'X-Requested-With':'XMLHttpRequest'}
+      });
+      const j = await res.json();
+      if (j && j.ok){
+        const lr = j.last || null;
+        updateModalFromLast(lr);
+        updateLastSummary(jobKey, lr);
+        const btn = activeBtn && activeBtn.getAttribute('data-job') === jobKey ? activeBtn : document.querySelector(`.view-last-btn[data-job="${jobKey}"]`);
+        if (btn && lr){
+          btn.setAttribute('data-status', lr.status || '');
+          btn.setAttribute('data-start', lr.started_at || '');
+          btn.setAttribute('data-end', lr.finished_at || '');
+          btn.setAttribute('data-duration', lr.duration_ms || '');
+          btn.setAttribute('data-output', (lr.output || '').substring(0,1000));
+          btn.setAttribute('data-error', (lr.error || '').substring(0,1000));
+        }
+      }
+    }catch(e){}
+  }
+
+  // Live running list
+  async function refreshRunning(){
+    if (!runningBody) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('ajax','running');
+    try{
+      const res = await fetch(window.location.pathname + '?' + params.toString(), {
+        headers:{'X-Requested-With':'XMLHttpRequest'}
+      });
+      const j = await res.json();
+      if (j && j.ok){
+        if (j.running_body && runningBody) runningBody.innerHTML = j.running_body;
+        if (j.recent_body && recentBody) recentBody.innerHTML = j.recent_body;
+      }
+    }catch(e){}
+  }
+
+  // Poll every 6s
+  setInterval(refreshRunning, 6000);
+  refreshRunning();
+
+  // Countdown to next cron check (per-minute crontab)
+  function tickCountdown(){
+    if (!nextTickEl) return;
+    const now = new Date();
+    const sec = now.getSeconds();
+    const remaining = 60 - sec;
+    nextTickEl.textContent = `Next check in ${remaining}s`;
+  }
+  setInterval(tickCountdown, 1000);
+  tickCountdown();
+
+  document.querySelectorAll('.job-run-form').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type="submit"]') || form.querySelector('button');
+      const spin = btn?.querySelector('.btn-spinner');
+      if (btn) btn.disabled = true;
+      if (spin) spin.classList.remove('d-none');
+      const fd = new FormData(form);
+      fd.append('ajax','1');
+      try{
+        const res = await fetch(window.location.href, {
+          method: 'POST',
+          body: fd,
+          headers: {'X-Requested-With':'XMLHttpRequest'}
+        });
+        const text = await res.text();
+        let j = null;
+        try { j = JSON.parse(text); } catch(_) {}
+        if (j && j.ok){
+          showFlash('success', j.message || 'Job finished');
+          refreshHistory();
+        } else {
+          showFlash('danger', (j && j.message) ? j.message : 'Job failed');
+        }
+      }catch(err){
+        showFlash('danger', 'Request failed');
+      }finally{
+        if (btn) btn.disabled = false;
+        if (spin) spin.classList.add('d-none');
+      }
+    });
+  });
+
+  document.querySelectorAll('.schedule-form').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type="submit"]') || form.querySelector('button');
+      const spin = btn?.querySelector('.btn-spinner');
+      if (btn) btn.disabled = true;
+      if (spin) spin.classList.remove('d-none');
+      const fd = new FormData(form);
+      fd.append('ajax','1');
+      try{
+        const res = await fetch(window.location.href, {
+          method: 'POST',
+          body: fd,
+          headers: {'X-Requested-With':'XMLHttpRequest'}
+        });
+        const text = await res.text();
+        let j = null;
+        try { j = JSON.parse(text); } catch(_) {}
+        if (j && j.ok){
+          showFlash('success', j.message || 'Schedule saved');
+        } else {
+          showFlash('danger', (j && j.message) ? j.message : 'Schedule save failed');
+        }
+      }catch(err){
+        showFlash('danger', 'Request failed');
+      }finally{
+        if (btn) btn.disabled = false;
+        if (spin) spin.classList.add('d-none');
+      }
+    });
+  });
+
+  // Enable toggle forms
+  document.querySelectorAll('.enable-form').forEach(form => {
+    const toggle = form.querySelector('.enable-toggle');
+    if (!toggle) return;
+    toggle.addEventListener('change', async () => {
+      const fd = new FormData(form);
+      if (toggle.checked) fd.set('enabled','1'); else fd.set('enabled','0');
+      fd.append('ajax','1');
+      try{
+        const res = await fetch(window.location.href, {
+          method: 'POST',
+          body: fd,
+          headers: {'X-Requested-With':'XMLHttpRequest'}
+        });
+        const text = await res.text();
+        let j = null;
+        try { j = JSON.parse(text); } catch(_) {}
+        if (j && j.ok){
+          showFlash('success', j.message || 'Saved');
+        } else {
+          showFlash('danger', (j && j.message) ? j.message : 'Save failed');
+          toggle.checked = !toggle.checked;
+        }
+      }catch(err){
+        showFlash('danger', 'Request failed');
+        toggle.checked = !toggle.checked;
+      }
+    });
+  });
+
+  if (lrModal && lrModal.parentElement !== document.body) {
+    document.body.appendChild(lrModal);
+  }
+  lrModal?.addEventListener('show.bs.modal', (e) => {
+    const btn = e.relatedTarget;
+    fillModalFrom(btn);
+    const job = btn?.getAttribute('data-job') || '';
+    if (job) fetchLastRun(job);
+  });
+
+  lrSchedForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = lrSchedForm.querySelector('button[type="submit"]') || lrSchedForm.querySelector('button');
+    const spin = btn?.querySelector('.btn-spinner');
+    if (btn) btn.disabled = true;
+    if (spin) spin.classList.remove('d-none');
+    const fd = new FormData(lrSchedForm);
+    fd.append('ajax','1');
+    const jobKey = (lrSaveKeyInput?.value || '').trim();
+    try{
+      const res = await fetch(window.location.href, {
+        method: 'POST',
+        body: fd,
+        headers: {'X-Requested-With':'XMLHttpRequest'}
+      });
+      const text = await res.text();
+      let j = null;
+      try { j = JSON.parse(text); } catch(_) {}
+      if (j && j.ok){
+        showFlash('success', j.message || 'Schedule saved');
+        if (jobKey && lrSchedInput) updateScheduleDisplay(jobKey, lrSchedInput.value || '*/5 * * * *');
+      } else {
+        showFlash('danger', (j && j.message) ? j.message : 'Schedule save failed');
+      }
+    }catch(err){
+      showFlash('danger', 'Request failed');
+    }finally{
+      if (btn) btn.disabled = false;
+      if (spin) spin.classList.add('d-none');
+    }
+  });
+
+  lrRunForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = lrRunForm.querySelector('button[type="submit"]') || lrRunForm.querySelector('button');
+    const spin = btn?.querySelector('.btn-spinner');
+    if (btn) btn.disabled = true;
+    if (spin) spin.classList.remove('d-none');
+    const fd = new FormData(lrRunForm);
+    fd.append('ajax','1');
+    const jobKey = (lrRunJobInput?.value || '').trim();
+    try{
+      const res = await fetch(window.location.href, {
+        method: 'POST',
+        body: fd,
+        headers: {'X-Requested-With':'XMLHttpRequest'}
+      });
+      const text = await res.text();
+      let j = null;
+      try { j = JSON.parse(text); } catch(_) {}
+      if (j && j.ok){
+        showFlash('success', j.message || 'Job finished');
+        refreshHistory();
+        if (jobKey) fetchLastRun(jobKey);
+      } else {
+        showFlash('danger', (j && j.message) ? j.message : 'Job failed');
+      }
+    }catch(err){
+      showFlash('danger', 'Request failed');
+    }finally{
+      if (btn) btn.disabled = false;
+      if (spin) spin.classList.add('d-none');
+    }
+  });
+
+  // Set default month for month-supported jobs on first open
+  if (lrMonthInput && !lrMonthInput.value) {
+    lrMonthInput.value = new Date().toISOString().slice(0,7);
+  }
+  if (lrOltInput && !lrOltInput.value) {
+    lrOltInput.value = '';
+  }
+  if (lrSkipPppoeInput) {
+    lrSkipPppoeInput.checked = false;
+  }
+});
+</script>
+<?php require_once __DIR__ . '/../partials/partials_footer.php'; ?>

@@ -115,6 +115,11 @@ function build_comment(array $data): string {
     }
     return implode(' | ', $lines);
 }
+function normalize_client_status(string $raw): string {
+    $val = strtolower(trim($raw));
+    $allowed = ['active','inactive','expired','pending','left'];
+    return in_array($val, $allowed, true) ? $val : 'pending';
+}
 
 foreach ($routers as $router) {
     echo "=============================\n";
@@ -141,7 +146,8 @@ foreach ($routers as $router) {
             $password = $secret['password'] ?? '';
             $profile  = $secret['profile'] ?? '';
             $disabled = $secret['disabled'] ?? 'false';
-            $status   = ($disabled === 'true') ? 'inactive' : 'active';
+            $status   = normalize_client_status(($disabled === 'true') ? 'inactive' : 'active');
+            $statusColExists = col_exists($pdo, 'clients', 'status');
             $comment  = (string)($secret['comment'] ?? '');
             $commentData = $comment !== '' ? parse_comment($comment) : [];
 
@@ -193,7 +199,7 @@ foreach ($routers as $router) {
                 if ($passCol) { $sets[] = "$passCol=?"; $vals[] = $password; }
                 if ($pppPassCol) { $sets[] = "$pppPassCol=?"; $vals[] = $password; }
                 if (col_exists($pdo, 'clients', 'package_id') && $package_id) { $sets[] = "package_id=?"; $vals[] = $package_id; }
-                if (col_exists($pdo, 'clients', 'status')) { $sets[] = "status=?"; $vals[] = $status; }
+                if ($statusColExists) { $sets[] = "status=?"; $vals[] = normalize_client_status($status); }
                 if (col_exists($pdo, 'clients', 'is_online')) { $sets[] = "is_online=?"; $vals[] = $is_online; }
                 if (!empty($commentData['name']) && col_exists($pdo, 'clients', 'name')) { $sets[] = "name=?"; $vals[] = $commentData['name']; }
                 if (!empty($commentData['mobile'])) {
@@ -247,7 +253,7 @@ foreach ($routers as $router) {
                 if (col_exists($pdo, 'clients', 'pppoe_id')) { $cols[] = 'pppoe_id'; $vals[] = $pppoe_id; }
                 if (col_exists($pdo, 'clients', 'password')) { $cols[] = 'password'; $vals[] = $password; }
                 if (col_exists($pdo, 'clients', 'pppoe_pass')) { $cols[] = 'pppoe_pass'; $vals[] = $password; }
-                if (col_exists($pdo, 'clients', 'status')) { $cols[] = 'status'; $vals[] = $status; }
+                if ($statusColExists) { $cols[] = 'status'; $vals[] = normalize_client_status($status); }
                 if (col_exists($pdo, 'clients', 'is_online')) { $cols[] = 'is_online'; $vals[] = $is_online; }
                 if (!empty($commentData['name']) && col_exists($pdo, 'clients', 'name')) {
                     $pos = array_search('name', $cols, true);
@@ -286,6 +292,11 @@ foreach ($routers as $router) {
                         if ($ed) { $cols[] = $expCol; $vals[] = $ed; }
                     }
                 }
+                // ensure required defaults exist
+                if ($statusColExists && !in_array('status', $cols, true)) { $cols[]='status'; $vals[]= 'pending'; }
+                if (col_exists($pdo, 'clients', 'monthly_bill') && !in_array('monthly_bill', $cols, true)) { $cols[]='monthly_bill'; $vals[]=(float)0; }
+                if (col_exists($pdo, 'clients', 'is_online') && !in_array('is_online', $cols, true)) { $cols[]='is_online'; $vals[]=$is_online; }
+
                 if ($cols) {
                     $ph = implode(',', array_fill(0, count($cols), '?'));
                     $insert = $pdo->prepare("INSERT INTO clients (".implode(',', $cols).") VALUES ($ph)");

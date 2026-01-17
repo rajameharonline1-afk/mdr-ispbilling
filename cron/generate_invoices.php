@@ -7,9 +7,10 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
-require_once __DIR__ . '/../app/db.php';          // DB only (no login)
+require_once __DIR__ . '/../app/db.php';          // DB only (no login required for token-based cron)
 @require_once __DIR__ . '/../app/config.php';     // optional: $CONFIG['cron_token'] / CRON_TOKEN
 @include_once __DIR__ . '/../app/audit.php';      // optional: audit_log(...)
+if (session_status() === PHP_SESSION_NONE) { @session_start(); }
 
 function respond($a){ echo json_encode($a, JSON_UNESCAPED_UNICODE); exit; }
 
@@ -23,6 +24,8 @@ function hcol(PDO $pdo, string $tbl, string $col): bool {
 /* ---------- Token check ---------- */
 $given = trim($_GET['token'] ?? '');
 $conf  = null;
+// logged-in user bypass (UI থেকে চালালে)
+$loggedInUser = (int)($_SESSION['user']['id'] ?? 0);
 
 // Priority: env > $CONFIG['cron_token'] > defined('CRON_TOKEN') > file(storage/cron_token.txt)
 if (getenv('CRON_TOKEN'))                  $conf = getenv('CRON_TOKEN');
@@ -31,7 +34,8 @@ elseif (defined('CRON_TOKEN'))             $conf = (string)CRON_TOKEN;
 elseif (is_readable(__DIR__.'/../storage/cron_token.txt'))
   $conf = trim((string)@file_get_contents(__DIR__.'/../storage/cron_token.txt'));
 
-if (!$conf || !$given || !hash_equals($conf, $given)) {
+// allow either valid token OR logged-in session
+if (!($given && $conf && hash_equals($conf, $given)) && $loggedInUser <= 0) {
   http_response_code(403);
   respond(['ok'=>false,'error'=>'forbidden']);
 }
@@ -96,15 +100,17 @@ try {
   $has_due_date       = hcol($pdo,'invoices','due_date');        // DATE
   $has_period_start   = hcol($pdo,'invoices','period_start');    // DATE
   $has_period_end     = hcol($pdo,'invoices','period_end');      // DATE
+  $has_total_amount   = hcol($pdo,'invoices','total_amount');    // DECIMAL (variant)
   $has_total          = hcol($pdo,'invoices','total');           // DECIMAL
   $has_payable        = hcol($pdo,'invoices','payable');         // DECIMAL
   $has_amount         = hcol($pdo,'invoices','amount');          // DECIMAL
   $has_remarks        = hcol($pdo,'invoices','remarks');
 
-  if     ($has_total)       $amount_target = 'total';
-  elseif ($has_payable)     $amount_target = 'payable';
-  elseif ($has_amount)      $amount_target = 'amount';
-  else { $releaseLock(); respond(['ok'=>false,'error'=>'No suitable amount column in invoices (need total/payable/amount).']); }
+  if     ($has_total)        $amount_target = 'total';
+  elseif ($has_total_amount) $amount_target = 'total_amount';
+  elseif ($has_payable)      $amount_target = 'payable';
+  elseif ($has_amount)       $amount_target = 'amount';
+  else { $releaseLock(); respond(['ok'=>false,'error'=>'No suitable amount column in invoices (need total/total_amount/payable/amount).']); }
 
   /* ---------- Clients schema ---------- */
   $has_ledger = hcol($pdo,'clients','ledger_balance');
@@ -155,10 +161,25 @@ try {
 
   /* ---------- Early-exist check (month already billed?) ---------- */
   // রেঞ্জ এক্সপ্রেশন বানাই
-  if ($has_billing_month)       $rangeExpr = "i.billing_month BETWEEN ? AND ?";
-  elseif ($has_invoice_date)    $rangeExpr = "DATE(i.invoice_date) BETWEEN ? AND ?";
-  elseif ($has_created)         $rangeExpr = "DATE(i.created_at) BETWEEN ? AND ?";
-  else                          $rangeExpr = null;
+  $rangeExpr = null;
+  $rangeParams = [];
+  if ($has_period_start) {
+    $rangeExpr = "i.period_start = ?";
+    $rangeParams = [$month_start];
+    if ($has_period_end) {
+      $rangeExpr .= " AND i.period_end = ?";
+      $rangeParams[] = $month_end;
+    }
+  } elseif ($has_billing_month) {
+    $rangeExpr = "i.billing_month BETWEEN ? AND ?";
+    $rangeParams = [$month_start, $month_end];
+  } elseif ($has_invoice_date) {
+    $rangeExpr = "DATE(i.invoice_date) BETWEEN ? AND ?";
+    $rangeParams = [$month_start, $month_end];
+  } elseif ($has_created) {
+    $rangeExpr = "DATE(i.created_at) BETWEEN ? AND ?";
+    $rangeParams = [$month_start, $month_end];
+  }
 
   $exist_sql = "SELECT COUNT(*) FROM invoices i WHERE 1=1 ".
                ($rangeExpr ? " AND $rangeExpr " : " AND DATE(i.created_at) BETWEEN ? AND ? ");
@@ -166,7 +187,7 @@ try {
   if ($has_status)  $exist_sql .= " AND i.status <> 'void'";
 
   $stExist = $pdo->prepare($exist_sql);
-  $stExist->execute([$month_start, $month_end]);
+  $stExist->execute($rangeExpr ? $rangeParams : [$month_start, $month_end]);
   $exists_count = (int)$stExist->fetchColumn();
 
   if ($exists_count > 0 && $mode === 'skip') {
@@ -243,6 +264,9 @@ try {
   if ($has_remarks)        { $cols[]='remarks';        $vals[]=':remarks'; }
   if ($has_created)        { $cols[]='created_at';     $vals[]='NOW()'; }
   if ($has_updated)        { $cols[]='updated_at';     $vals[]='NOW()'; }
+  // ensure total_amount filled when present but not the primary amount column
+  $extraTotalAmount = ($has_total_amount && $amount_target !== 'total_amount');
+  if ($extraTotalAmount) { $cols[]='total_amount'; $vals[]=':total_amount'; }
   $insertSql = "INSERT INTO invoices (".implode(',', $cols).") VALUES (".implode(',', $vals).")";
   $insertInv = $pdo->prepare($insertSql);
 
@@ -258,7 +282,7 @@ try {
     // replace/cleanup old for this client-month (skip মোডেও সেফটি)
     $olds = [];
     if ($rangeExpr) {
-      $findOld->execute([$cid, $month_start, $month_end]);
+      $findOld->execute(array_merge([$cid], $rangeParams));
       $olds = $findOld->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
     if ($olds && $mode === 'replace') {
@@ -301,6 +325,7 @@ try {
     if ($has_period_start)   $insertInv->bindValue(':period_start', $pStart);
     if ($has_period_end)     $insertInv->bindValue(':period_end', $pEnd);
     if ($has_remarks)        $insertInv->bindValue(':remarks', $remarks);
+    if ($extraTotalAmount)   $insertInv->bindValue(':total_amount', $amt);
     $insertInv->execute();
     $newId = (int)$pdo->lastInsertId();
 

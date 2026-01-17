@@ -3,14 +3,15 @@ $isCli = PHP_SAPI === 'cli';
 // ======================
 // পরিবেশ প্রস্তুতি (CLI/Browser)
 // ======================
-if ($isCli) {
-  require_once __DIR__ . '/../app/config.php';
+require_once __DIR__ . '/../app/config.php';
+$token = $_GET['token'] ?? $_POST['token'] ?? '';
+if ($isCli || ($token && defined('CRON_TOKEN') && $token === CRON_TOKEN)) {
   require_once __DIR__ . '/../app/db.php';
-  require_once __DIR__ . '/../app/telnet.php';
 } else {
   require_once __DIR__ . '/../app/require_login.php';
-  require_once __DIR__ . '/../app/telnet.php';
+  require_once __DIR__ . '/../app/db.php';
 }
+require_once __DIR__ . '/../app/telnet.php';
 require_once __DIR__ . '/../app/security_helpers.php';
 require_once __DIR__ . '/../app/routeros_api.class.php';
 
@@ -49,10 +50,12 @@ set_time_limit(0);
  $diagEnabled = $fullMode || $rxMode;
  $statusTimeout = $fastMode ? 6 : 10;
  // opm-diag output can be lengthy; allow more time when RX is requested
- $diagTimeout = $diagEnabled ? ($fullMode ? 24 : 18) : 0;
- $macTimeout = $fastMode ? 8 : 10;
- $descTimeout = $fullMode ? 15 : 10;
- $clientMacTimeout = $fullMode ? 18 : 12;
+$diagTimeout = $diagEnabled ? ($fullMode ? 24 : 18) : 0;
+$macTimeout = $fastMode ? 8 : 10;
+$descTimeout = $fullMode ? 15 : 10;
+$clientMacTimeout = $fullMode ? 18 : 12;
+$overallStartedAt = microtime(true);
+$overallLimitSec = 600; // keep well under dashboard cURL timeout
 
 // ======================
 // সহায়ক ইউটিলিটি ও কনভার্সন ফাংশনসমূহ
@@ -392,6 +395,11 @@ function ensure_olt_mac_cache_schema(PDO $db): void {
 // স্কিমা প্রস্তুতি (olt_mac_cache কলামগুলো নিশ্চিত করা)
 // ======================
 ensure_olt_mac_cache_schema($db);
+
+// ======================
+// রিকোয়েস্ট কন্ট্রোল ফ্ল্যাগ
+// ======================
+$skipPppoe = isset($request['skip_pppoe']) && (string)$request['skip_pppoe'] === '1';
 
 // ======================
 // গ্লোবাল লক (cron ওভারল্যাপ প্রতিরোধ)
@@ -1130,6 +1138,11 @@ $clientMacMap = $prepOk ? load_client_mac_map($db) : [];
 // ======================
 if($prepOk){
   foreach($olts as $olt){
+  if ((microtime(true) - $overallStartedAt) > $overallLimitSec) {
+    $summary['errors'][] = 'overall_timeout_before_olt';
+    $summary['ok'] = false;
+    break;
+  }
   if($isCli){
     echo "[OLT {$olt['id']}] {$olt['host']} - refreshing...".PHP_EOL;
   }
@@ -1157,11 +1170,17 @@ if($prepOk){
   $statusByKey = [];
   $statusByMac = [];
   $diagByKey = [];
+  $oltStarted = microtime(true);
   $statusOut = telnet_run_commands(
     $host, $port, $user, $pass,
     ['configure terminal','show onu status all','exit'],
     null, true, $enable, $debugMode, $statusTimeout
   );
+  if ((microtime(true)-$oltStarted) > $overallLimitSec) {
+    $summary['errors'][] = "olt_{$olt['id']}_timeout_status";
+    $summary['ok'] = false;
+    break;
+  }
   if($statusOut['ok']){
     $statusData = parse_onu_statuses($statusOut['output'] ?? '');
     $statusByKey = $statusData['byKey'];
@@ -1228,6 +1247,11 @@ if($prepOk){
   if(!$out['ok']){
     $summary['errors'][] = "OLT {$olt['id']} ({$host}): MAC টেবিল কমান্ড ব্যর্থ - {$out['error']}";
     continue;
+  }
+  if ((microtime(true)-$oltStarted) > $overallLimitSec) {
+    $summary['errors'][] = "olt_{$olt['id']}_timeout_mac";
+    $summary['ok'] = false;
+    break;
   }
   if($debugMode){
     $summary['debug'][] = [
@@ -1608,7 +1632,19 @@ if($prepOk){
 
 }
 
-$pppoeStats = run_pppoe_linking($db, $isCli, $debugMode);
+$pppoeStats = ['ok'=>true];
+if (!$skipPppoe) {
+  if ((microtime(true)-$overallStartedAt) <= $overallLimitSec - 30) {
+    $pppoeStats = run_pppoe_linking($db, $isCli, $debugMode);
+  } else {
+    $pppoeStats = ['ok'=>false,'errors'=>['pppoe_skipped_due_timeout_buffer']];
+    $summary['errors'][] = 'pppoe_skipped_due_timeout_buffer';
+    $summary['ok'] = false;
+  }
+} else {
+  $pppoeStats = ['ok'=>true,'skipped'=>true];
+}
+
 $result = [
   'ok' => ($summary['ok'] ?? false) && ($pppoeStats['ok'] ?? true),
   'olt' => $summary,

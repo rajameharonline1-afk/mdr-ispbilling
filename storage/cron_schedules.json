@@ -1,5 +1,5 @@
 {
-    "mt_sync": "*/5 * * * *",
+    "mt_sync": "* * * * * *",
     "invoice_month": "0 6 1 * *",
     "pppoe_olt_link": "* * * * * *",
     "auto_billing": "0 2 * * *",
@@ -19,5 +19,5 @@
     "db_backup": "*/5 * * * *",
     "generate_invoices": "*/5 * * * *",
     "auto_link_pppoe_olt_legacy": "*/5 * * * *",
-    "olt_mac_refresh_telnet": "*/5 * * * *"
+    "olt_mac_refresh_telnet": "*/10 * * * *"
 }

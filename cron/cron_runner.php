@@ -11,6 +11,7 @@ require_once __DIR__ . '/../app/db.php';
 $BASE_URL = 'http://127.0.0.1/isp_billing';
 $TOKEN    = defined('CRON_TOKEN') ? CRON_TOKEN : null;
 $SCHEDULE_FILE = __DIR__ . '/../storage/cron_schedules.json';
+$ENABLE_FILE   = __DIR__ . '/../storage/cron_enabled.json';
 
 // CLI args
 foreach ($argv ?? [] as $arg) {
@@ -30,7 +31,7 @@ $jobs = [
   ],
   'invoice_month' => [
     'title' => 'Generate Monthly Invoices (commit)',
-    'url'   => '/public/invoice_generate.php?month={month}&commit=1',
+    'url'   => '/cron/generate_invoices.php?month={month}&mode=replace',
     'method'=> 'GET',
     'timeout' => 240,
     'schedule' => '0 6 1 * *',
@@ -110,21 +111,21 @@ $jobs = [
     'url'   => '/cron/sync_clients.php',
     'method'=> 'GET',
     'timeout' => 240,
-    'schedule' => '0 */6 * * *',
+    'schedule' => '*/5 * * * *',
   ],
   'sync_packages' => [
     'title' => 'Sync Packages (default)',
     'url'   => '/cron/sync_packages.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '30 */6 * * *',
+    'schedule' => '*/5 * * * *',
   ],
   'sync_packages_all' => [
     'title' => 'Sync Packages (all)',
     'url'   => '/cron/sync_packages_all.php',
     'method'=> 'GET',
     'timeout' => 240,
-    'schedule' => '0 */12 * * *',
+    'schedule' => '*/5 * * * *',
   ],
   'auto_bkash_apply' => [
     'title' => 'Auto bKash Apply',
@@ -159,14 +160,14 @@ $jobs = [
     'url'   => '/cron/auto_link_pppoe_olt.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '*/30 * * * *',
+    'schedule' => '*/5 * * * *',
   ],
   'olt_mac_refresh_telnet' => [
     'title' => 'OLT MAC Refresh (telnet)',
     'url'   => '/api/olt_mac_refresh_telnet.php?mode=fast',
     'method'=> 'GET',
-    'timeout' => 300,
-    'schedule' => '0 */4 * * *',
+    'timeout' => 600, // align with dashboard (long-running)
+    'schedule' => '*/5 * * * *',
   ],
 ];
 
@@ -180,6 +181,11 @@ if (is_file($SCHEDULE_FILE)) {
             }
         }
     }
+}
+$enabled = [];
+if (is_file($ENABLE_FILE)) {
+    $edata = json_decode((string)file_get_contents($ENABLE_FILE), true);
+    if (is_array($edata)) $enabled = $edata;
 }
 
 // Cron matcher (minute precision, tolerant to extra fields)
@@ -241,6 +247,7 @@ if ((int)$lock !== 1) {
 $now = new DateTime('now');
 $dueJobs = [];
 foreach ($jobs as $key=>$job) {
+    if (isset($enabled[$key]) && !$enabled[$key]) continue; // disabled
     $expr = trim((string)($job['schedule'] ?? '* * * * *'));
     if (cron_match($expr, $now)) {
         $dueJobs[$key] = $job;
@@ -287,16 +294,22 @@ foreach ($dueJobs as $key=>$job) {
     $full = $BASE_URL . (str_starts_with($url, '/') ? $url : ('/'.$url));
     $startedAt = date('Y-m-d H:i:s');
     $started = microtime(true);
+    // Insert running row first so UI can show "Currently running"
+    $runId = null;
+    $stStart = $pdo->prepare("INSERT INTO cron_runs (job_key,title,status,started_at,triggered_by) VALUES (?,?,?,?,0)");
+    $stStart->execute([$key, $job['title'] ?? $key, null, $startedAt]);
+    $runId = (int)$pdo->lastInsertId();
+
     $res = http_call($full, $job['method'] ?? 'GET', [], (int)($job['timeout'] ?? 120));
     $dur = (int)round((microtime(true)-$started)*1000);
 
-    // Log to cron_runs table
+    // Update cron_runs row
     $status = $res['ok'] ? 'success' : 'failed';
     $out = (string)($res['output'] ?? '');
     if (strlen($out) > 1024*512) $out = substr($out,0,1024*512).'...[truncated]';
     $err = (string)($res['error'] ?? '');
-    $st = $pdo->prepare("INSERT INTO cron_runs (job_key,title,status,started_at,finished_at,duration_ms,output,error,triggered_by) VALUES (?,?,?,?,NOW(),?,?,?,NULL)");
-    $st->execute([$key, $job['title'] ?? $key, $status, $startedAt, $dur, $out, $err]);
+    $st = $pdo->prepare("UPDATE cron_runs SET status=?, finished_at=NOW(), duration_ms=?, output=?, error=? WHERE id=?");
+    $st->execute([$status, $dur, $out, $err, $runId]);
 
     if ($res['ok']) {
         $ok++; echo "OK: $key ($dur ms)\n";

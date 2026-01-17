@@ -1,0 +1,23 @@
+{
+    "mt_sync": false,
+    "invoice_month": false,
+    "pppoe_olt_link": false,
+    "auto_billing": false,
+    "auto_suspend": false,
+    "auto_suspend_enable": false,
+    "auto_expire_inactive": false,
+    "save_client_traffic": false,
+    "sms_sender": false,
+    "sms_due_reminder": false,
+    "enqueue_due_notifications": false,
+    "notify_runner": false,
+    "sync_clients": false,
+    "sync_packages": false,
+    "sync_packages_all": false,
+    "auto_bkash_apply": false,
+    "bkash_rtn_process": false,
+    "db_backup": false,
+    "generate_invoices": false,
+    "auto_link_pppoe_olt_legacy": false,
+    "olt_mac_refresh_telnet": true
+}

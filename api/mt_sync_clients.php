@@ -4,12 +4,67 @@
 // নোট: কোড/লেবেল ইংরেজি; শুধু কমেন্ট বাংলায়
 
 header('Content-Type: application/json; charset=utf-8');
-require_once __DIR__ . '/../app/require_login.php';
-require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/config.php';
+
+// Token-based access for cron/CLI (skip login if token matches)
+$token = $_GET['token'] ?? $_POST['token'] ?? '';
+if ($token && defined('CRON_TOKEN') && $token === CRON_TOKEN) {
+    require_once __DIR__ . '/../app/db.php';
+} else {
+    require_once __DIR__ . '/../app/require_login.php';
+    require_once __DIR__ . '/../app/db.php';
+}
 require_once __DIR__ . '/../app/routeros_api.class.php';
 
 function respond($a){ echo json_encode($a, JSON_UNESCAPED_UNICODE); exit; }
 function arr_get($a,$k,$d=''){ return isset($a[$k]) ? $a[$k] : $d; }
+function normalize_client_status(string $raw): string {
+    $val = strtolower(trim($raw));
+    $map = ['disabled'=>'inactive','enabled'=>'active'];
+    if (isset($map[$val])) $val = $map[$val];
+    $allowed = ['active','inactive','expired','pending','left'];
+    return in_array($val, $allowed, true) ? $val : 'pending';
+}
+function pppoe_to_client_code(string $pppoe): string {
+    $digits = preg_replace('/\D+/', '', $pppoe);
+    if ($digits === '') return $pppoe;
+    return substr($digits, -4);
+}
+function ensure_unique_client_code(PDO $pdo, string $base): string {
+    $base = trim($base);
+    if ($base === '') return '';
+    $stmt = $pdo->prepare("SELECT id FROM clients WHERE client_code = ? LIMIT 1");
+    $cand = $base;
+    $suffix = 1;
+    while (true) {
+        $stmt->execute([$cand]);
+        if (!$stmt->fetchColumn()) return $cand;
+        $cand = $base . '-' . $suffix;
+        $suffix++;
+        if ($suffix > 50) { // fallback, avoid infinite loop
+            return $base . '-' . uniqid();
+        }
+    }
+}
+function extract_comment_name(string $comment): string {
+    $comment = trim($comment);
+    if ($comment === '') return '';
+    $patterns = [
+        '/Client\s+Name:\s*"?([^|"\\n\\r]+)/i',
+        '/Name:\s*"?([^|"\\n\\r]+)/i',
+    ];
+    foreach ($patterns as $p) {
+        if (preg_match($p, $comment, $m)) return trim($m[1], "\"' \t\r\n");
+    }
+    return '';
+}
+function safe_name(string $name, int $max = 100): string {
+    $name = trim($name);
+    if ($max > 0 && mb_strlen($name) > $max) {
+        $name = mb_substr($name, 0, $max);
+    }
+    return $name;
+}
 
 // টেবিলে কোনো কলাম আছে কি না—চেকার
 function has_col(PDO $pdo, string $table, string $col): bool {
@@ -175,12 +230,13 @@ try {
 
             if ($pppoe === '' || ($service !== '' && $service !== 'pppoe')) { $rStats['skipped']++; $summary['skipped']++; continue; }
 
-            $status  = $disabled ? 'disabled' : 'active';
+            $status  = normalize_client_status($disabled ? 'disabled' : 'active');
             $package_id = $has_pkg ? $getPkgId($profile) : null;
 
             // comment থেকে mobile hint (UNIQUE হলে ডুপ্লিকেট skip)
             $comment = (string)arr_get($s,'comment','');
             $mobile_hint = null;
+            $comment_name = safe_name(extract_comment_name($comment), 100);
             if ($comment !== '' && preg_match('/(01\d{9})/', $comment, $m)) {
                 $mobile_hint = $m[1];
                 // duplicate check
@@ -190,9 +246,10 @@ try {
             }
 
             // find by PPPoE
-            $st = $pdo->prepare("SELECT id FROM clients WHERE pppoe_id=? LIMIT 1");
+            $st = $pdo->prepare("SELECT id, client_code, name FROM clients WHERE pppoe_id=? LIMIT 1");
             $st->execute([$pppoe]);
-            $existing_id = $st->fetchColumn();
+            $existingRow = $st->fetch(PDO::FETCH_ASSOC);
+            $existing_id = $existingRow['id'] ?? null;
 
             if ($existing_id) {
                 // ---------- UPDATE ----------
@@ -204,7 +261,17 @@ try {
                 if ($has_status)      { $sets[]="status = :status";         $bind[':status']=$status; }
                 if ($has_pppoe_pass && $passwd !== null){ $sets[]="pppoe_password = :pppoe_password"; $bind[':pppoe_password']=$passwd; }
                 if ($mobile_hint){ $sets[]="mobile = COALESCE(NULLIF(mobile,''), :mobile)"; $bind[':mobile']=$mobile_hint; }
-                // name কখনো comment থেকে override করব না—PPPoE ডিফল্ট থাকবে
+                if ($has_client_code && empty($existingRow['client_code'])) {
+                    $sets[] = "client_code = :client_code";
+                    $bind[':client_code'] = ensure_unique_client_code($pdo, pppoe_to_client_code($pppoe));
+                }
+                if ($comment_name !== '') {
+                    // if current name is empty or equals PPPoE, update from comment name
+                    if (empty($existingRow['name']) || $existingRow['name'] === $pppoe) {
+                        $sets[] = "name = :name";
+                        $bind[':name'] = $comment_name;
+                    }
+                }
                 if ($has_updated)     { $sets[]="updated_at = NOW()"; }
 
                 if (!empty($sets)) {
@@ -215,12 +282,11 @@ try {
 
             } else {
                 // ---------- INSERT ----------
-                // name সবসময় PPPoE; comment থেকে কখনো নয়
                 $cols = ['pppoe_id','name'];
                 $vals = [':pppoe_id',':name'];
-                $bind = [':pppoe_id'=>$pppoe, ':name'=>$pppoe];
+                $bind = [':pppoe_id'=>$pppoe, ':name'=>($comment_name ?: $pppoe)];
 
-                if ($has_client_code){ $cols[]='client_code'; $vals[]=':client_code'; $bind[':client_code']=$pppoe; }
+                if ($has_client_code){ $cols[]='client_code'; $vals[]=':client_code'; $bind[':client_code']=ensure_unique_client_code($pdo, pppoe_to_client_code($pppoe)); }
                 if ($mobile_hint){ $cols[]='mobile'; $vals[]=':mobile'; $bind[':mobile']=$mobile_hint; }
                 if ($has_status){ $cols[]='status'; $vals[]=':status'; $bind[':status']=$status; }
                 if ($has_is_left){ $cols[]='is_left'; $vals[]='0'; }
