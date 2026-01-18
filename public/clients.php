@@ -613,7 +613,7 @@ require __DIR__ . '/../partials/partials_header.php';
           <th style="width:32px;"><input type="checkbox" id="select-all"></th>
           <th><?= sort_link('code', 'Client Code') ?></th>
           <th><?= sort_link('name',   'Name') ?></th>
-          <?php if ($hasArea): ?><th><?= sort_link('area', 'Area') ?></th><?php endif; ?>
+          <?php if ($hasArea): ?><th><?= sort_link('area', 'Zone') ?></th><?php endif; ?>
           <th><?= sort_link('pppoe',  'PPPoE ID') ?></th>
           <th><?= sort_link('phone',  'Phone') ?></th>
           <th><?= sort_link('package','Package') ?></th>

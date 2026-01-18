@@ -39,7 +39,7 @@ function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function dbh(){ return db(); }
 function close_session_if_open(): void {
   if (session_status() === PHP_SESSION_ACTIVE) {
-    @session_write_close(); // release lock so other tabs stay responsive
+    @session_write_close(); // সেশন লক ছেড়ে দেই যাতে অন্য ট্যাব সাড়া দেয়
   }
 }
 function is_ajax(): bool {
@@ -58,7 +58,7 @@ $CRON_SCHEDULE_FILE = __DIR__ . '/../storage/cron_schedules.json';
 $CRON_ENABLE_FILE   = __DIR__ . '/../storage/cron_enabled.json';
 $CURRENT_USER_ID = (int)($_SESSION['user']['id'] ?? 0);
 $CURRENT_SESSION_ID = session_id();
-// release session lock early so other tabs remain responsive during long jobs
+// দীর্ঘ জবের সময়ও অন্য ট্যাব সাড়া দিতে পারে—তাই সেশন লক আগে ছেড়ে দেই
 close_session_if_open();
 
 function load_schedules(string $file, array $jobs): array {
@@ -161,7 +161,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Sync PPPoE active MACs, update clients.router_mac, link to OLT cache, fill OLT fields.',
     'timeout' => 180,
-    'schedule' => '*/5 * * * *',
+    'schedule' => '2-59/5 * * * *', // offset to run at 02,07,12... to avoid locking with OLT job
     'supports' => [],
   ],
   'auto_billing' => [
@@ -170,7 +170,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Generate periodic billing actions.',
     'timeout' => 180,
-    'schedule' => '0 2 * * *',
+    'schedule' => '15 2 1 * *', // 1st of month, after OLT window
     'supports' => [],
   ],
   'auto_suspend' => [
@@ -179,7 +179,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Suspend clients based on due rules.',
     'timeout' => 180,
-    'schedule' => '*/15 * * * *',
+    'schedule' => '7-59/15 * * * *', // offset away from OLT job start
     'supports' => [],
   ],
   'auto_suspend_enable' => [
@@ -188,7 +188,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Re-enable clients when dues cleared.',
     'timeout' => 180,
-    'schedule' => '*/15 * * * *',
+    'schedule' => '12-59/15 * * * *', // staggered away from suspend and OLT
     'supports' => [],
   ],
   'auto_expire_inactive' => [
@@ -233,7 +233,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Queue due notifications for later sending.',
     'timeout' => 120,
-    'schedule' => '0 */2 * * *',
+    'schedule' => '10 */2 * * *', // OLT overlap এড়াতে ঘণ্টা +10 মিনিটে চালাও
     'supports' => [],
   ],
   'notify_runner' => [
@@ -242,7 +242,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Process notification queue.',
     'timeout' => 120,
-    'schedule' => '*/10 * * * *',
+    'schedule' => '20,50 * * * *', // OLT :00/:30 থেকে সরে 20/50 মিনিটে
     'supports' => [],
   ],
   'sync_clients' => [
@@ -259,6 +259,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Sync package list.',
     'timeout' => 180,
+    'schedule' => '3-59/10 * * * *', // OLT :00/:30 এড়াতে ৩ মিনিট অফসেট
     'supports' => [],
   ],
   'sync_packages_all' => [
@@ -267,6 +268,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Sync all package profiles.',
     'timeout' => 240,
+    'schedule' => '3-59/10 * * * *', // same offset slot
     'supports' => [],
   ],
   'auto_bkash_apply' => [
@@ -275,6 +277,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Apply bKash payments automatically.',
     'timeout' => 180,
+    'schedule' => '5,35 * * * *', // OLT :00/:30 এড়াতে ৫/৩৫ মিনিটে
     'supports' => [],
   ],
   'bkash_rtn_process' => [
@@ -291,6 +294,7 @@ $jobs = [
     'method'=> 'GET',
     'desc'  => 'Create database backup.',
     'timeout' => 300,
+    'schedule' => '15 3 * * *', // রাত ৩:১৫ এ (বড় জব থেকে সরে)
     'supports' => [],
   ],
   'generate_invoices' => [
@@ -311,10 +315,12 @@ $jobs = [
   ],
   'olt_mac_refresh_telnet' => [
     'title' => 'OLT MAC Refresh (telnet)',
-    'url'   => '/api/olt_mac_refresh_telnet.php?mode=fast',
+    'url'   => '/api/olt_mac_refresh_telnet.php?mode=full',
     'method'=> 'GET',
     'desc'  => 'Refresh OLT MAC cache via telnet (onu_inventory/onu_mac_map টেবিল প্রয়োজন)।',
     'timeout' => 600, // heavy job; cap at 10m to avoid UI hang
+    'async' => true, // detach response early so browser doesn't hang
+    'schedule' => '*/30 * * * *', // default every 30 minutes
     'supports' => ['olt_id','skip_pppoe'], // allow narrowing to a specific OLT / skipping PPPoE link phase
   ],
 ];
@@ -526,6 +532,7 @@ if ($tokenForward === '' && defined('CRON_TOKEN')) {
 }
 $schedules     = []; // পরে লোড হবে
 $enabledMap    = []; // পরে লোড হবে
+$ajaxRunResponded = false; // async run response already sent?
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
   $job_key = trim($_POST['run_job']);
@@ -534,6 +541,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
   } else {
     $job = $jobs[$job_key];
     $title = $job['title'];
+    $asyncRun = !empty($job['async']);
     $user_id = $CURRENT_USER_ID;
 
     // (বাংলা) ইনপুট: month সাপোর্ট করলে নিন
@@ -580,6 +588,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
     $run_id = (int)dbh()->lastInsertId();
 
     // Execute
+    if ($asyncRun) {
+      ignore_user_abort(true); // keep running even if client disconnects
+      if ($isAjaxReq && !$ajaxRunResponded) {
+        $ajaxRunResponded = true;
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+          'ok' => true,
+          'message' => "Job '{$title}' started (will update when done).",
+        ], JSON_UNESCAPED_UNICODE);
+        if (function_exists('fastcgi_finish_request')) {
+          fastcgi_finish_request();
+        } else {
+          @ob_flush(); @flush();
+        }
+      }
+    }
     close_session_if_open();
     $started = microtime(true);
     @set_time_limit(max(60, (int)($job['timeout'] ?? 120)));
@@ -669,7 +693,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_enable'])) {
 }
 
 // Ajax POST response (job run)
-if ($isAjaxReq && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
+if ($isAjaxReq && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job']) && !$ajaxRunResponded) {
   header('Content-Type: application/json; charset=utf-8');
   echo json_encode([
     'ok' => $flash_error === '',
@@ -964,57 +988,6 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
   </form>
 
   <!-- History table -->
-  <div class="card shadow-sm mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span>Currently running</span>
-      <div class="d-flex gap-3 align-items-center">
-        <small class="text-muted">Live from cron_runs (unfinished rows)</small>
-        <span class="badge bg-secondary" id="next-tick">Next check in —</span>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="table-responsive">
-        <table class="table table-sm table-striped align-middle">
-          <thead class="table-light">
-            <tr>
-              <th>ID</th>
-              <th>Job</th>
-              <th>Title</th>
-              <th>Started</th>
-              <th class="text-end">Timeout</th>
-              <th class="text-end">Timing</th>
-            </tr>
-          </thead>
-          <tbody id="running-body">
-            <?= render_running_rows($running, $jobs) ?>
-          </tbody>
-        </table>
-      </div>
-      <div class="mt-3">
-        <div class="fw-semibold mb-1">Recent cron_runner jobs</div>
-        <div class="table-responsive">
-          <table class="table table-sm table-striped align-middle">
-            <thead class="table-light">
-              <tr>
-                <th>ID</th>
-                <th>Job</th>
-                <th>Title</th>
-                <th>Status</th>
-                <th>Started</th>
-                <th>Finished</th>
-                <th class="text-end">Duration</th>
-              </tr>
-            </thead>
-            <tbody id="recent-body">
-              <?= render_recent_rows($recentCron) ?>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- History table -->
   <div class="card shadow-sm">
     <div class="card-header">Last Runs</div>
     <div class="card-body">
@@ -1091,6 +1064,75 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
             </button>
           </form>
           <div class="small text-muted mt-1">উদাহরণ: */5 * * * * (প্রতি ৫ মিনিট)</div>
+          <div class="bg-light border rounded p-2 mt-2">
+            <div class="small fw-semibold mb-1">Quick builder (মিনিট-লেভেল)</div>
+            <div class="row g-2">
+              <div class="col-6 col-sm-4">
+                <label class="form-label form-label-sm mb-0 small">Minute</label>
+                <select class="form-select form-select-sm" id="sb-minute">
+                  <option value="*">Every minute</option>
+                  <option value="*/5">Every 5 min</option>
+                  <option value="*/10">Every 10 min</option>
+                  <option value="0">0</option>
+                  <option value="15">15</option>
+                  <option value="30">30</option>
+                  <option value="45">45</option>
+                </select>
+              </div>
+              <div class="col-6 col-sm-4">
+                <label class="form-label form-label-sm mb-0 small">Hour</label>
+                <select class="form-select form-select-sm" id="sb-hour">
+                  <option value="*">Every hour</option>
+                  <option value="*/2">Every 2 hours</option>
+                  <option value="*/4">Every 4 hours</option>
+                  <option value="*/6">Every 6 hours</option>
+                  <option value="*/12">Every 12 hours</option>
+                  <option value="0">0</option>
+                  <option value="6">6</option>
+                  <option value="12">12</option>
+                  <option value="18">18</option>
+                </select>
+              </div>
+              <div class="col-6 col-sm-4">
+                <label class="form-label form-label-sm mb-0 small">Day of month</label>
+                <select class="form-select form-select-sm" id="sb-dom">
+                  <option value="*">Every day</option>
+                  <option value="1">1</option>
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="15">15</option>
+                  <option value="20">20</option>
+                  <option value="25">25</option>
+                  <option value="28">28</option>
+                </select>
+              </div>
+              <div class="col-6 col-sm-4">
+                <label class="form-label form-label-sm mb-0 small">Month</label>
+                <select class="form-select form-select-sm" id="sb-month">
+                  <option value="*">Every month</option>
+                  <option value="1">Jan</option>
+                  <option value="3">Mar</option>
+                  <option value="6">Jun</option>
+                  <option value="9">Sep</option>
+                  <option value="12">Dec</option>
+                </select>
+              </div>
+              <div class="col-6 col-sm-4">
+                <label class="form-label form-label-sm mb-0 small">Day of week</label>
+                <select class="form-select form-select-sm" id="sb-dow">
+                  <option value="*">Every day</option>
+                  <option value="1">Mon</option>
+                  <option value="2">Tue</option>
+                  <option value="3">Wed</option>
+                  <option value="4">Thu</option>
+                  <option value="5">Fri</option>
+                  <option value="6">Sat</option>
+                  <option value="0">Sun</option>
+                </select>
+              </div>
+            </div>
+            <div class="small text-muted mt-1">নোট: ক্রন সেকেন্ড সাপোর্ট করে না; প্রতি মিনিটে রান হয়।</div>
+          </div>
         </div>
         <div class="mb-3">
           <label class="form-label mb-1">Run this job</label>
@@ -1141,9 +1183,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const lrOltInput = document.getElementById('lr-olt-input');
   const lrSkipPppoeWrap = document.getElementById('lr-skip-pppoe-wrap');
   const lrSkipPppoeInput = document.getElementById('lr-skip-pppoe');
-  const runningBody = document.getElementById('running-body');
-  const nextTickEl = document.getElementById('next-tick');
-  const recentBody = document.getElementById('recent-body');
+  const sbMinute = document.getElementById('sb-minute');
+  const sbHour = document.getElementById('sb-hour');
+  const sbDom = document.getElementById('sb-dom');
+  const sbMonth = document.getElementById('sb-month');
+  const sbDow = document.getElementById('sb-dow');
   let activeBtn = null;
 
   function showFlash(type, text){
@@ -1307,37 +1351,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Live running list
-  async function refreshRunning(){
-    if (!runningBody) return;
-    const params = new URLSearchParams(window.location.search);
-    params.set('ajax','running');
-    try{
-      const res = await fetch(window.location.pathname + '?' + params.toString(), {
-        headers:{'X-Requested-With':'XMLHttpRequest'}
-      });
-      const j = await res.json();
-      if (j && j.ok){
-        if (j.running_body && runningBody) runningBody.innerHTML = j.running_body;
-        if (j.recent_body && recentBody) recentBody.innerHTML = j.recent_body;
-      }
-    }catch(e){}
-  }
-
-  // Poll every 6s
-  setInterval(refreshRunning, 6000);
-  refreshRunning();
-
-  // Countdown to next cron check (per-minute crontab)
-  function tickCountdown(){
-    if (!nextTickEl) return;
-    const now = new Date();
-    const sec = now.getSeconds();
-    const remaining = 60 - sec;
-    nextTickEl.textContent = `Next check in ${remaining}s`;
-  }
-  setInterval(tickCountdown, 1000);
-  tickCountdown();
-
   document.querySelectorAll('.job-run-form').forEach(form => {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1518,6 +1531,22 @@ document.addEventListener('DOMContentLoaded', () => {
   if (lrSkipPppoeInput) {
     lrSkipPppoeInput.checked = false;
   }
+
+  function applyBuilderToSchedule(){
+    if (!lrSchedInput) return;
+    const expr = [
+      (sbMinute && sbMinute.value) ? sbMinute.value : '*',
+      (sbHour && sbHour.value) ? sbHour.value : '*',
+      (sbDom && sbDom.value) ? sbDom.value : '*',
+      (sbMonth && sbMonth.value) ? sbMonth.value : '*',
+      (sbDow && sbDow.value) ? sbDow.value : '*',
+    ].join(' ');
+    lrSchedInput.value = expr;
+  }
+  [sbMinute, sbHour, sbDom, sbMonth, sbDow].forEach(sel => {
+    if (!sel) return;
+    sel.addEventListener('change', applyBuilderToSchedule);
+  });
 });
 </script>
 <?php require_once __DIR__ . '/../partials/partials_footer.php'; ?>

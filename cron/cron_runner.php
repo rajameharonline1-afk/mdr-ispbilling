@@ -1,6 +1,6 @@
 <?php
 // cron/cron_runner.php
-// (বাংলা) cron_schedules.json পড়ে নির্দিষ্ট ক্রন এক্সপ্রেশন অনুযায়ী জব HTTP দিয়ে ট্রিগার করে
+// cron_schedules.json পড়ে নির্দিষ্ট ক্রন এক্সপ্রেশন অনুযায়ী জব HTTP দিয়ে ট্রিগার করে
 // উদাহরণ crontab: * * * * * php /var/www/isp_billing/cron/cron_runner.php --base-url="http://127.0.0.1/isp_billing" --token="YOUR_TOKEN"
 
 declare(strict_types=1);
@@ -13,14 +13,14 @@ $TOKEN    = defined('CRON_TOKEN') ? CRON_TOKEN : null;
 $SCHEDULE_FILE = __DIR__ . '/../storage/cron_schedules.json';
 $ENABLE_FILE   = __DIR__ . '/../storage/cron_enabled.json';
 
-// CLI args
+// CLI আর্গ পার্স
 foreach ($argv ?? [] as $arg) {
     if (strpos($arg, '--base-url=') === 0) $BASE_URL = substr($arg, 11);
     if (strpos($arg, '--token=') === 0)    $TOKEN    = substr($arg, 8);
 }
 $BASE_URL = rtrim($BASE_URL, '/');
 
-// Job definitions (URL পথ + ক্রন এক্সপ্রেশন)
+// জব ডেফিনিশন (URL + ক্রন এক্সপ্রেশন)
 $jobs = [
   'mt_sync' => [
     'title' => 'MikroTik Sync Clients',
@@ -41,28 +41,28 @@ $jobs = [
     'url'   => '/cron/auto_link_pppoe_olt.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '*/5 * * * *',
+    'schedule' => '2-59/5 * * * *', // ভারী OLT জব থেকে টাইম সরে রাখা
   ],
   'auto_billing' => [
     'title' => 'Auto Billing',
     'url'   => '/cron/auto_billing.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '0 2 * * *',
+    'schedule' => '15 2 1 * *', // মাসের ১ তারিখ ভোরে, OLT উইন্ডোর পরে
   ],
   'auto_suspend' => [
     'title' => 'Auto Suspend (due clients)',
     'url'   => '/cron/auto_suspend.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '*/15 * * * *',
+    'schedule' => '7-59/15 * * * *', // OLT শুরুর টাইম থেকে সরে
   ],
   'auto_suspend_enable' => [
     'title' => 'Auto Resume (enable)',
     'url'   => '/cron/auto_suspend_enable.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '*/15 * * * *',
+    'schedule' => '12-59/15 * * * *', // suspend/OLT থেকে আলাদা স্লট
   ],
   'auto_expire_inactive' => [
     'title' => 'Expire Inactive Accounts',
@@ -97,14 +97,14 @@ $jobs = [
     'url'   => '/cron/enqueue_due_notifications.php',
     'method'=> 'GET',
     'timeout' => 120,
-    'schedule' => '0 */2 * * *',
+    'schedule' => '10 */2 * * *', // OLT overlap এড়াতে ঘন্টা+10 এ চালাও
   ],
   'notify_runner' => [
     'title' => 'Notification Runner',
     'url'   => '/cron/notify_runner.php',
     'method'=> 'GET',
     'timeout' => 120,
-    'schedule' => '*/10 * * * *',
+    'schedule' => '20,50 * * * *', // OLT start (:00/:30) এড়িয়ে ২০/৫০ মিনিটে
   ],
   'sync_clients' => [
     'title' => 'Sync Clients (general)',
@@ -118,21 +118,21 @@ $jobs = [
     'url'   => '/cron/sync_packages.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '*/5 * * * *',
+    'schedule' => '3-59/10 * * * *', // OLT :00/:30 এড়াতে ৩ মিনিট অফসেট, প্রতি ১০ মিনিট
   ],
   'sync_packages_all' => [
     'title' => 'Sync Packages (all)',
     'url'   => '/cron/sync_packages_all.php',
     'method'=> 'GET',
     'timeout' => 240,
-    'schedule' => '*/5 * * * *',
+    'schedule' => '3-59/10 * * * *', // same offset as default
   ],
   'auto_bkash_apply' => [
     'title' => 'Auto bKash Apply',
     'url'   => '/cron/auto_bkash_apply.php',
     'method'=> 'GET',
     'timeout' => 180,
-    'schedule' => '*/10 * * * *',
+    'schedule' => '5,35 * * * *', // OLT :00/:30 এড়াতে ৫/৩৫ মিনিটে
   ],
   'bkash_rtn_process' => [
     'title' => 'bKash Return Process',
@@ -146,7 +146,7 @@ $jobs = [
     'url'   => '/cron/db_backup.php',
     'method'=> 'GET',
     'timeout' => 300,
-    'schedule' => '0 4 * * *',
+    'schedule' => '15 3 * * *', // রাত ৩:১৫ এ (OLT+billing থেকে সরে)
   ],
   'generate_invoices' => [
     'title' => 'Generate Invoices (legacy)',
@@ -164,14 +164,14 @@ $jobs = [
   ],
   'olt_mac_refresh_telnet' => [
     'title' => 'OLT MAC Refresh (telnet)',
-    'url'   => '/api/olt_mac_refresh_telnet.php?mode=fast',
+    'url'   => '/api/olt_mac_refresh_telnet.php?mode=full',
     'method'=> 'GET',
-    'timeout' => 600, // align with dashboard (long-running)
-    'schedule' => '*/5 * * * *',
+    'timeout' => 900, // পূর্ণ রিফ্রেশ শেষ করতে বেশি টাইমআউট
+    'schedule' => '*/30 * * * *',
   ],
 ];
 
-// Load schedules override from JSON
+// JSON থেকে শিডিউল ওভাররাইড লোড
 if (is_file($SCHEDULE_FILE)) {
     $data = json_decode((string)file_get_contents($SCHEDULE_FILE), true);
     if (is_array($data)) {
@@ -188,11 +188,11 @@ if (is_file($ENABLE_FILE)) {
     if (is_array($edata)) $enabled = $edata;
 }
 
-// Cron matcher (minute precision, tolerant to extra fields)
+// ক্রন ম্যাচার (মিনিট লেভেল; অতিরিক্ত ফিল্ড সহনশীল)
 function cron_match(string $expr, DateTime $dt): bool {
   $parts = preg_split('/\s+/', trim($expr));
   if (count($parts) < 5) return false;
-  if (count($parts) > 5) $parts = array_slice($parts, 0, 5); // if accidentally 6 fields, ignore extras
+  if (count($parts) > 5) $parts = array_slice($parts, 0, 5); // যদি ৬ ফিল্ড থাকে, বাড়তি বাদ
   [$m,$h,$d,$mo,$w] = $parts;
     $checks = [
         [$m,  (int)$dt->format('i'), 0, 59],
@@ -236,18 +236,19 @@ function cron_match_segment(string $seg, int $val, int $min, int $max): bool {
     return false;
 }
 
-// Prevent overlap
+// গ্লোবাল ওভারল্যাপ আটকাতে লক
 $pdo = db();
 $lock = $pdo->query("SELECT GET_LOCK('cron_runner_lock', 1)")->fetchColumn();
 if ((int)$lock !== 1) {
     echo "Lock busy\n";
     exit;
 }
+$runningCheck = $pdo->prepare("SELECT COUNT(*) FROM cron_runs WHERE job_key=? AND finished_at IS NULL");
 
 $now = new DateTime('now');
 $dueJobs = [];
 foreach ($jobs as $key=>$job) {
-    if (isset($enabled[$key]) && !$enabled[$key]) continue; // disabled
+    if (isset($enabled[$key]) && !$enabled[$key]) continue; // UI থেকে নিষ্ক্রিয়
     $expr = trim((string)($job['schedule'] ?? '* * * * *'));
     if (cron_match($expr, $now)) {
         $dueJobs[$key] = $job;
@@ -283,18 +284,28 @@ function http_call(string $url, string $method='GET', array $post=[], int $timeo
 
 $ok = 0; $fail = 0;
 foreach ($dueJobs as $key=>$job) {
+    // একই জব চলছে কিনা—চললে স্কিপ (API lock_busy এড়াতে)
+    try {
+        $runningCheck->execute([$key]);
+        if ((int)$runningCheck->fetchColumn() > 0) {
+            echo "SKIP: $key (previous run still in progress)\n";
+            continue;
+        }
+    } catch (Throwable $e) {
+        // ত্রুটি হলেও চালিয়ে যান
+    }
     $url = $job['url'];
     if (strpos($url, '{month}') !== false) {
         $url = str_replace('{month}', $now->format('Y-m'), $url);
     }
-    // append token
+    // টোকেন কুয়েরি প্যারামে যোগ
     if ($TOKEN) {
         $url .= (str_contains($url, '?') ? '&' : '?') . 'token=' . urlencode($TOKEN);
     }
     $full = $BASE_URL . (str_starts_with($url, '/') ? $url : ('/'.$url));
     $startedAt = date('Y-m-d H:i:s');
     $started = microtime(true);
-    // Insert running row first so UI can show "Currently running"
+    // UI “Currently running” দেখাতে আগে লগ ইন্সার্ট
     $runId = null;
     $stStart = $pdo->prepare("INSERT INTO cron_runs (job_key,title,status,started_at,triggered_by) VALUES (?,?,?,?,0)");
     $stStart->execute([$key, $job['title'] ?? $key, null, $startedAt]);
@@ -303,7 +314,7 @@ foreach ($dueJobs as $key=>$job) {
     $res = http_call($full, $job['method'] ?? 'GET', [], (int)($job['timeout'] ?? 120));
     $dur = (int)round((microtime(true)-$started)*1000);
 
-    // Update cron_runs row
+    // রান শেষে cron_runs আপডেট
     $status = $res['ok'] ? 'success' : 'failed';
     $out = (string)($res['output'] ?? '');
     if (strlen($out) > 1024*512) $out = substr($out,0,1024*512).'...[truncated]';
