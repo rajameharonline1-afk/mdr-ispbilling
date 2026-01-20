@@ -20,6 +20,16 @@ function hcol(PDO $pdo, string $tbl, string $col): bool {
   $st->execute([$col]);
   return (bool)$st->fetchColumn();
 }
+function cli_value(string $key): ?string {
+  global $argv;
+  if (PHP_SAPI !== 'cli' || empty($argv)) return null;
+  foreach ($argv as $arg) {
+    if (preg_match('/^'.preg_quote($key,'/').'=(.*)$/', $arg, $m)) return $m[1];
+    if (preg_match('/^--'.preg_quote($key,'/').'=(.*)$/', $arg, $m)) return $m[1];
+    if ($arg === '--'.$key) return '1';
+  }
+  return null;
+}
 
 /* ---------- Token check ---------- */
 $given = trim($_GET['token'] ?? '');
@@ -62,6 +72,11 @@ $default_amount = (float)($_GET['default_amount'] ?? 0);
 $autofill_scope = strtolower($_GET['autofill_scope'] ?? 'filtered'); // filtered|all
 
 $lock_wait = (int)($_GET['lock_wait'] ?? 0); // seconds to wait for lock (default 0=nowait)
+$client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
+if ($client_id <= 0) {
+  $cliCid = cli_value('client_id');
+  if ($cliCid !== null && ctype_digit((string)$cliCid)) $client_id = (int)$cliCid;
+}
 
 /* ---------- Derived dates ---------- */
 $month_start = $month . '-01';
@@ -119,6 +134,7 @@ try {
   $where = $include_left ? "1=1" : "COALESCE(c.is_left,0) = 0";
   if ($active_only && !$include_disabled) $where .= " AND c.status = 'active'";
   if ($router > 0) $where .= " AND c.router_id = :router_id";
+  if ($client_id > 0) $where .= " AND c.id = :client_id";
 
   // এমাউন্ট সোর্স (eligible চেকের জন্য)
   $amountExpr = "COALESCE(NULLIF(c.monthly_bill,0), p.price, 0)";
@@ -142,6 +158,7 @@ try {
         AND COALESCE(p.price,0) > 0
     ");
     if (strpos($whereAuto, ':router_id') !== false) $upd1->bindValue(':router_id',$router,PDO::PARAM_INT);
+    if (strpos($whereAuto, ':client_id') !== false) $upd1->bindValue(':client_id',$client_id,PDO::PARAM_INT);
     $upd1->execute(); $auto_info['applied_from_package'] = (int)$upd1->rowCount();
 
     // 2) default_amount → monthly_bill
@@ -153,6 +170,7 @@ try {
           AND COALESCE(c.monthly_bill,0) <= 0
       ");
       if (strpos($whereAuto, ':router_id') !== false) $upd2->bindValue(':router_id',$router,PDO::PARAM_INT);
+      if (strpos($whereAuto, ':client_id') !== false) $upd2->bindValue(':client_id',$client_id,PDO::PARAM_INT);
       $upd2->bindValue(':def', $default_amount);
       $upd2->execute(); $auto_info['applied_set_default'] = (int)$upd2->rowCount();
     }
@@ -185,27 +203,37 @@ try {
                ($rangeExpr ? " AND $rangeExpr " : " AND DATE(i.created_at) BETWEEN ? AND ? ");
   if ($has_is_void) $exist_sql .= " AND COALESCE(i.is_void,0)=0";
   if ($has_status)  $exist_sql .= " AND i.status <> 'void'";
+  if ($client_id > 0) $exist_sql .= " AND i.client_id = ?";
 
   $stExist = $pdo->prepare($exist_sql);
-  $stExist->execute($rangeExpr ? $rangeParams : [$month_start, $month_end]);
+  $existParams = $rangeExpr ? $rangeParams : [$month_start, $month_end];
+  if ($client_id > 0) $existParams[] = $client_id;
+  $stExist->execute($existParams);
   $exists_count = (int)$stExist->fetchColumn();
 
   if ($exists_count > 0 && $mode === 'skip') {
     if (function_exists('audit_log')) {
       audit_log('cron_invoice_skip','system',0,[
-        'billing_month'=>$month,'reason'=>'already_exists','count'=>$exists_count
+        'billing_month'=>$month,
+        'reason'=>'already_exists',
+        'count'=>$exists_count,
+        'client_id'=>$client_id ?: null,
+        'mode'=>$mode,
+        'via'=>'cron_generate_invoices'
       ]);
     }
     $releaseLock();
     respond([
       'ok'=>true,'skipped'=>true,'reason'=>'already_exists',
-      'month'=>$month,'existing_invoices'=>$exists_count,'autofill'=>$auto_info
+      'month'=>$month,'existing_invoices'=>$exists_count,'autofill'=>$auto_info,
+      'client_id'=>$client_id ?: null
     ]);
   }
 
   /* ---------- Eligible clients ---------- */
   $sqlClients = "
-    SELECT c.id AS client_id, $amountExpr AS bill_amount
+    SELECT c.id AS client_id, c.client_code, c.name, c.pppoe_id, c.area,
+           $amountExpr AS bill_amount
     FROM clients c
     LEFT JOIN packages p ON p.id = c.package_id
     WHERE $where
@@ -213,12 +241,14 @@ try {
   ";
   $stc = $pdo->prepare($sqlClients);
   if ($router>0) $stc->bindValue(':router_id',$router,PDO::PARAM_INT);
+  if ($client_id>0) $stc->bindValue(':client_id',$client_id,PDO::PARAM_INT);
   $stc->execute();
   $clients = $stc->fetchAll(PDO::FETCH_ASSOC);
 
   $out = [
     'ok'=>true,
     'month'=>$month,
+    'client_id'=>$client_id ?: null,
     'eligible_clients'=>count($clients),
     'inserted'=>0,'replaced'=>0,'skipped'=>0,
     'replaced_minus'=>0.0,'added_plus'=>0.0,'total_amount'=>0.0,
@@ -227,7 +257,12 @@ try {
   if (!$clients) {
     if (function_exists('audit_log')) {
       audit_log('cron_invoice_done','system',0,[
-        'billing_month'=>$month,'eligible'=>0,'note'=>'no_clients'
+        'billing_month'=>$month,
+        'eligible'=>0,
+        'note'=>'no_clients',
+        'client_id'=>$client_id ?: null,
+        'mode'=>$mode,
+        'via'=>'cron_generate_invoices'
       ]);
     }
     $releaseLock();
@@ -278,6 +313,12 @@ try {
   foreach ($clients as $r) {
     $cid = (int)$r['client_id'];
     $amt = (float)$r['bill_amount'];
+    $cmeta = [
+      'client_code'=>$r['client_code'] ?? null,
+      'name'=>$r['name'] ?? null,
+      'pppoe_id'=>$r['pppoe_id'] ?? null,
+      'area'=>$r['area'] ?? null,
+    ];
 
     // replace/cleanup old for this client-month (skip মোডেও সেফটি)
     $olds = [];
@@ -291,8 +332,12 @@ try {
         $voidOld->execute([(int)$old['id']]);
         if (function_exists('audit_log')) {
           audit_log('invoice_void','client',$cid,[
-            'invoice_id'=>(int)$old['id'],'billing_month'=>$month,'via'=>'cron'
-          ]);
+            'invoice_id'=>(int)$old['id'],
+            'billing_month'=>$month,
+            'mode'=>$mode,
+            'amount'=>(float)$old['amt'],
+            'via'=>'cron_generate_invoices'
+          ] + $cmeta);
         }
         $out['replaced']++;
         $out['replaced_minus'] += (float)$old['amt'];
@@ -333,8 +378,12 @@ try {
 
     if (function_exists('audit_log')) {
       audit_log('invoice_create','client',$cid,[
-        'invoice_id'=>$newId,'billing_month'=>$month,'total'=>$amt,'via'=>'cron'
-      ]);
+        'invoice_id'=>$newId,
+        'billing_month'=>$month,
+        'total'=>$amt,
+        'mode'=>$mode,
+        'via'=>'cron_generate_invoices'
+      ] + $cmeta);
     }
 
     $out['inserted']++;
@@ -352,7 +401,9 @@ try {
       'replaced'=>$out['replaced'],
       'skipped'=>$out['skipped'],
       'total_amount'=>$out['total_amount'],
-      'mode'=>$mode
+      'mode'=>$mode,
+      'client_id'=>$client_id ?: null,
+      'via'=>'cron_generate_invoices'
     ]);
   }
 

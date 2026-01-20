@@ -8,6 +8,7 @@ $ROOT = dirname(__DIR__, 1);
 require_once $ROOT . '/app/db.php';
 require_once $ROOT . '/app/notify.php';        // queue helpers
 require_once $ROOT . '/app/routeros_api.class.php'; // শুধু consistency; দরকার নেই
+@include_once $ROOT . '/app/audit.php';
 
 $pdo = db(); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
@@ -65,10 +66,20 @@ $namecol = col_exists($pdo,$CT,'name')?'name':(col_exists($pdo,$CT,'client_name'
 $mobcol = col_exists($pdo,$CT,'mobile')?'mobile':(col_exists($pdo,$CT,'phone')?'phone':null);
 $emailcol = col_exists($pdo,$CT,'email')?'email':(col_exists($pdo,$CT,'mail')?'mail':null);
 
-$rows = $pdo->query("SELECT `$idcol` AS id, `$namecol` AS name".($mobcol?(",`$mobcol` AS mobile"):"").($emailcol?(",`$emailcol` AS email"):"")." FROM `$CT`")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+// client filter (GET or CLI --client_id=123)
+$client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
+if (PHP_SAPI === 'cli') {
+  foreach (($argv ?? []) as $a) {
+    if (preg_match('/^--client_id=(\d+)/', $a, $m)) { $client_id = (int)$m[1]; break; }
+  }
+}
+
+$sqlClients = "SELECT `$idcol` AS id, `$namecol` AS name".($mobcol?(",`$mobcol` AS mobile"):"").($emailcol?(",`$emailcol` AS email"):"")." FROM `$CT`";
+if ($client_id > 0) $sqlClients .= " WHERE `$idcol` = ".(int)$client_id;
+$rows = $pdo->query($sqlClients)->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 // ===== enqueue due reminders
-$enq=0;
+$enq=0; $audits=[];
 foreach ($rows as $r) {
   $cid=(int)$r['id'];
   if (!client_is_due($pdo,$cid)) continue;
@@ -85,13 +96,27 @@ foreach ($rows as $r) {
   if (!empty($r['mobile'])) {
     $uk = "due-sms-".date('Y-m-d')."-c{$cid}";
     $ok = notify_queue($pdo,$cid,'sms','due_reminder_sms',$payload,$uk);
-    if ($ok) $enq++;
+    if ($ok) { $enq++; $audits[] = ['type'=>'sms','uk'=>$uk]; }
   }
   // email
   if (!empty($r['email'])) {
     $uk = "due-email-".date('Y-m-d')."-c{$cid}";
     $ok = notify_queue($pdo,$cid,'email','due_reminder_email',$payload,$uk);
-    if ($ok) $enq++;
+    if ($ok) { $enq++; $audits[] = ['type'=>'email','uk'=>$uk]; }
   }
 }
 echo "Enqueued: $enq\n";
+
+// Audit per-client when filtered
+if ($client_id > 0 && function_exists('audit_log') && $audits) {
+  foreach ($audits as $a) {
+    try {
+      audit_log('due_notification_enqueued', $client_id, [
+        'channel'=>$a['type'],
+        'dedupe_key'=>$a['uk'],
+        'month'=>date('Y-m'),
+        'via'=>'enqueue_due_notifications'
+      ]);
+    } catch (Throwable $e) {}
+  }
+}

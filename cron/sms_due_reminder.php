@@ -7,11 +7,35 @@ declare(strict_types=1);
 date_default_timezone_set('Asia/Dhaka');
 
 require_once __DIR__ . '/../app/db.php';
+@include_once __DIR__ . '/../app/audit.php';
 
 function hcol(PDO $pdo, string $tbl, string $col): bool {
   $st = $pdo->prepare("SHOW COLUMNS FROM `$tbl` LIKE ?");
   $st->execute([$col]);
   return (bool)$st->fetchColumn();
+}
+
+// CLI helper
+if (!function_exists('cli_get_value')) {
+  function cli_get_value(string $key): ?string {
+    global $argv;
+    if (PHP_SAPI !== 'cli' || empty($argv)) return null;
+    foreach ($argv as $arg) {
+      if (preg_match('/^--'.preg_quote($key,'/').'=(.*)$/', $arg, $m)) return $m[1];
+      if ($arg === '--'.$key) return '1';
+    }
+    return null;
+  }
+}
+
+// Audit helper (best-effort; prefers action, entity_id, meta)
+if (!function_exists('audit_log_safe_reminder')) {
+  function audit_log_safe_reminder(string $action, ?int $entity_id, array $meta = []): void {
+    if (!function_exists('audit_log')) return;
+    try { @audit_log($action, $entity_id, $meta); return; } catch (Throwable $e) {}
+    try { @audit_log('client', $entity_id, $action, null, $meta); return; } catch (Throwable $e) {}
+    try { @audit_log($action, $meta); } catch (Throwable $e) {}
+  }
 }
 
 // ---------- Inputs (GET/CLI) ----------
@@ -20,6 +44,11 @@ $router_id  = isset($_GET['router_id']) ? (int)$_GET['router_id'] : 0;
 $area       = trim($_GET['area'] ?? '');
 $limit      = max(1, (int)($_GET['limit'] ?? 500));       // কিউ সাইজ গার্ড
 $dry        = (int)($_GET['dry'] ?? 0);                   // preview only; DB write skip করলে 1
+$client_id  = isset($_GET['client_id']) ? (int)$_GET['client_id'] : 0;
+$cliCid     = cli_get_value('client_id');
+if ($client_id <= 0 && $cliCid !== null && ctype_digit((string)$cliCid)) {
+  $client_id = (int)$cliCid;
+}
 
 $pdo = db();
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -29,6 +58,7 @@ $where = "COALESCE(c.is_left,0)=0 AND COALESCE(c.ledger_balance,0) < 0";
 $args  = [];
 if ($router_id > 0) { $where .= " AND c.router_id = ?"; $args[] = $router_id; }
 if ($area !== '')   { $where .= " AND c.area = ?";      $args[] = $area; }
+if ($client_id > 0) { $where .= " AND c.id = ?";        $args[] = $client_id; }
 
 $col_mobile = hcol($pdo,'clients','mobile') ? 'mobile' : null;
 if (!$col_mobile) { http_response_code(500); echo "clients.mobile not found\n"; exit; }
@@ -69,8 +99,22 @@ foreach ($list as $c) {
   $msg   = render_msg($c, $ym);
   // (বাংলা) dedupe: ক্লায়েন্ট + মাস + পরিমাণ (ইচ্ছা করলে শুধু ক্লায়েন্ট+মাস রাখুন)
   $dedupe = 'due:' . $c['id'] . ':' . $ym . ':' . (int)abs((float)$c['ledger_balance']);
+  $meta = [
+    'mobile'=>$mobile,
+    'month'=>$ym,
+    'due'=>abs((float)$c['ledger_balance']),
+    'dedupe'=>$dedupe,
+    'dry'=>(bool)$dry,
+    'via'=>'sms_due_reminder'
+  ];
 
-  if ($dry) { $queued++; continue; }
+  if ($dry) {
+    $queued++;
+    if ($client_id > 0) {
+      audit_log_safe_reminder('sms_due_reminder_preview', (int)$c['id'], $meta);
+    }
+    continue;
+  }
 
   try {
     $ins->execute([
@@ -81,9 +125,15 @@ foreach ($list as $c) {
       ':payload'   => json_encode(['ym'=>$ym, 'due'=>abs((float)$c['ledger_balance'])], JSON_UNESCAPED_UNICODE),
     ]);
     $queued++;
+    if ($client_id > 0) {
+      audit_log_safe_reminder('sms_due_reminder_enqueued', (int)$c['id'], $meta);
+    }
   } catch (Throwable $e) {
     // duplicate হলে harmless
     $skipped++;
+    if ($client_id > 0) {
+      audit_log_safe_reminder('sms_due_reminder_skipped', (int)$c['id'], $meta + ['error'=>'duplicate_or_failed']);
+    }
   }
 }
 

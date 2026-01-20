@@ -166,8 +166,15 @@ function audit_log(...$args): void {
 
   $argc = count($args);
   if ($argc >= 3) {
+    // (action, entity_id, meta array) — common lightweight caller shape
+    if (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_array($args[2])) {
+      $action = $args[0];
+      $entity_id = _audit_int($args[1]);
+      $entity = _audit_guess_entity($action);
+      $new = $args[2];
+    }
     // (entity, entity_id, action, old?, new?)
-    if (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
+    elseif (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
       $entity = $args[0];
       $entity_id = _audit_int($args[1]);
       $action = $args[2];
@@ -193,6 +200,11 @@ function audit_log(...$args): void {
     // (action, meta)
     $action = $args[0];
     $new = $args[1];
+  } elseif ($argc === 2 && is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null)) {
+    // (action, entity_id)
+    $action = $args[0];
+    $entity_id = _audit_int($args[1]);
+    $entity = _audit_guess_entity($action);
   }
 
   if ($action === '') return;

@@ -60,6 +60,8 @@ $CURRENT_USER_ID = (int)($_SESSION['user']['id'] ?? 0);
 $CURRENT_SESSION_ID = session_id();
 // দীর্ঘ জবের সময়ও অন্য ট্যাব সাড়া দিতে পারে—তাই সেশন লক আগে ছেড়ে দেই
 close_session_if_open();
+$runGuard = null; // run-now safety marker
+$STALE_RUN_FAIL_SEC = 900; // ১৫ মিনিটের পুরোনো running এন্ট্রি auto-fail
 
 function load_schedules(string $file, array $jobs): array {
   if (!is_file($file)) {
@@ -98,6 +100,25 @@ function save_enabled(string $file, array $map): bool {
   if (!is_dir($dir)) @mkdir($dir, 0775, true);
   return (bool)@file_put_contents($file, json_encode($map, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES));
 }
+function find_running_job(PDO $pdo, string $jobKey): ?array {
+  $st = $pdo->prepare("SELECT id, triggered_by, started_at FROM cron_runs WHERE job_key=? AND finished_at IS NULL ORDER BY id DESC LIMIT 1");
+  $st->execute([$jobKey]);
+  $row = $st->fetch(PDO::FETCH_ASSOC);
+  return $row ?: null;
+}
+function acquire_job_lock(PDO $pdo, string $jobKey, int $wait = 1): bool {
+  $name = 'cron_job_' . preg_replace('/[^a-zA-Z0-9_\\-]/', '_', $jobKey);
+  $st = $pdo->prepare("SELECT GET_LOCK(?, ?)");
+  $st->execute([$name, $wait]);
+  return (int)$st->fetchColumn() === 1;
+}
+function release_job_lock(PDO $pdo, string $jobKey): void {
+  try {
+    $name = 'cron_job_' . preg_replace('/[^a-zA-Z0-9_\\-]/', '_', $jobKey);
+    $st = $pdo->prepare("SELECT RELEASE_LOCK(?)");
+    $st->execute([$name]);
+  } catch (Throwable $_) {}
+}
 
 /* ---------- Admin-only গার্ড (UI access) ---------- */
 // টোকেন/CLI এলে স্কিপ; শুধু লগইন UI তে অ্যাডমিন বাধ্যতামূলক
@@ -130,6 +151,25 @@ CREATE TABLE IF NOT EXISTS cron_runs (
   INDEX(started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ");
+// (বাংলা) যেসব রান status=NULL অবস্থায় অনেকক্ষণ পড়ে থাকে, সেগুলোকে auto-fail করে দেই
+$STALE_RUN_FAIL_SEC = 900; // ১৫ মিনিট
+try {
+  $stale = dbh()->prepare("
+    UPDATE cron_runs
+    SET status='failed',
+        finished_at=IFNULL(finished_at, NOW()),
+        duration_ms=IFNULL(duration_ms, TIMESTAMPDIFF(SECOND, started_at, NOW())*1000),
+        error=CONCAT(
+          'Auto-closed stale run (', TIMESTAMPDIFF(SECOND, started_at, NOW()), 's)',
+          CASE WHEN error IS NULL OR error='' THEN '' ELSE CONCAT('; prev: ', error) END
+        )
+    WHERE finished_at IS NULL
+      AND TIMESTAMPDIFF(SECOND, started_at, NOW()) > ?
+  ");
+  $stale->execute([$STALE_RUN_FAIL_SEC]);
+} catch (Throwable $e) {
+  // fail quietly—UI will still render
+}
 
 /* ---------- Declare cron jobs ---------- */
 /* (বাংলা) নতুন জব যোগ করতে $jobs অ্যারে-তে আরেকটা কী যোগ করুন */
@@ -178,7 +218,7 @@ $jobs = [
     'url'   => '/cron/auto_suspend.php',
     'method'=> 'GET',
     'desc'  => 'Suspend clients based on due rules.',
-    'timeout' => 180,
+    'timeout' => 420,
     'schedule' => '7-59/15 * * * *', // offset away from OLT job start
     'supports' => [],
   ],
@@ -205,7 +245,7 @@ $jobs = [
     'url'   => '/cron/save_client_traffic.php',
     'method'=> 'GET',
     'desc'  => 'Poll live status and log to client_traffic_log.',
-    'timeout' => 180,
+    'timeout' => 1200,
     'schedule' => '*/10 * * * *',
     'supports' => [],
   ],
@@ -467,7 +507,7 @@ function http_call(string $url, string $method = 'GET', array $post = [], int $t
   if ($tokenForward && !isset($post['token']) && $method === 'POST') {
     $post['token'] = $tokenForward;
   }
-  if ($tokenForward && $method === 'GET') {
+  if ($tokenForward && $method === 'GET' && !preg_match('/[?&]token=/', $full)) {
     $full .= (str_contains($full, '?') ? '&' : '?') . 'token=' . urlencode($tokenForward);
   }
 
@@ -577,15 +617,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
         $title .= ' [skip_pppoe]';
       }
     }
-    // টোকেন থাকলে URL এ যুক্ত করি (GET কলের জন্য)
-    if ($tokenForward) {
-      $url .= (str_contains($url, '?') ? '&' : '?') . 'token=' . urlencode($tokenForward);
+
+    // যদি আগে থেকেই রানিং থাকে, overlap এড়াতে থামাই
+    $runningRow = find_running_job(dbh(), $job_key);
+    if ($runningRow) {
+      $who = ((int)($runningRow['triggered_by'] ?? 0) === 0) ? 'auto' : 'manual';
+      $started = $runningRow['started_at'] ?? '';
+      $flash_error = "Job '{$title}' is already running ({$who}, started {$started}).";
+      goto after_run;
+    }
+
+    // প্রতি জব MySQL lock — concurrent POST/CLI থেকে ওভারল্যাপ আটকায়
+    if (!acquire_job_lock(dbh(), $job_key, 2)) {
+      $flash_error = "Job '{$title}' is locked by another run.";
+      goto after_run;
     }
 
     // স্টার্ট লগ
     $st = dbh()->prepare("INSERT INTO cron_runs (job_key, title, started_at, triggered_by) VALUES (?, ?, NOW(), ?)");
     $st->execute([$job_key, $title, $user_id]);
     $run_id = (int)dbh()->lastInsertId();
+    // shutdown fail-safe: কোনো কারণে স্ক্রিপ্ট মারা গেলে রানকে failed চিহ্নিত করি
+    $runGuard = [
+      'id' => $run_id,
+      'started' => microtime(true),
+      'done' => false,
+      'job_key' => $job_key,
+    ];
+    register_shutdown_function(function() use (&$runGuard) {
+      if (!$runGuard || ($runGuard['done'] ?? false) || empty($runGuard['id'])) return;
+      $duration = (int)round((microtime(true) - ($runGuard['started'] ?? microtime(true))) * 1000);
+      $err = error_get_last();
+      $note = 'Run terminated before completion';
+      if ($err && !empty($err['message'])) {
+        $note .= ': '.$err['message'].' @'.$err['file'].':'.$err['line'];
+      }
+      try {
+        $upd = dbh()->prepare("
+          UPDATE cron_runs
+          SET status='failed',
+              finished_at=IFNULL(finished_at, NOW()),
+              duration_ms=IFNULL(duration_ms, ?),
+              error=?
+          WHERE id=? AND status IS NULL
+        ");
+        $upd->execute([$duration, $note, (int)$runGuard['id']]);
+      } catch (Throwable $_) {}
+      if (!empty($runGuard['job_key'])) {
+        release_job_lock(dbh(), (string)$runGuard['job_key']);
+      }
+    });
 
     // Execute
     if ($asyncRun) {
@@ -623,6 +704,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
         SET status=?, finished_at=NOW(), duration_ms=?, output=?, error=?
         WHERE id=?");
       $upd->execute([$status, $duration, $output, (string)($res['error'] ?? ''), $run_id]);
+      $runGuard['done'] = true;
+      release_job_lock(dbh(), $job_key);
 
       $flash_success = $status==='success'
         ? "Job '{$title}' finished successfully."
@@ -634,6 +717,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['run_job'])) {
         SET status='failed', finished_at=NOW(), duration_ms=?, error=?
         WHERE id=?");
       $upd->execute([$duration, $e->getMessage(), $run_id]);
+      $runGuard['done'] = true;
+      release_job_lock(dbh(), $job_key);
       $flash_error = "Job '{$title}' failed: ".$e->getMessage();
     }
   }
@@ -786,7 +871,6 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
   .table-code code {white-space: nowrap;}
   .jobs-table { min-width: 1300px; table-layout: auto; }
   .jobs-table th.schedule-col, .jobs-table td.schedule-col {min-width: 190px;}
-  .jobs-table th.last-col, .jobs-table td.last-col {min-width: 220px;}
   .jobs-table th.action-col, .jobs-table td.action-col {min-width: 240px; white-space: nowrap; }
   .jobs-table thead th{
     background:#1e3f5e;
@@ -806,9 +890,6 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
   .jobs-table .action-col{position:sticky; right:0; background:#fff;}
   .jobs-table .action-col .btn{box-shadow:none;}
   .jobs-table .schedule-val code{font-size:.92rem;}
-  .jobs-table .last-meta{display:flex; flex-direction:column; gap:2px; align-items:flex-start;}
-  .jobs-table .last-meta .badge{font-size:.75rem; text-transform:uppercase;}
-  .jobs-table .last-meta .small{line-height:1.25; word-break:break-word;}
   .schedule-form input.form-control{min-width:110px;}
   /* Toast-style flash: top-right, never pushing page header */
   #flash-dock{
@@ -877,7 +958,6 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
               <th>Description</th>
               <th>Endpoint</th>
               <th class="schedule-col">Schedule</th>
-              <th class="last-col">Last Run</th>
               <th class="text-end action-col">Action</th>
             </tr>
           </thead>
@@ -910,18 +990,6 @@ if ($isAjaxReq && ($_GET['ajax'] ?? '') === 'running') {
                   <code><?=h($scheduleStr)?></code>
                 </div>
                 <div class="text-muted small">Default: <?=h($defaultSchedule)?></div>
-              </td>
-              <td class="last-col" data-label="Last Run">
-                <div class="last-meta" data-last-display="<?=h($key)?>">
-                  <?php if ($lr): ?>
-                    <div><span class="badge <?=$lrBadge?>"><?=h($lrLabel ?: 'running')?></span></div>
-                    <div class="small text-muted">Start: <?=h($lr['started_at'] ?? '—')?></div>
-                    <div class="small text-muted">End: <?=h($lr['finished_at'] ?? '—')?></div>
-                    <div class="small text-muted">Duration: <?=h($lr['duration_ms'] !== null ? (string)$lr['duration_ms'].' ms' : '—')?></div>
-                  <?php else: ?>
-                    <span class="text-muted small">No runs yet</span>
-                  <?php endif; ?>
-                </div>
               </td>
               <td class="text-end action-col" data-label="Action">
                 <div class="d-flex flex-column align-items-end gap-2">
@@ -1326,6 +1394,39 @@ document.addEventListener('DOMContentLoaded', () => {
     errorEl && (errorEl.textContent = (lastRun.error || '').substring(0,1000) || '—');
   }
 
+  const pollTimers = {};
+  function clearPoll(jobKey){
+    if (jobKey && pollTimers[jobKey]) {
+      clearTimeout(pollTimers[jobKey]);
+      delete pollTimers[jobKey];
+    }
+  }
+  function pollLastRun(jobKey, maxMs=20000, stepMs=1200){
+    if (!jobKey) return;
+    clearPoll(jobKey);
+    const started = Date.now();
+    const tick = async () => {
+      await fetchLastRun(jobKey);
+      const holder = document.querySelector(`[data-last-display="${jobKey}"]`);
+      const badge = holder?.querySelector('.badge');
+      let status = badge ? badge.textContent.trim().toLowerCase() : '';
+      if (!status) {
+        const btn = activeBtn && activeBtn.getAttribute('data-job') === jobKey
+          ? activeBtn
+          : document.querySelector(`.view-last-btn[data-job="${jobKey}"]`);
+        status = (btn?.getAttribute('data-status') || '').toLowerCase();
+      }
+      const stillRunning = (status === '' || status === 'running' || status === '—');
+      const elapsed = Date.now() - started;
+      if (stillRunning && elapsed < maxMs) {
+        pollTimers[jobKey] = setTimeout(tick, stepMs);
+      } else {
+        clearPoll(jobKey);
+      }
+    };
+    pollTimers[jobKey] = setTimeout(tick, stepMs);
+  }
+
   async function fetchLastRun(jobKey){
     if (!jobKey) return;
     try{
@@ -1372,6 +1473,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (j && j.ok){
           showFlash('success', j.message || 'Job finished');
           refreshHistory();
+          const jobKey = fd.get('run_job');
+          if (jobKey) pollLastRun(jobKey);
         } else {
           showFlash('danger', (j && j.message) ? j.message : 'Job failed');
         }
@@ -1453,7 +1556,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = e.relatedTarget;
     fillModalFrom(btn);
     const job = btn?.getAttribute('data-job') || '';
-    if (job) fetchLastRun(job);
+    if (job) {
+      fetchLastRun(job);
+      const status = (btn?.getAttribute('data-status') || '').toLowerCase();
+      if (status === '' || status === 'running') {
+        pollLastRun(job);
+      }
+    }
   });
 
   lrSchedForm?.addEventListener('submit', async (e) => {
@@ -1504,17 +1613,20 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: {'X-Requested-With':'XMLHttpRequest'}
       });
       const text = await res.text();
-      let j = null;
-      try { j = JSON.parse(text); } catch(_) {}
-      if (j && j.ok){
-        showFlash('success', j.message || 'Job finished');
-        refreshHistory();
-        if (jobKey) fetchLastRun(jobKey);
-      } else {
-        showFlash('danger', (j && j.message) ? j.message : 'Job failed');
-      }
-    }catch(err){
-      showFlash('danger', 'Request failed');
+        let j = null;
+        try { j = JSON.parse(text); } catch(_) {}
+        if (j && j.ok){
+          showFlash('success', j.message || 'Job finished');
+          refreshHistory();
+        if (jobKey) {
+          fetchLastRun(jobKey);
+          pollLastRun(jobKey);
+        }
+        } else {
+          showFlash('danger', (j && j.message) ? j.message : 'Job failed');
+        }
+      }catch(err){
+        showFlash('danger', 'Request failed');
     }finally{
       if (btn) btn.disabled = false;
       if (spin) spin.classList.add('d-none');

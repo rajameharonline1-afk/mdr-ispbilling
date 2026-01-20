@@ -140,6 +140,8 @@ if (!$amountCol) {
     exit;
 }
 
+$targetClientId = (isset($_GET['client_id']) && ctype_digit((string)$_GET['client_id'])) ? (int)$_GET['client_id'] : 0;
+
 // --- load client amounts ---
 $sql = "
   SELECT c.id AS client_id, c.client_code, c.name, c.pppoe_id, c.is_left,
@@ -147,9 +149,16 @@ $sql = "
          p.name AS package_name, p.price AS pkg_price
   FROM clients c
   LEFT JOIN packages p ON p.id = c.package_id
-  ORDER BY c.id
 ";
-$clients = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+$params = [];
+if ($targetClientId > 0) {
+    $sql .= " WHERE c.id = ? ";
+    $params[] = $targetClientId;
+}
+$sql .= " ORDER BY c.id ";
+$stClients = $pdo->prepare($sql);
+$stClients->execute($params);
+$clients = $stClients->fetchAll(PDO::FETCH_ASSOC);
 
 $preview = [];
 $stats = ['total'=>0,'zero'=>0,'left'=>0,'payable'=>0.0,'has_old'=>0];

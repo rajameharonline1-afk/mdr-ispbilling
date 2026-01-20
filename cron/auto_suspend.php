@@ -28,8 +28,22 @@ const GRACE_DAYS = 0;
 // বাংলা: ভবিষ্যৎ মাসের ইনভয়েস ignore করবে (শুধু current/older মাস consider)
 const STRICT_MONTH = true;
 
+// CLI flag helper (also used later for client filter)
+if (!function_exists('cli_get_flag')) {
+  function cli_get_flag(string $key) {
+    global $argv;
+    if (PHP_SAPI !== 'cli' || empty($argv)) return null;
+    foreach ($argv as $arg) {
+      if (preg_match('/^--'.preg_quote($key,'/').'=(.*)$/', $arg, $m)) return $m[1];
+      if ($arg === '--'.$key) return '1';
+    }
+    return null;
+  }
+}
+
 // বাংলা: dry-run হলে শুধু লগ হবে, MikroTik-এ কোনো পরিবর্তন যাবে না
 $DRY_RUN = in_array('--dry', $argv ?? [], true);
+$TARGET_CLIENT_ID = isset($_GET['client_id']) ? (int)$_GET['client_id'] : (int)(cli_get_flag('client_id') ?? 0);
 
 /* ========================= Generic helpers ========================= */
 function table_exists(PDO $pdo, string $t): bool {
@@ -66,7 +80,12 @@ $AUDIT_TABLE = (!$AUDIT_FUNC && table_exists($pdo,'audit_logs')) ? 'audit_logs' 
 function audit_best_effort(PDO $pdo, ?int $user_id, int $client_id, string $action, array $meta = []): void {
   global $AUDIT_FUNC, $AUDIT_TABLE;
   try{
-    if ($AUDIT_FUNC) { $fn = $AUDIT_FUNC; @$fn($user_id, $client_id, $action, $meta); return; }
+    if ($AUDIT_FUNC) { $fn = $AUDIT_FUNC;
+      // prefer modern signature: (action, client_id, meta)
+      try { @$fn($action, $client_id, $meta); return; } catch (Throwable $e) {}
+      // fallback legacy: (user_id, client_id, action, meta)
+      try { @$fn($user_id, $client_id, $action, $meta); return; } catch (Throwable $e) {}
+    }
   }catch(Throwable $e){ /* ignore */ }
   if ($AUDIT_TABLE) {
     try{
@@ -100,7 +119,7 @@ function fetch_routers(PDO $pdo): array {
   return $rows;
 }
 
-function fetch_clients(PDO $pdo): array {
+function fetch_clients(PDO $pdo, int $filterClientId = 0): array {
   $CT = pick_tbl($pdo, ['clients','customers','subscribers','client']);
   if (!$CT) { echo "[!] No clients table found.\n"; return []; }
 
@@ -111,6 +130,10 @@ function fetch_clients(PDO $pdo): array {
   $C_ACT  = pick_col($pdo,$CT,['is_active'], null);
   $C_WL   = pick_col($pdo,$CT,['is_whitelist','whitelist'], null);
   $C_FLAG = pick_col($pdo,$CT,['flags','tags'], null);
+  $C_CODE = pick_col($pdo,$CT,['client_code','code'], null);
+  $C_NAME = pick_col($pdo,$CT,['name','full_name'], null);
+  $C_AREA = pick_col($pdo,$CT,['area','zone','sub_zone'], null);
+  $C_LED  = pick_col($pdo,$CT,['ledger_balance','balance','due'], null);
 
   $cols = ["`$C_ID` AS id"];
   if ($C_RID)  $cols[] = "`$C_RID` AS router_id";
@@ -119,8 +142,20 @@ function fetch_clients(PDO $pdo): array {
   if ($C_ACT)  $cols[] = "`$C_ACT`  AS is_active";
   if ($C_WL)   $cols[] = "`$C_WL`   AS is_whitelist";
   if ($C_FLAG) $cols[] = "`$C_FLAG` AS flags";
+  if ($C_CODE) $cols[] = "`$C_CODE` AS client_code";
+  if ($C_NAME) $cols[] = "`$C_NAME` AS name";
+  if ($C_AREA) $cols[] = "`$C_AREA` AS area";
+  if ($C_LED)  $cols[] = "`$C_LED`  AS ledger";
 
-  $rows = $pdo->query("SELECT ".implode(',', $cols)." FROM `$CT`")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+  $sql = "SELECT ".implode(',', $cols)." FROM `$CT`";
+  $params = [];
+  if ($filterClientId > 0) {
+    $sql .= " WHERE `$C_ID` = ?";
+    $params[] = $filterClientId;
+  }
+  $st = $pdo->prepare($sql);
+  $st->execute($params);
+  $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
   foreach ($rows as &$r){
     $r['router_id'] = $r['router_id'] ?? DEFAULT_ROUTER_ID;
@@ -268,7 +303,7 @@ function mikrotik_set_pppoe(RouterosAPI $api, string $pppoe, bool $disable, bool
 $routers = fetch_routers($pdo);
 if (!$routers) { echo "[!] No routers configured.\n"; exit; }
 
-$clients = fetch_clients($pdo);
+$clients = fetch_clients($pdo, $TARGET_CLIENT_ID);
 if (!$clients) { echo "[!] No clients found.\n"; exit; }
 
 // group clients by router_id (fallback default)
@@ -307,7 +342,15 @@ foreach ($clientsByRouter as $rid => $clist) {
       echo "WHITELIST -> ENABLE\n";
       mikrotik_set_pppoe($API, $ppp, false, $DRY_RUN);
       update_client_local_flags($pdo, $cid, false);
-      audit_best_effort($pdo, null, $cid, 'auto_enable_whitelist', ['router_id'=>$rid,'pppoe'=>$ppp]);
+      audit_best_effort($pdo, null, $cid, 'auto_enable_whitelist', [
+        'router_id'=>$rid,
+        'pppoe'=>$ppp,
+        'client_code'=>$c['client_code'] ?? null,
+        'name'=>$c['name'] ?? null,
+        'area'=>$c['area'] ?? null,
+        'ledger'=>$c['ledger'] ?? null,
+        'via'=>'auto_suspend'
+      ]);
       $processed++; continue;
     }
 
@@ -317,12 +360,30 @@ foreach ($clientsByRouter as $rid => $clist) {
       echo "DUE -> SUSPEND\n";
       mikrotik_set_pppoe($API, $ppp, true, $DRY_RUN);
       update_client_local_flags($pdo, $cid, true);
-      audit_best_effort($pdo, null, $cid, 'auto_suspend', ['router_id'=>$rid,'pppoe'=>$ppp,'grace_days'=>GRACE_DAYS,'strict_month'=>STRICT_MONTH]);
+      audit_best_effort($pdo, null, $cid, 'auto_suspend', [
+        'router_id'=>$rid,
+        'pppoe'=>$ppp,
+        'client_code'=>$c['client_code'] ?? null,
+        'name'=>$c['name'] ?? null,
+        'area'=>$c['area'] ?? null,
+        'ledger'=>$c['ledger'] ?? null,
+        'grace_days'=>GRACE_DAYS,
+        'strict_month'=>STRICT_MONTH,
+        'via'=>'auto_suspend'
+      ]);
     } else {
       echo "CLEAR -> ENABLE\n";
       mikrotik_set_pppoe($API, $ppp, false, $DRY_RUN);
       update_client_local_flags($pdo, $cid, false);
-      audit_best_effort($pdo, null, $cid, 'auto_enable', ['router_id'=>$rid,'pppoe'=>$ppp]);
+      audit_best_effort($pdo, null, $cid, 'auto_enable', [
+        'router_id'=>$rid,
+        'pppoe'=>$ppp,
+        'client_code'=>$c['client_code'] ?? null,
+        'name'=>$c['name'] ?? null,
+        'area'=>$c['area'] ?? null,
+        'ledger'=>$c['ledger'] ?? null,
+        'via'=>'auto_suspend'
+      ]);
     }
     $processed++;
   }

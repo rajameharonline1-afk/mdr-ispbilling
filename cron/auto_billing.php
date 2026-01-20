@@ -20,6 +20,10 @@ error_reporting(E_ALL);
 
 $ROOT = dirname(__DIR__);
 require_once $ROOT . '/app/db.php'; // PDO db() expected
+// Audit (best effort)
+if (is_file($ROOT . '/app/audit.php')) {
+  require_once $ROOT . '/app/audit.php';
+}
 
 // ==== Config ====
 // (বাংলা) লগ ফাইল কোথায় যাবে (ওয়েব/ক্রন ইউজারের রাইট পারমিশন লাগবে)
@@ -72,6 +76,15 @@ function cli_has_flag(string $flag): bool {
     if ($a === $flag) return true;
   }
   return false;
+}
+function cli_get_value(string $key): ?string {
+  global $argv;
+  if (PHP_SAPI !== 'cli') return null;
+  foreach ($argv as $a) {
+    if (preg_match('/^--'.preg_quote($key,'/').'=(.*)$/', $a, $m)) return $m[1];
+    if ($a === '--'.$key) return '1';
+  }
+  return null;
 }
 
 /**
@@ -187,6 +200,7 @@ function run_generation_via_include(string $month, array $opts = []): void {
   if (isset($opts['active_only']))      $_GET['active_only']      = (string)$opts['active_only'];
   if (isset($opts['include_disabled'])) $_GET['include_disabled'] = (string)$opts['include_disabled'];
   if (isset($opts['include_left']))     $_GET['include_left']     = (string)$opts['include_left'];
+  if (isset($opts['client_id']))        $_GET['client_id']        = (int)$opts['client_id'];
 
   ob_start();
   $script = __DIR__ . '/../public/invoice_generate.php';
@@ -208,7 +222,13 @@ function run_generation_via_include(string $month, array $opts = []): void {
 
 // ==== Main ====
 try {
-  with_lock($LOCK_FILE, function () {
+  // Optional: target a single client for backfill/testing
+  $targetClientId = 0;
+  if (isset($_GET['client_id'])) $targetClientId = (int)$_GET['client_id'];
+  $cliCid = cli_get_value('client_id');
+  if ($cliCid !== null) $targetClientId = (int)$cliCid;
+
+  with_lock($LOCK_FILE, function () use ($targetClientId) {
     $pdo    = db();
     $ym     = resolve_billing_month();
 
@@ -216,7 +236,7 @@ try {
     $force  = (PHP_SAPI === 'cli' && cli_has_flag('--force')) ? 1 : (int)($_GET['force'] ?? 0);
     $is_dry = (PHP_SAPI === 'cli' && cli_has_flag('--dry'))   ? 1 : (int)($_GET['dry'] ?? 0);
 
-    log_line("== Auto billing start for {$ym} (force={$force}, dry={$is_dry}) ==");
+    log_line("== Auto billing start for {$ym} (force={$force}, dry={$is_dry}, client_id={$targetClientId}) ==");
 
     // (বাংলা) ১ তারিখ গার্ড (ব্যাকফিল বা force হলে ছাড়)
     if (!must_run_today($ym, (bool)$force)) {
@@ -236,6 +256,7 @@ try {
     run_generation_via_include($ym, [
       'commit'  => $is_dry ? 0 : 1,
       'replace' => 1,
+      'client_id' => $targetClientId > 0 ? $targetClientId : null,
       // 'prorate' => 0,
       // 'router_id' => 0,
       // 'active_only' => 0,
@@ -256,7 +277,36 @@ try {
       log_line("Post-check failed: ".$e->getMessage());
     }
 
-    echo ($is_dry ? "DRY: " : "") . "OK: auto billing completed for {$ym}\n";
+    // Audit log for targeted runs (to avoid huge bulk logs)
+    if ($targetClientId > 0 && function_exists('audit_log')) {
+      // minimal metadata
+      $meta = [
+        'month'     => $ym,
+        'force'     => (bool)$force,
+        'dry'       => (bool)$is_dry,
+        'commit'    => $is_dry ? false : true,
+        'replace'   => true,
+        'via'       => 'auto_billing',
+      ];
+      // Count invoices for this client in the target month (best-effort)
+      try {
+        $stc = $pdo->prepare("
+          SELECT COUNT(*) AS cnt
+          FROM invoices
+          WHERE client_id = ? AND DATE_FORMAT(COALESCE(billing_month, invoice_date, created_at),'%Y-%m') = ?
+        ");
+        $stc->execute([$targetClientId, $ym]);
+        $meta['invoice_count'] = (int)$stc->fetchColumn();
+      } catch (Throwable $e) {}
+
+      try {
+        audit_log('auto_billing_run', $targetClientId, $meta);
+      } catch (Throwable $e) {
+        // ignore audit errors
+      }
+    }
+
+    echo ($is_dry ? "DRY: " : "") . "OK: auto billing completed for {$ym}".($targetClientId>0 ? " (client_id={$targetClientId})" : "")."\n";
   });
 } catch (Throwable $e) {
   log_line("ERROR: " . $e->getMessage());

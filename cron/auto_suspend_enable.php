@@ -136,6 +136,7 @@ $router_id = isset($_GET['router_id']) ? (int)$_GET['router_id'] : (int)(cli_get
 $area      = isset($_GET['area'])      ? trim((string)$_GET['area']) : (string)(cli_get_flag('area') ?? '');
 $batch     = isset($_GET['batch'])     ? max(1,(int)$_GET['batch']) : max(1,(int)(cli_get_flag('batch') ?? 500));
 $dry       = isset($_GET['dry'])       ? (int)$_GET['dry'] : (int)(cli_get_flag('dry') ?? 0);
+$client_id = isset($_GET['client_id']) ? (int)$_GET['client_id'] : (int)(cli_get_flag('client_id') ?? 0);
 
 // (বাংলা) optional tracking columns—থাকলে আপডেট করব
 $has_status        = col_exists($pdo, 'clients', 'status');
@@ -149,10 +150,11 @@ if ($has_is_left) $where .= " AND COALESCE(c.is_left,0)=0";
 $args  = [];
 if ($router_id > 0) { $where .= " AND c.router_id = ?"; $args[] = $router_id; }
 if ($area !== '')   { $where .= " AND c.area = ?";      $args[] = $area; }
+if ($client_id > 0) { $where .= " AND c.id = ?";        $args[] = $client_id; }
 
 // ---------- Candidate groups ----------
 $due_sql = "
-SELECT c.id, c.name, c.pppoe_id, c.router_id, COALESCE(c.ledger_balance,0) AS due
+SELECT c.id, c.client_code, c.name, c.pppoe_id, c.router_id, c.area, COALESCE(c.ledger_balance,0) AS due
 ".($has_status ? ", c.status" : "")."
 FROM clients c
 WHERE $where AND COALESCE(c.ledger_balance,0) < ?
@@ -162,7 +164,7 @@ LIMIT $batch
 $due_args = array_merge($args, [0 - $due_limit]);
 
 $enable_sql = "
-SELECT c.id, c.name, c.pppoe_id, c.router_id, COALESCE(c.ledger_balance,0) AS due
+SELECT c.id, c.client_code, c.name, c.pppoe_id, c.router_id, c.area, COALESCE(c.ledger_balance,0) AS due
 ".($has_status ? ", c.status" : "")."
 FROM clients c
 WHERE $where AND COALESCE(c.ledger_balance,0) >= 0
@@ -236,16 +238,24 @@ foreach ($g_suspend as $rid => $rows) {
             if (function_exists('audit_log_safe')) {
                 audit_log_safe('pppoe_suspend_due', (int)$c['id'], [
                     'client_id'=>(int)$c['id'],
+                    'client_code'=>$c['client_code'] ?? null,
+                    'name'=>$c['name'] ?? null,
                     'pppoe_id'=>$pppoe,
                     'router_id'=>(int)$rid,
-                    'ledger'=>(float)$c['due']
+                    'area'=>$c['area'] ?? null,
+                    'ledger'=>(float)$c['due'],
+                    'via'=>'auto_suspend_enable'
                 ]);
             } else {
                 audit_log_legacy($pdo, 'pppoe_suspend_due', [
                     'client_id'=>(int)$c['id'],
+                    'client_code'=>$c['client_code'] ?? null,
+                    'name'=>$c['name'] ?? null,
                     'pppoe_id'=>$pppoe,
                     'router_id'=>(int)$rid,
-                    'ledger'=>(float)$c['due']
+                    'area'=>$c['area'] ?? null,
+                    'ledger'=>(float)$c['due'],
+                    'via'=>'auto_suspend_enable'
                 ]);
             }
             echo "[".date('Y-m-d H:i:s')."] DISABLED {$pppoe} due={$c['due']} (router={$rid})\n";
@@ -282,16 +292,24 @@ foreach ($g_enable as $rid => $rows) {
                 if (function_exists('audit_log_safe')) {
                     audit_log_safe('pppoe_enable_after_payment', (int)$c['id'], [
                         'client_id'=>(int)$c['id'],
+                        'client_code'=>$c['client_code'] ?? null,
+                        'name'=>$c['name'] ?? null,
                         'pppoe_id'=>$pppoe,
                         'router_id'=>(int)$rid,
-                        'ledger'=>(float)$c['due']
+                        'area'=>$c['area'] ?? null,
+                        'ledger'=>(float)$c['due'],
+                        'via'=>'auto_suspend_enable'
                     ]);
                 } else {
                     audit_log_legacy($pdo, 'pppoe_enable_after_payment', [
                         'client_id'=>(int)$c['id'],
+                        'client_code'=>$c['client_code'] ?? null,
+                        'name'=>$c['name'] ?? null,
                         'pppoe_id'=>$pppoe,
                         'router_id'=>(int)$rid,
-                        'ledger'=>(float)$c['due']
+                        'area'=>$c['area'] ?? null,
+                        'ledger'=>(float)$c['due'],
+                        'via'=>'auto_suspend_enable'
                     ]);
                 }
                 echo "[".date('Y-m-d H:i:s')."] ENABLED {$pppoe} due={$c['due']} (router={$rid})\n";

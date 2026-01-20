@@ -1,9 +1,9 @@
 {
-    "mt_sync": false,
+    "mt_sync": true,
     "invoice_month": true,
     "pppoe_olt_link": true,
     "auto_billing": true,
-    "auto_suspend": true,
+    "auto_suspend": false,
     "auto_suspend_enable": true,
     "auto_expire_inactive": true,
     "save_client_traffic": true,

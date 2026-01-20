@@ -5,7 +5,7 @@
 
 require_once __DIR__ . '/../app/db.php';
 
-$BASE_URL = 'http://localhost';
+$BASE_URL = 'https://127.0.0.1';
 $TOKEN    = null;
 
 // CLI args (lightweight parser)
@@ -14,29 +14,65 @@ foreach ($argv ?? [] as $arg) {
     if (str_starts_with($arg, '--token='))    $TOKEN    = substr($arg, 8);
 }
 
-// Load token if not passed: env > storage/cron_token.txt > config CRON_TOKEN (if defined)
+// Load token if not passed: env > config CRON_TOKEN > storage/cron_token.txt (fallback only)
 if (!$TOKEN && getenv('CRON_TOKEN')) $TOKEN = getenv('CRON_TOKEN');
-if (!$TOKEN && is_readable(__DIR__.'/../storage/cron_token.txt')) {
-    $TOKEN = trim((string)@file_get_contents(__DIR__.'/../storage/cron_token.txt'));
-}
 // (বাংলা) কনস্ট্যান্ট থাকলে constant() দিয়ে নিরাপদে পড়ি—না থাকলে undefined constant এরর এড়ায়
 if (!$TOKEN && defined('CRON_TOKEN')) {
     $TOKEN = (string)constant('CRON_TOKEN');
 }
+if (!$TOKEN && is_readable(__DIR__.'/../storage/cron_token.txt')) {
+    $TOKEN = trim((string)@file_get_contents(__DIR__.'/../storage/cron_token.txt'));
+}
+
+$clientsPerRun = 0;
+$BATCH_SIZE = 100; // process 100 clients per run (avoids long single-run timeouts)
+$OFFSET_FILE = __DIR__ . '/../storage/save_client_traffic_offset.json';
+
+// Allow full run (no batching) via flag
+$fullRun = false;
+foreach ($argv ?? [] as $arg) {
+    if ($arg === '--full') $fullRun = true;
+}
+if (isset($_GET['full']) && $_GET['full'] === '1') $fullRun = true;
+
+$softLimit = 1200; // seconds; generous for large fleets
+@set_time_limit($softLimit);
 
 $BASE_URL = rtrim($BASE_URL, '/');
 
 $pdo = db();
-$stmt = $pdo->query("SELECT id FROM clients");
-$clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$clients = [];
+if ($fullRun) {
+    $stmt = $pdo->query("SELECT id FROM clients ORDER BY id");
+    $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} else {
+    // Batch mode: resume from last id, wrap to beginning when needed
+    $lastId = 0;
+    if (is_readable($OFFSET_FILE)) {
+        $decoded = json_decode((string)file_get_contents($OFFSET_FILE), true);
+        if (is_array($decoded) && isset($decoded['last_id'])) {
+            $lastId = (int)$decoded['last_id'];
+        }
+    }
+
+    $limit = max(1, (int)$BATCH_SIZE);
+    $stmt = $pdo->prepare("SELECT id FROM clients WHERE id > ? ORDER BY id LIMIT {$limit}");
+    $stmt->execute([$lastId]);
+    $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!$clients) {
+        $stmt = $pdo->query("SELECT id FROM clients ORDER BY id LIMIT {$limit}");
+        $clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+}
 
 $useCurl = function(string $url): array {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 10,
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_SSL_VERIFYHOST => false,
         CURLOPT_USERAGENT => 'cron/save_client_traffic.php',
@@ -50,6 +86,7 @@ $useCurl = function(string $url): array {
 
 $okCnt = 0; $failCnt = 0;
 foreach ($clients as $client) {
+    $clientsPerRun++;
     $client_id = (int)$client['id'];
     $url = $BASE_URL . "/api/client_live_status.php?id={$client_id}";
     if ($TOKEN) $url .= "&cron_token=" . urlencode($TOKEN);
@@ -71,7 +108,8 @@ foreach ($clients as $client) {
 
     $data = json_decode($json, true);
     if (empty($data) || ($data['status'] ?? '') !== 'ok') {
-        echo "Bad payload for client {$client_id}\n";
+        $snippet = substr(trim((string)$json), 0, 160);
+        echo "Bad payload for client {$client_id}" . ($snippet ? " (body: {$snippet})" : "") . "\n";
         $failCnt++; continue;
     }
 
@@ -89,4 +127,11 @@ foreach ($clients as $client) {
     echo "Saved log for client {$client_id} (rx={$rx} kbps, tx={$tx} kbps)\n";
 }
 
-echo "Done. success={$okCnt}, failed={$failCnt}\n";
+// Persist last processed id for batch mode
+if (!$fullRun) {
+    $lastProcessed = end($clients);
+    $lid = $lastProcessed ? (int)$lastProcessed['id'] : 0;
+    @file_put_contents($OFFSET_FILE, json_encode(['last_id' => $lid], JSON_PRETTY_PRINT));
+}
+
+echo "Done. clients=" . count($clients) . ", success={$okCnt}, failed={$failCnt}" . ($fullRun ? " (full run)" : " (batched)") . "\n";

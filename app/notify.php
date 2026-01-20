@@ -204,15 +204,25 @@ if (!function_exists('notify_send_email')) {
 
 /* ------------------ runner core ------------------ */
 if (!function_exists('notify_run_batch')) {
-  function notify_run_batch(PDO $pdo): array {
+  /**
+   * Run notification queue
+   * @param array $opts ['client_id'=>int|null, 'audit'=>bool]
+   */
+  function notify_run_batch(PDO $pdo, array $opts = []): array {
     if (!tbl_exists($pdo,'notifications')) return ['processed'=>0,'sent'=>0,'failed'=>0];
 
     $cfg  = notify_cfg();
     $lim  = (int)$cfg['batch_limit'];
     $now  = date('Y-m-d H:i:s');
 
-    $st=$pdo->prepare("SELECT * FROM notifications WHERE status='queued' AND send_after<=? ORDER BY id ASC LIMIT $lim");
-    $st->execute([$now]);
+    $clientFilter = isset($opts['client_id']) ? (int)$opts['client_id'] : 0;
+    $sql = "SELECT * FROM notifications WHERE status='queued' AND send_after<=?";
+    $params = [$now];
+    if ($clientFilter > 0) { $sql .= " AND client_id=?"; $params[] = $clientFilter; }
+    $sql .= " ORDER BY id ASC LIMIT $lim";
+
+    $st=$pdo->prepare($sql);
+    $st->execute($params);
     $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     if (!$rows) return ['processed'=>0,'sent'=>0,'failed'=>0];
@@ -222,10 +232,19 @@ if (!function_exists('notify_run_batch')) {
     $Ccols = $CT ? notify_pick_client_cols($pdo,$CT) : [];
 
     $sent=0; $failed=0;
+    $auditEnabled = $clientFilter>0 && function_exists('audit_log');
     foreach ($rows as $n) {
       $id  = (int)$n['id'];
       $cid = (int)$n['client_id'];
       $payload = json_decode((string)$n['payload_json'], true) ?: [];
+      $metaBase = [
+        'channel'      => (string)$n['channel'],
+        'template_key' => (string)$n['template_key'],
+        'uniq_key'     => $n['uniq_key'] ?? null,
+        'retries'      => (int)($n['retries'] ?? 0),
+        'send_after'   => $n['send_after'] ?? null,
+        'via'          => 'notify_runner'
+      ];
 
       // Load client row
       $clientRow = [];
@@ -253,12 +272,24 @@ if (!function_exists('notify_run_batch')) {
       if ($ok) {
         $upd=$pdo->prepare("UPDATE notifications SET status='sent', sent_at=NOW(), last_error=NULL WHERE id=?");
         $upd->execute([$id]); $sent++;
+        if ($auditEnabled) {
+          try { audit_log('notification_sent', $cid, $metaBase + ['notification_id'=>$id]); } catch (Throwable $e) {}
+        }
       } else {
         $retries = (int)$n['retries'] + 1;
         // বাংলা: এক্সপোনেনশিয়াল ব্যাকঅফ (১৫, ৩০, ৬০ মিনিট)
         $mins = min(60, 15 * $retries);
         $upd=$pdo->prepare("UPDATE notifications SET status='queued', retries=?, send_after=DATE_ADD(NOW(), INTERVAL {$mins} MINUTE), last_error=? WHERE id=?");
         $upd->execute([$retries, $err, $id]); $failed++;
+        if ($auditEnabled) {
+          try {
+            audit_log('notification_failed', $cid, $metaBase + [
+              'notification_id'=>$id,
+              'error'=>$err,
+              'retries'=>$retries
+            ]);
+          } catch (Throwable $e) {}
+        }
       }
     }
     return ['processed'=>count($rows),'sent'=>$sent,'failed'=>$failed];
