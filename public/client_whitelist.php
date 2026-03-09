@@ -8,7 +8,7 @@ $ROOT = dirname(__DIR__, 1);
 require_once $ROOT . '/app/require_login.php';
 require_once $ROOT . '/app/db.php';
 $acl_file = $ROOT . '/app/acl.php'; if (is_file($acl_file)) require_once $acl_file;
-if (function_exists('require_perm')) { require_perm('clients.edit'); }
+if (function_exists('require_perm')) { require_perm('edit.client'); }
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));

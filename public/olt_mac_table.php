@@ -56,6 +56,9 @@ function port_sort_key(array $row): string {
 }
 
 function format_onu_identifier(array $row): string {
+  if (!empty($row['onu_display_id'])) {
+    return (string)$row['onu_display_id'];
+  }
   $port = $row['normalized_port'] ?? '';
   $onuNum = onu_numeric($row['onu'] ?? '');
   if($onuNum === PHP_INT_MAX){
@@ -107,6 +110,62 @@ function sanitize_onu_description(?string $value): array {
     $trim = substr($trim, 0, 60);
   }
   return [$trim, $trim !== $original];
+}
+
+function build_onu_row_key(int $oltId, string $portLabel, int $onuNum): string {
+  return $oltId . '|' . normalize_port_label($portLabel) . '|' . $onuNum;
+}
+
+function persist_monitor_description(PDO $db, int $oltId, string $portLabel, int $onuNum, ?string $description): void {
+  if ($oltId <= 0 || $onuNum <= 0) {
+    return;
+  }
+
+  $normalizedPort = normalize_port_label($portLabel);
+
+  // Keep legacy cache aligned for app-level visibility where available.
+  try {
+    $updLegacy = $db->prepare("UPDATE olt_mac_cache SET description = ? WHERE olt_id = ? AND onu = ?");
+    $updLegacy->execute([$description, $oltId, $onuNum]);
+  } catch (Throwable $e) {
+  }
+
+  // Update latest monitor payload so table reflects change immediately.
+  try {
+    $st = $db->prepare("SELECT id, data_json FROM onu_monitor_cache WHERE olt_id = ? ORDER BY generated_at DESC LIMIT 3");
+    $st->execute([$oltId]);
+    while ($cache = $st->fetch(PDO::FETCH_ASSOC)) {
+      $payload = json_decode((string)($cache['data_json'] ?? ''), true);
+      if (!is_array($payload) || !is_array($payload['groups'] ?? null)) {
+        continue;
+      }
+      $changed = false;
+      foreach ($payload['groups'] as $groupKey => $group) {
+        if (!is_array($group) || !is_array($group['list'] ?? null)) {
+          continue;
+        }
+        foreach ($group['list'] as $idx => $item) {
+          [$family, $slot, $port, $onu] = parse_monitor_iface($item['iface'] ?? '');
+          if ($onu === null || (int)$onu !== $onuNum) {
+            continue;
+          }
+          $itemPort = build_monitor_port_label($family, $slot, $port);
+          if (normalize_port_label($itemPort) !== $normalizedPort) {
+            continue;
+          }
+          $payload['groups'][$groupKey]['list'][$idx]['description'] = $description;
+          $payload['groups'][$groupKey]['list'][$idx]['desc'] = $description;
+          $changed = true;
+        }
+      }
+      if ($changed) {
+        $upd = $db->prepare("UPDATE onu_monitor_cache SET data_json = ? WHERE id = ?");
+        $upd->execute([json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), (int)$cache['id']]);
+        break;
+      }
+    }
+  } catch (Throwable $e) {
+  }
 }
 
 function parse_port_label_for_cli(?string $label): ?array {
@@ -567,6 +626,7 @@ $expandedRowId = 0;
 $toast_message = '';
 $toast_type = '';
 $config_ok = false;
+$config_row_key = '';
 
 // ---------- ফর্ম অ্যাকশন: ক্লায়েন্টকে নির্দিষ্ট ONU রো-এর সাথে লিংক ----------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') === 'link_client') {
@@ -621,6 +681,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
     $config_error = 'Invalid CSRF token.';
   } else {
     $rowId = (int)($_POST['row_id'] ?? 0);
+    $cfgOltId = (int)($_POST['cfg_olt_id'] ?? 0);
+    $cfgPort = trim((string)($_POST['cfg_port'] ?? ''));
+    $cfgOnu = (int)($_POST['cfg_onu'] ?? 0);
     $expandedRowId = $rowId;
     $descRaw = trim((string)($_POST['description'] ?? ''));
     if ($descRaw !== '') {
@@ -630,15 +693,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
         $descRaw = substr($descRaw, 0, 255);
       }
     }
-    if ($rowId <= 0) {
+    if ($rowId <= 0 && ($cfgOltId <= 0 || $cfgPort === '' || $cfgOnu <= 0)) {
       $config_error = 'Invalid row.';
     } else {
-      $stRow = $db->prepare("SELECT c.*, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor, o.telnet_port, o.ssh_port, o.username, o.password, o.enable_password
-                             FROM olt_mac_cache c
-                             LEFT JOIN olts o ON o.id = c.olt_id
-                             WHERE c.id = ? LIMIT 1");
-      $stRow->execute([$rowId]);
-      $row = $stRow->fetch(PDO::FETCH_ASSOC);
+      $row = null;
+      if ($rowId > 0) {
+        $stRow = $db->prepare("SELECT c.*, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor, o.telnet_port, o.ssh_port, o.username, o.password, o.enable_password
+                               FROM olt_mac_cache c
+                               LEFT JOIN olts o ON o.id = c.olt_id
+                               WHERE c.id = ? LIMIT 1");
+        $stRow->execute([$rowId]);
+        $row = $stRow->fetch(PDO::FETCH_ASSOC);
+      }
+      if (!$row && $cfgOltId > 0) {
+        $stOlt = $db->prepare("SELECT o.id AS olt_id, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor, o.telnet_port, o.ssh_port, o.username, o.password, o.enable_password
+                               FROM olts o WHERE o.id = ? LIMIT 1");
+        $stOlt->execute([$cfgOltId]);
+        $oltRow = $stOlt->fetch(PDO::FETCH_ASSOC);
+        if ($oltRow) {
+          $row = $oltRow;
+          $row['port'] = $cfgPort;
+          $row['onu'] = (string)$cfgOnu;
+          $row['id'] = 0;
+        }
+      }
       if(!$row){
         $config_error = 'OLT MAC row not found.';
       } else {
@@ -689,8 +767,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
                 if(!$result['ok']){
                   $config_error = $result['error'] ?? 'Device update failed.';
                 } else {
-                  $upd = $db->prepare("UPDATE olt_mac_cache SET description = ? WHERE id = ?");
-                  $upd->execute([$descSanitized !== '' ? $descSanitized : null, $rowId]);
+                  $newDesc = $descSanitized !== '' ? $descSanitized : null;
+                  if ($rowId > 0) {
+                    $upd = $db->prepare("UPDATE olt_mac_cache SET description = ? WHERE id = ?");
+                    $upd->execute([$newDesc, $rowId]);
+                  }
+                  $config_row_key = build_onu_row_key($oltId, (string)($row['port'] ?? $cfgPort), $onuNum);
+                  persist_monitor_description($db, $oltId, (string)($row['port'] ?? $cfgPort), $onuNum, $newDesc);
                   $config_notice = 'Description updated Success .';
                   $config_ok = true;
                 }
@@ -711,6 +794,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') ==
   echo json_encode([
     'ok' => $config_ok,
     'message' => $config_ok ? $config_notice : ($config_error ?: 'Save failed.'),
+    'row_key' => $config_row_key,
   ], JSON_UNESCAPED_UNICODE);
   exit;
 }
@@ -1118,6 +1202,44 @@ if(!$tableMissing && $rows){
     $g['rows'] = $filtered;
   }
   unset($g);
+
+  // EPONO সিরিয়াল ম্যাপ: PON স্লট অনুযায়ী EPONO/1, EPONO/2 ... এবং প্রতি PON-এ ONU :1, :2 ...
+  $ponSerialBySlot = [];
+  $serialCounter = 1;
+  foreach($groupedMacs as $g){
+    $slot = (int)($g['slot'] ?? 0);
+    if($slot <= 0) continue;
+    $ponSerialBySlot[$slot] = $serialCounter++;
+  }
+  foreach($groupedMacs as &$g){
+    $slot = (int)($g['slot'] ?? 0);
+    $ponSerial = $ponSerialBySlot[$slot] ?? null;
+    $g['label'] = $ponSerial !== null ? ('EPONO/'.$ponSerial) : ($g['label'] ?? 'EPONO/-');
+
+    $onuSerialByNumber = [];
+    $onuList = [];
+    foreach(($g['rows'] ?? []) as $r){
+      $onuNum = onu_numeric($r['onu'] ?? '');
+      if($onuNum !== PHP_INT_MAX){
+        $onuList[] = $onuNum;
+      }
+    }
+    $onuList = array_values(array_unique($onuList));
+    sort($onuList, SORT_NUMERIC);
+    foreach($onuList as $idx => $onuNum){
+      $onuSerialByNumber[(int)$onuNum] = $idx + 1;
+    }
+
+    foreach($g['rows'] as &$r){
+      $onuNum = onu_numeric($r['onu'] ?? '');
+      $onuSerial = ($onuNum !== PHP_INT_MAX) ? ($onuSerialByNumber[$onuNum] ?? null) : null;
+      $r['pon_serial'] = $ponSerial;
+      $r['onu_serial'] = $onuSerial;
+      $r['onu_display_id'] = 'EPONO/'.($ponSerial ?? '-').':'.($onuSerial ?? '-');
+    }
+    unset($r);
+  }
+  unset($g);
 }
 $ponOptions = [];
 if ($groupedMacs) {
@@ -1129,8 +1251,15 @@ if ($groupedMacs) {
     $ponTotals['total_pons']++;
     $ponTotals['total_onu'] += $cnt;
   }
-  $ponOptions = array_values(array_map(fn($g)=> (int)$g['slot'], $groupedMacs));
-  $ponOptions = array_values(array_unique($ponOptions));
+  $ponOptions = [];
+  foreach($groupedMacs as $g){
+    $slotVal = (int)($g['slot'] ?? 0);
+    if($slotVal <= 0) continue;
+    $ponOptions[] = [
+      'slot' => $slotVal,
+      'label' => (string)($g['label'] ?? ('EPONO/'.$slotVal)),
+    ];
+  }
 }
 // Default: যদি কোনো PON সিলেক্ট না থাকে, প্রথম PON দেখাবে
 if($filterPon > 0 && $groupedMacs){
@@ -1293,7 +1422,15 @@ function render_olt_table_block(array $groupedMacs, array $clientMacCache, int $
                   <td data-label="Area"><?= !empty($row['client_meta']) && ($row['client_meta']['area'] ?? '') !== '' ? h($row['client_meta']['area']) : '—' ?></td>
                   <td data-label="Sub Zone"><?= !empty($row['client_meta']) && ($row['client_meta']['sub_zone'] ?? '') !== '' ? h($row['client_meta']['sub_zone']) : '—' ?></td>
                   <td data-label="Box"><?= !empty($row['client_meta']) && ($row['client_meta']['box'] ?? '') !== '' ? h($row['client_meta']['box']) : '—' ?></td>
-                  <td data-label="Description"><span class="desc-text" data-row-id="<?= $row['id']; ?>"><?= h($row['description'] !== null && $row['description'] !== '' ? $row['description'] : '—'); ?></span></td>
+                  <?php
+                    $cfgPortLabel = (string)($row['normalized_port'] ?? normalize_port_label($row['port'] ?? ''));
+                    $cfgOnuNum = onu_numeric($row['onu'] ?? '');
+                    $cfgOltId = (int)($row['olt_id'] ?? 0);
+                    $cfgRowKey = ($cfgOltId > 0 && $cfgPortLabel !== '—' && $cfgOnuNum !== PHP_INT_MAX)
+                      ? build_onu_row_key($cfgOltId, $cfgPortLabel, $cfgOnuNum)
+                      : '';
+                  ?>
+                  <td data-label="Description"><span class="desc-text" data-row-id="<?= (int)($row['id'] ?? 0); ?>" data-row-key="<?= h($cfgRowKey); ?>"><?= h($row['description'] !== null && $row['description'] !== '' ? $row['description'] : '—'); ?></span></td>
                   <td data-label="MAC"><code class="fw-semibold"><?= h(strtoupper($row['mac'])); ?></code></td>
                   <?php
                   $clientKey = client_mac_lookup_key($row);
@@ -1368,11 +1505,16 @@ function render_olt_table_block(array $groupedMacs, array $clientMacCache, int $
                     <?php endif; ?>
                   </td>
                   <td class="text-end" data-label="Action">
-                    <?php $cfgDisabled = empty($row['id']) || (($row['cache_source'] ?? '') === 'onu_monitor_cache'); ?>
+                    <?php $cfgDisabled = ($cfgRowKey === ''); ?>
                     <button class="btn btn-outline-primary btn-sm btn-config"
                       type="button"
                       <?= $cfgDisabled ? 'disabled' : ''; ?>
                       data-row-id="<?= (int)($row['id'] ?? 0); ?>"
+                      data-row-key="<?= h($cfgRowKey); ?>"
+                      data-olt-id="<?= (int)$cfgOltId; ?>"
+                      data-port="<?= h($cfgPortLabel); ?>"
+                      data-onu="<?= $cfgOnuNum === PHP_INT_MAX ? '' : (int)$cfgOnuNum; ?>"
+                      data-source="<?= h((string)($row['cache_source'] ?? '')); ?>"
                       data-desc="<?= h($row['description'] ?? ''); ?>">
                       Configure
                     </button>
@@ -1475,10 +1617,11 @@ require_once __DIR__ . '/../partials/partials_header.php';
               <select name="pon" class="form-select" <?= $filterOlt === 0 ? 'disabled' : ''; ?>>
                 <option value="0" disabled <?= $filterPon === 0 ? 'selected' : ''; ?>>PON সিলেক্ট করুন</option>
                 <?php if (!empty($ponOptions) && $filterOlt > 0): ?>
-                  <?php foreach ($ponOptions as $slot): ?>
-                    <?php $slotVal = (int)$slot; ?>
+                  <?php foreach ($ponOptions as $ponOpt): ?>
+                    <?php $slotVal = (int)($ponOpt['slot'] ?? 0); ?>
+                    <?php $slotLabel = trim((string)($ponOpt['label'] ?? 'EPONO/'.$slotVal)); ?>
                     <option value="<?= $slotVal; ?>" <?= (int)$filterPon === $slotVal ? 'selected' : ''; ?>>
-                      PON <?= h($slotVal); ?>
+                      <?= h($slotLabel); ?>
                     </option>
                   <?php endforeach; ?>
                 <?php endif; ?>
@@ -1499,8 +1642,6 @@ require_once __DIR__ . '/../partials/partials_header.php';
   </div>
 </div>
 
-<?php require_once __DIR__ . '/../partials/partials_footer.php'; ?>
-
 <!-- Config modal -->
 <div class="modal fade" id="onuConfigModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -1514,6 +1655,11 @@ require_once __DIR__ . '/../partials/partials_header.php';
         <input type="hidden" name="action" value="update_desc">
         <input type="hidden" name="ajax" value="1">
         <input type="hidden" name="row_id" id="cfgRowId" value="">
+        <input type="hidden" name="cfg_row_key" id="cfgRowKey" value="">
+        <input type="hidden" name="cfg_olt_id" id="cfgOltId" value="">
+        <input type="hidden" name="cfg_port" id="cfgPort" value="">
+        <input type="hidden" name="cfg_onu" id="cfgOnu" value="">
+        <input type="hidden" name="cfg_source" id="cfgSource" value="">
         <label class="form-label text-muted small text-uppercase">Description</label>
         <textarea name="description" id="cfgDesc" rows="3" class="form-control" placeholder="e.g. Building-3, 3rd Floor"></textarea>
       </div>
@@ -1527,245 +1673,12 @@ require_once __DIR__ . '/../partials/partials_header.php';
 
 <?php if ($toast_message !== '' && $toast_type !== ''): ?>
   <script>
-    if (window.showToast) {
-      showToast('<?= h($toast_message) ?>', '<?= h($toast_type) ?>', 3000);
-    }
+    window.addEventListener('load', function(){
+      if (window.showToast) {
+        showToast('<?= h($toast_message) ?>', '<?= h($toast_type) ?>', 3000);
+      }
+    });
   </script>
 <?php endif; ?>
-<?php ?>
-<script>
-// (বাংলা) OLT MAC Table পেজের ইনলাইন JS — রিফ্রেশ বোতাম, AJAX টেবিল, কনফিগ মডাল হ্যান্ডলার।
-
-// ---------- টেলনেট/রিফ্রেশ বোতাম ----------
-(() => {
-  const buttons = document.querySelectorAll('.telnet-refresh-btn');
-  if (!buttons.length) return;
-  const statusEl = document.getElementById('telnetRefreshStatus');
-  function resetAfter(btn, originalHtml) {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 7000);
-  }
-  async function handleClick(e) {
-    const btn = e.currentTarget;
-    const originalHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Refreshing…';
-    if (statusEl) statusEl.textContent = 'রিফ্রেশ চলছে…';
-    try {
-      const resp = await fetch(btn.dataset.url, { credentials: 'same-origin' });
-      const data = await resp.json();
-      if (data.ok) {
-        const seen = data.seen ?? 0;
-        if (statusEl) statusEl.textContent = 'রিফ্রেশ সম্পন্ন। নতুন ডেটা: ' + seen + ' MAC। পৃষ্ঠা আপডেট হচ্ছে…';
-        setTimeout(() => window.location.reload(), 1200);
-      } else {
-        if (statusEl) statusEl.textContent = data.error || 'রিফ্রেশ ব্যর্থ হয়েছে।';
-        resetAfter(btn, originalHtml);
-      }
-    } catch (err) {
-      if (statusEl) statusEl.textContent = 'রিফ্রেশ ব্যর্থ: ' + err.message;
-      resetAfter(btn, originalHtml);
-    }
-  }
-  buttons.forEach(btn => btn.addEventListener('click', handleClick));
-})();
-
-// ---------- ফিল্টার/সার্চ AJAX হ্যান্ডলার ----------
-(() => {
-  const filterForm = document.getElementById('oltFiltersForm');
-  const clientForm = document.getElementById('clientCodeSearchForm');
-  const clientInput = document.getElementById('clientCodeInput');
-  const oltSelect = filterForm?.querySelector('select[name="olt_id"]');
-  const ponSelect = filterForm?.querySelector('select[name="pon"]');
-  const tableArea = document.querySelector('.olt-table-area');
-  const summaryWrap = document.getElementById('oltSummary');
-  if (!filterForm || !clientForm || !clientInput || !tableArea || !oltSelect) return;
-
-  let timer = null;
-
-  function setTable(html) {
-    tableArea.innerHTML = html || '<div class="p-4 text-center text-muted">কোনো ডেটা পাওয়া যায়নি।</div>';
-  }
-
-  function setSummary(html) {
-    if (summaryWrap) summaryWrap.innerHTML = html || '';
-  }
-
-  function syncPonOptions(options, current, clearSelection = false) {
-    if (!ponSelect) return;
-    const opts = Array.isArray(options) ? options : [];
-    const prev = clearSelection ? '0' : (ponSelect.value || '0');
-    ponSelect.innerHTML = '<option value="0" disabled>PON সিলেক্ট করুন</option>';
-    opts.forEach(val => {
-      const v = String(val);
-      const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = 'PON ' + v;
-      ponSelect.appendChild(opt);
-    });
-    if (opts.length === 0) {
-      ponSelect.value = '0';
-      ponSelect.setAttribute('disabled', 'disabled');
-    } else {
-      ponSelect.removeAttribute('disabled');
-      if (!clearSelection && opts.includes(Number(prev))) {
-        ponSelect.value = prev;
-      } else if (current && opts.includes(Number(current))) {
-        ponSelect.value = String(current);
-      } else {
-        ponSelect.value = '0';
-      }
-    }
-  }
-
-  async function fetchTable() {
-    const oltId = parseInt(oltSelect.value || '0', 10) || 0;
-    const ponVal = ponSelect ? (parseInt(ponSelect.value || '0', 10) || 0) : 0;
-    const code = (clientInput.value || '').trim();
-
-    if (oltId <= 0) {
-      syncPonOptions([], 0, true);
-      setSummary('');
-      setTable('<div class="p-4 text-center text-muted">দয়া করে প্রথমে OLT সিলেক্ট করুন।</div>');
-      return;
-    }
-
-    setTable('<div class="p-4 text-center text-muted">লোড হচ্ছে…</div>');
-    try {
-      const params = new URLSearchParams({ ajax: '1', olt_id: String(oltId) });
-      if (ponVal > 0) params.append('pon', String(ponVal));
-      if (code !== '') params.append('client_code', code);
-      const res = await fetch('/public/olt_mac_table.php?' + params.toString(), {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        cache: 'no-store',
-        credentials: 'same-origin'
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.ok) throw new Error(data?.error || 'লোড ব্যর্থ হয়েছে');
-      syncPonOptions(data.pon_options || [], ponVal);
-      setTable(data.html || '<div class="p-4 text-center text-muted">কোনো ডেটা পাওয়া যায়নি।</div>');
-      setSummary(data.summary || '');
-    } catch (err) {
-      setTable('<div class="p-4 text-center text-danger">' + (err?.message || 'লোড ব্যর্থ হয়েছে') + '</div>');
-    }
-  }
-
-  function debounceFetch() {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(fetchTable, 350);
-  }
-
-  oltSelect.addEventListener('change', () => {
-    if (ponSelect) {
-      ponSelect.value = '0';
-    }
-    debounceFetch();
-  });
-  ponSelect?.addEventListener('change', debounceFetch);
-  clientInput.addEventListener('input', debounceFetch);
-  clientInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      debounceFetch();
-    }
-  });
-
-  clientForm.addEventListener('submit', (e) => e.preventDefault());
-  filterForm.addEventListener('submit', (e) => e.preventDefault());
-})();
-
-// ---------- কনফিগ মডাল + সেভ টোস্ট ----------
-(() => {
-  const ensureHolder = () => {
-    let holder = document.getElementById('app-toast-holder');
-    if (!holder) {
-      holder = document.createElement('div');
-      holder.id = 'app-toast-holder';
-      document.body.appendChild(holder);
-    }
-    return holder;
-  };
-  const showSavingToast = () => {
-    const existing = document.getElementById('saving-toast');
-    if (existing) return existing;
-    const holder = ensureHolder();
-    const el = document.createElement('div');
-    el.id = 'saving-toast';
-    el.className = 'app-toast app-toast--info show';
-    const row = document.createElement('div');
-    row.className = 'app-toast__row';
-    const icon = document.createElement('div');
-    icon.className = 'app-toast__icon';
-    icon.textContent = '⏳';
-    const body = document.createElement('div');
-    body.className = 'app-toast__body';
-    const t = document.createElement('div');
-    t.className = 'app-toast__title';
-    t.textContent = 'Saving';
-    const msg = document.createElement('div');
-    msg.className = 'app-toast__msg';
-    msg.textContent = 'Please wait...';
-    body.appendChild(t);
-    body.appendChild(msg);
-    row.appendChild(icon);
-    row.appendChild(body);
-    el.appendChild(row);
-    holder.appendChild(el);
-    return el;
-  };
-  const hideSavingToast = () => {
-    const el = document.getElementById('saving-toast');
-    if (!el) return;
-    el.classList.add('hide');
-    el.addEventListener('transitionend', () => { el.remove(); }, { once: true });
-  };
-
-  const modalEl = document.getElementById('onuConfigModal');
-  const modalForm = document.getElementById('onuConfigForm');
-  const rowIdEl = document.getElementById('cfgRowId');
-  const descEl = document.getElementById('cfgDesc');
-  let modalInstance = null;
-  const ensureModal = () => {
-    if (!modalEl || !window.bootstrap) return null;
-    if (!modalInstance) modalInstance = new bootstrap.Modal(modalEl);
-    return modalInstance;
-  };
-  document.querySelectorAll('.btn-config').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!rowIdEl || !descEl) return;
-      rowIdEl.value = btn.getAttribute('data-row-id') || '';
-      descEl.value = btn.getAttribute('data-desc') || '';
-      const m = ensureModal();
-      if (m) m.show();
-    });
-  });
-  if (modalForm) {
-    modalForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      showSavingToast();
-      const data = new FormData(modalForm);
-      try {
-        const res = await fetch(window.location.href, { method: 'POST', body: data, credentials: 'same-origin' });
-        const json = await res.json();
-        hideSavingToast();
-        if (json && json.ok) {
-          if (window.showToast) showToast(json.message || 'Saved', 'success', 3000);
-          const rid = rowIdEl ? rowIdEl.value : '';
-          if (rid) {
-            const cell = document.querySelector(`.desc-text[data-row-id=\"${rid}\"]`);
-            if (cell) cell.textContent = descEl ? (descEl.value || '—') : cell.textContent;
-          }
-          if (modalInstance) modalInstance.hide();
-        } else {
-          if (window.showToast) showToast((json && json.message) || 'Save failed', 'error', 3000);
-        }
-      } catch (_e) {
-        hideSavingToast();
-        if (window.showToast) showToast('Save failed', 'error', 3000);
-      }
-    });
-  }
-})();
-
-</script>
+<script src="/assets/js/olt_mac_table.js?v=<?= (int)@filemtime(__DIR__ . '/../assets/js/olt_mac_table.js'); ?>" defer></script>
+<?php require_once __DIR__ . '/../partials/partials_footer.php'; ?>

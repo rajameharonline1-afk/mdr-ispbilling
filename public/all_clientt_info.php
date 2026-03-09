@@ -1,9 +1,13 @@
 <?php
+declare(strict_types=1);
+header('Location: /new/people', true, 302);
+exit;
+
+// Legacy implementation kept below for reference; execution stops above.
 // /public/people.php
 // Unified Customers + Subscribers directory (schema-aware, UNION across tables if both exist)
 // UI: English; Comments: বাংলা
 
-declare(strict_types=1);
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 

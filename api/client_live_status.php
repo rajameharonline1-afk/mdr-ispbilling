@@ -70,6 +70,72 @@ function vendor_lookup_online($mac){
     return null;
 }
 
+// -------- OLT lookup helpers (local, lightweight) --------
+function normalize_port_label(?string $label): string {
+    if(!$label) return '—';
+    $label = trim($label);
+    if(preg_match('/(EPON|GPON)\s*0\/(\d{1,2})/i', $label, $m)){
+        $slot = str_pad($m[2], 2, '0', STR_PAD_LEFT);
+        return strtoupper($m[1])." 0/{$slot}";
+    }
+    if(preg_match('/0\/(\d{1,2})/i', $label, $m)){
+        $slot = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+        return "PON 0/{$slot}";
+    }
+    return strtoupper($label);
+}
+
+function onu_numeric(?string $onu): int {
+    if($onu && preg_match('/(\d+)/', $onu, $m)){
+        return (int)$m[1];
+    }
+    return PHP_INT_MAX;
+}
+
+/**
+ * Try to resolve OLT binding from olt_mac_cache using a MAC address.
+ * Returns a compact associative array usable by client_view.js renderOltBinding.
+ */
+function find_olt_binding_by_mac(PDO $db, ?string $rawMac): ?array {
+    $mac = normalize_mac_from_string($rawMac);
+    if(!$mac) return null;
+    $st = $db->prepare("SELECT * FROM olt_mac_cache WHERE REPLACE(LOWER(CONVERT(mac USING utf8mb4)), ':', '') = ? ORDER BY learned_at DESC LIMIT 1");
+    $st->execute([strtolower(str_replace(':','', $mac))]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if(!$row) return null;
+
+    $oltId = (int)($row['olt_id'] ?? 0);
+    $portLabel = normalize_port_label($row['port'] ?? '');
+    $onuNum = onu_numeric($row['onu'] ?? '');
+    $binding = [
+        'source'        => 'olt_mac_cache',
+        'olt_id'        => $oltId ?: null,
+        'port'          => $portLabel !== '—' ? $portLabel : null,
+        'onu'           => ($onuNum !== PHP_INT_MAX) ? $onuNum : null,
+        'onu_label'     => $row['onu'] ?? null,
+        'mac'           => $mac,
+        'rx_power_dbm'  => is_numeric($row['rx_power_dbm'] ?? null) ? (float)$row['rx_power_dbm'] : null,
+        'learned_at'    => $row['learned_at'] ?? null,
+        'vendor'        => $row['vendor'] ?? null,
+    ];
+
+    if($oltId > 0){
+        $stOlt = $db->prepare("SELECT name, host, vendor FROM olts WHERE id=? LIMIT 1");
+        $stOlt->execute([$oltId]);
+        if($olt = $stOlt->fetch(PDO::FETCH_ASSOC)){
+            $binding['name']   = $olt['name']   ?? null;
+            $binding['host']   = $olt['host']   ?? null;
+            $binding['vendor'] = $binding['vendor'] ?? ($olt['vendor'] ?? null);
+        }
+    }
+
+    // Provide a display-friendly label if available
+    if($binding['port'] && $binding['onu']){
+        $binding['port_label'] = $binding['port'];
+    }
+    return $binding;
+}
+
 /** Get client id from GET/POST/JSON */
 $id = 0;
 if (isset($_GET['id'])) $id = (int)$_GET['id'];
@@ -84,6 +150,7 @@ try {
     // 1) Load client + router info
     $st = db()->prepare("
         SELECT c.id, c.pppoe_id, c.status, c.router_id, c.expiry_date,
+               c.router_mac, c.caller_mac, c.ap_mac, c.olt_id, c.olt_port, c.olt_onu,
                r.ip AS router_ip, r.username, r.password, r.api_port
         FROM clients c
         LEFT JOIN routers r ON r.id = c.router_id
@@ -92,13 +159,26 @@ try {
     $st->execute([$id]);
     $c = $st->fetch(PDO::FETCH_ASSOC);
 
+    // Try a lightweight OLT binding from stored MACs (used as fallback if live lookup unavailable)
+    $macFallbackBinding = null;
+    $fallbackMacs = [
+        $c['router_mac'] ?? null,
+        $c['caller_mac'] ?? null,
+        $c['ap_mac'] ?? null,
+    ];
+    foreach ($fallbackMacs as $fm) {
+        if ($macFallbackBinding) break;
+        $macFallbackBinding = find_olt_binding_by_mac(db(), $fm);
+    }
+
     if (!$c || empty($c['router_ip'])) {
         jexit([
             'status'=>'ok','online'=>false,'ip'=>null,'uptime'=>null,'last_seen'=>null,
             'total_download_gb'=>null,'total_upload_gb'=>null,
             'rx_kbps'=>0,'tx_kbps'=>0,'rx_rate'=>'0 Kbps','tx_rate'=>'0 Kbps',
             'iface'=>null,'note'=>'router missing',
-            'caller_id'=>null
+            'caller_id'=>null,
+            'olt_binding' => $macFallbackBinding,
         ]);
     }
 
@@ -123,7 +203,8 @@ try {
             'total_download_gb'=>null,'total_upload_gb'=>null,
             'rx_kbps'=>0,'tx_kbps'=>0,'rx_rate'=>'0 Kbps','tx_rate'=>'0 Kbps',
             'iface'=>null,'note'=>'api connect failed',
-            'caller_id'=>null
+            'caller_id'=>null,
+            'olt_binding' => $macFallbackBinding,
         ]);
     }
 
@@ -135,6 +216,20 @@ try {
     $ip        = $isOnline ? ($active[0]['address'] ?? null) : null;
     $uptime    = $isOnline ? ($active[0]['uptime']  ?? null) : null;
     $caller_id = $isOnline ? ($active[0]['caller-id'] ?? null) : null;
+
+    // OLT binding discovery (prefer live caller-id, then stored mac fields)
+    $oltBinding = null;
+    $macHints = [
+        $caller_id,
+        $c['router_mac'] ?? null,
+        $c['caller_mac'] ?? null,
+        $c['ap_mac'] ?? null,
+    ];
+    foreach ($macHints as $mh) {
+        if ($oltBinding) break;
+        $oltBinding = find_olt_binding_by_mac(db(), $mh);
+    }
+    if(!$oltBinding) $oltBinding = $macFallbackBinding; // fall back to stored mac-based binding
 
     // 4) Resolve dynamic interface (multi-fallback)
     $ifaceName = null;
@@ -200,14 +295,17 @@ try {
             $note[]='monitor-empty';
         }
 
-        // Totals: bytes → GB
+        // Totals: bytes → GB (client perspective)
+        // PPP interface counters are router-interface perspective:
+        // - rx-byte: traffic received by router from client => client Upload
+        // - tx-byte: traffic sent by router to client    => client Download
         $ifaceStats = $API->comm('/interface/print', ['?name' => $ifaceName]);
         if (!empty($ifaceStats[0])) {
             $rx_byte = (float)($ifaceStats[0]['rx-byte'] ?? 0);
             $tx_byte = (float)($ifaceStats[0]['tx-byte'] ?? 0);
             $div = 1024*1024*1024; // GiB
-            $total_dl_gb = round($rx_byte / $div, 3); // Download = RX from NAS to client
-            $total_ul_gb = round($tx_byte / $div, 3); // Upload   = TX from client to NAS
+            $total_dl_gb = round($tx_byte / $div, 3);
+            $total_ul_gb = round($rx_byte / $div, 3);
         } else {
             $note[]='iface-stats-empty';
         }
@@ -238,6 +336,7 @@ try {
         'rx_rate' => $rx_rate,
         'tx_rate' => $tx_rate,
         'caller_id' => $caller_id,   // <-- NEW: caller-id যোগ করা হলো
+        'olt_binding' => $oltBinding,
         'note' => implode(',', $note),
     ]);
 
@@ -248,6 +347,7 @@ try {
         'total_download_gb'=>null,'total_upload_gb'=>null,
         'rx_kbps'=>0,'tx_kbps'=>0,'rx_rate'=>'0 Kbps','tx_rate'=>'0 Kbps',
         'iface'=>null,
-        'caller_id'=>null
+        'caller_id'=>null,
+        'olt_binding'=>null
     ]);
 }

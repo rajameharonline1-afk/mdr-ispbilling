@@ -7,6 +7,7 @@ require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/routeros_api.class.php';
 require_once __DIR__ . '/../app/mac_lookup.php';
+require_once __DIR__ . '/../app/location_options.php';
 
 const ONU_MONITOR_CACHE_TTL = 300;
 
@@ -64,12 +65,12 @@ if (!function_exists('fmt_unit_trim')) {
   }
 }
 
-// (বাংলা) GB মান থেকে bits/size ইউনিটে রূপান্তর (Base-10)
+// (বাংলা) GB মানকে বিট/সাইজ ইউনিটে রূপান্তর (বেস-১০)
 if (!function_exists('fmt_metric_bits_from_gb')) {
   function fmt_metric_bits_from_gb($gb): string
   {
     if ($gb === null || $gb === '' || !is_numeric($gb)) return '—';
-    $val = (float)$gb * 8_000_000_000; // 1 GB = 8e9 bits (Base-10)
+    $val = (float)$gb * 8_000_000_000; // ১ জিবি = ৮e৯ বিট (বেস-১০)
     $units = ['b', 'Kb', 'Mb', 'Gb', 'Tb'];
     $i = 0;
     while ($val >= 1000 && $i < count($units) - 1) {
@@ -195,8 +196,44 @@ if (!$pkgNameFromClient && !empty($client['package'])) {
 
 $client_id = (int)$client['id'];
 $pppoe_id  = (string)($client['pppoe_id'] ?? '');
-// (বাংলা) Client Code না থাকলে ফাঁকা থাকবে, fallback হিসেবে client id ব্যবহার করা হবে না
+// (বাংলা) ক্লায়েন্ট কোড না থাকলে ফাঁকা রাখব; বিকল্প হিসেবে client_id ব্যবহার করা হবে না
 $client_code = trim((string)($client['client_code'] ?? ''));
+$packages = [];
+try {
+  $packages = $pdo->query("SELECT id, name, price FROM packages ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+  $packages = [];
+}
+$curPkgId = (int)($client['package_id'] ?? 0);
+$curPkgName = trim((string)($client['package_name'] ?? ''));
+$hasPkg = false;
+foreach ($packages as $row) {
+  if ((int)($row['id'] ?? 0) === $curPkgId && $curPkgId > 0) {
+    $hasPkg = true; break;
+  }
+}
+if ($curPkgId > 0 && !$hasPkg) {
+  array_unshift($packages, ['id' => $curPkgId, 'name' => ($curPkgName !== '' ? $curPkgName : 'Package #'.$curPkgId), 'price' => $client['monthly_bill'] ?? null]);
+}
+$area_options = $subzone_options = $box_options = [];
+try {
+  $area_options = location_option_list($pdo, 'area');
+  $subzone_options = location_option_list($pdo, 'sub_zone');
+  $box_options = location_option_list($pdo, 'box');
+} catch (Throwable $e) {
+}
+$ensureOpt = function (&$arr, $val) {
+  $val = trim((string)$val);
+  if ($val !== '' && !in_array($val, $arr, true)) array_unshift($arr, $val);
+};
+$ensureOpt($area_options, $client['area'] ?? '');
+$ensureOpt($subzone_options, $client['sub_zone'] ?? '');
+$ensureOpt($box_options, $client['box'] ?? '');
+$expiry_date_form_value = '';
+if (!empty($client['expiry_date'])) {
+  $tsExp = strtotime((string)$client['expiry_date']);
+  if ($tsExp) $expiry_date_form_value = date('Y-m-d', $tsExp);
+}
 
 function norm_mac(?string $mac): ?string
 {
@@ -416,7 +453,7 @@ if ($macCandidates) {
     $st->execute($params);
     $cacheRow = $st->fetch(PDO::FETCH_ASSOC) ?: null;
     if (!$cacheRow && $preferredOltId > 0) {
-      // fallback without olt_id filter if no match found
+      // বাংলায়: কোনো মিল না পেলে olt_id ফিল্টার বাদ দিয়ে বিকল্প কুয়েরি চালানো হচ্ছে
       $sql = "SELECT * FROM olt_mac_cache WHERE mac IN ($in) ORDER BY learned_at DESC LIMIT 1";
       $st = $pdo->prepare($sql);
       $st->execute(array_keys($macCandidates));
@@ -522,7 +559,7 @@ if ($monitorMatch) {
   }
 }
 
-/* (বাংলা) ইনফার্ড OLT আইডি থাকলে, সঠিক OLT তথ্য আবার লোড করি যেন UI তে নাম/হোস্ট/vendor মেলে */
+/* (বাংলা) ইনফার্ড OLT আইডি থাকলে, সঠিক OLT তথ্য আবার লোড করি যেন ইউআই-এ নাম/হোস্ট/ভেন্ডর মেলে */
 if (!empty($client['olt_id'])) {
   $client['olt_id'] = (int)$client['olt_id'];
   try {
@@ -535,7 +572,7 @@ if (!empty($client['olt_id'])) {
       $client['olt_vendor'] = $oltRow['vendor'] ?? $client['olt_vendor'] ?? null;
     }
   } catch (Throwable $e) {
-    // ignore lookup failure
+    // বাংলা: লুকআপ ব্যর্থ হলেও ভিউ চলবে, তাই ত্রুটি উপেক্ষা করা হয়েছে
   }
 }
 
@@ -581,9 +618,8 @@ if ($uptime_display === '—' && $data_usage_asof) {
 }
 $has_traffic_log = ($data_dl !== null) || ($data_ul !== null);
 $traffic_note = '';
-if (!$has_traffic_log) {
-  $traffic_note = 'No traffic log found yet (client_traffic_log খালি)';
-} elseif ($data_usage_asof) {
+// বাংলা: ট্রাফিক ডাটা থাকলে শেষ লগের সময় দেখাব, না থাকলে কোনো নোট দেখানো হবে না
+if ($has_traffic_log && $data_usage_asof) {
   $traffic_note = 'Last log: ' . $data_usage_asof;
 }
 $data_dl_text_metric = fmt_metric_bits_from_gb($data_dl);
@@ -729,7 +765,7 @@ if ($router_mac_display && (!$device_vendor || $device_vendor === 'Unknown Vendo
       if ($v) $device_vendor = $v;
     }
   } catch (Throwable $e) {
-    // ignore vendor lookup errors
+    // বাংলা: ভেন্ডর লুকআপ ব্যর্থ হলেও ইউআই চলবে, তাই ত্রুটি উপেক্ষা করা হয়েছে
   }
 }
 
@@ -761,7 +797,7 @@ try {
     }
   }
 } catch (Throwable $e) {
-  // ignore MikroTik fetch errors
+  // বাংলা: MikroTik ডাটা আনতে সমস্যা হলে ভিউ থামানো হবে না, তাই নীরবে পাশ কাটানো হয়েছে
 }
 
 /* ---------------- স্ট্যাটাস ব্যাজ (Left সহ) ---------------- */
@@ -829,7 +865,7 @@ $displayClass = $display_balance > 0 ? 'bg-danger' : 'bg-secondary';
 $displayText  = $display_balance > 0 ? 'Due' : 'Clear';
 
 /* ---------------- পেমেন্ট লিংক (স্কিমা-অ্যাওয়ার ইনভয়েস খোঁজ + অ্যাডভান্স ফ্যালব্যাক) ---------------- */
-/* বাংলা: return URL সবসময় relative path রাখব—Host header এর উপর ভরসা নয় */
+/* বাংলা: রিটার্ন ইউআরএল সবসময় রিলেটিভ পথে রাখছি; হোস্ট হেডারের উপর ভরসা নয় */
 $current_path = $_SERVER['REQUEST_URI'] ?? ('/public/client_view.php?id=' . $pppoe_id);
 
 $payInvoiceId = 0;
@@ -839,7 +875,7 @@ try {
   $invCols = [];
 }
 
-/* বাংলা: ১) current month unpaid/partial/due খুঁজি ২) না পেলে latest unpaid/partial  */
+/* বাংলা: ১) চলতি মাসের বকেয়া/আংশিক ইনভয়েস খুঁজি ২) না পেলে সর্বশেষ বকেয়া/আংশিক ইনভয়েস নিই */
 if (in_array('billing_month', $invCols, true)) {
   $ms = date('Y-m-01');
   $me = date('Y-m-t');
@@ -873,7 +909,7 @@ if ($payInvoiceId > 0) {
   $validInvoiceId = (int)($chk->fetchColumn() ?: 0);
 }
 
-/* link: সব সময় client_id; invoice থাকলে invoice_id যোগ, না থাকলে advance ফ্লো */
+/* বাংলা: পেমেন্ট লিংকে সব সময় client_id থাকবে; ইনভয়েস থাকলে invoice_id যোগ, না থাকলে অ্যাডভান্স ফ্লো */
 $pay_url = '/public/payment_add.php?client_id=' . (int)$client_id
   . ($validInvoiceId > 0 ? '&invoice_id=' . $validInvoiceId : '&purpose=advance')
   . '&return=' . urlencode($current_path);
@@ -893,9 +929,9 @@ $csrf = $_SESSION['csrf_token'];
 include __DIR__ . '/../partials/partials_header.php';
 $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time();
 ?>
-<!-- CSRF for JS -->
+<!-- JS-এর জন্য CSRF টোকেন -->
 <meta name="csrf-token" content="<?= h($csrf) ?>">
-<!-- (বাংলা) Client view স্টাইল assets/css/custom_modern.css এ রাখা হয়েছে -->
+<!-- (বাংলা) ক্লায়েন্ট ভিউয়ের স্টাইল assets/css/custom_modern.css এ রাখা হয়েছে -->
 <link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $clientViewCssVer ?>">
 <div class="container py-3 text-start page-shell">
 
@@ -924,6 +960,11 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
     </div>
 
     <div class="ms-auto d-flex flex-wrap client-actions w-100 w-lg-auto">
+      <button id="btn-inline-edit" class="btn btn-outline-primary btn-sm me-1" aria-pressed="false" autocomplete="off">
+        <i class="bi bi-pencil"></i> Inline Edit
+      </button>
+      <button id="inline-save" class="btn btn-success btn-sm me-1 d-none"><i class="bi bi-check2"></i> Save</button>
+      <button id="inline-cancel" class="btn btn-outline-secondary btn-sm me-1 d-none">Cancel</button>
       <a href="/public/clients.php" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left"></i> Back</a>
       <a href="/public/client_edit.php?id=<?= (int)$client['id'] ?>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil-square"></i> Edit Info</a>
       <a href="/public/audit_logs.php?client_id=<?= (int)$client['id'] ?>" class="btn btn-outline-dark btn-sm" target="_blank" rel="noopener"><i class="bi bi-clock-history"></i> Logs</a>
@@ -964,26 +1005,46 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-person"></i> Name</td>
-                <td class="v"><?= h($client['name'] ?: '-') ?></td>
+                <td class="v" data-inline-field="name">
+                  <div class="inline-view" data-value="<?= h($client['name'] ?? '') ?>"><?= h($client['name'] ?: '-') ?></div>
+                  <div class="inline-edit d-none">
+                    <input type="text" class="form-control form-control-sm" value="<?= h($client['name'] ?? '') ?>">
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-geo-alt"></i> Address</td>
-                <td class="v"><?= nl2br(h($client['address'] ?: '-')) ?></td>
+                <td class="v" data-inline-field="address">
+                  <div class="inline-view" data-value="<?= h($client['address'] ?? '') ?>"><?= nl2br(h($client['address'] ?: '-')) ?></div>
+                  <div class="inline-edit d-none">
+                    <textarea class="form-control form-control-sm" rows="2"><?= h($client['address'] ?? '') ?></textarea>
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-telephone"></i> Mobile No.</td>
-                <td class="v">
-                  <?php if ($m): ?>
-                    <span class="me-1"><?= h($m) ?></span><br>
-                    <a class="btn btn-outline-secondary btn-sm me-1" href="tel:+88<?= h($m) ?>" title="Call"><i class="bi bi-telephone"></i></a>
-                    <a class="btn btn-outline-secondary btn-sm me-1" href="sms:+88<?= h($m) ?>" title="SMS"><i class="bi bi-chat-dots"></i></a>
-                    <a class="btn btn-outline-success btn-sm" target="_blank" rel="noopener" href="https://wa.me/+88<?= preg_replace('/\D/', '', $m) ?>" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>
+                <td class="v" data-inline-field="mobile">
+                  <div class="inline-view" data-value="<?= h($m) ?>">
+                    <?php if ($m): ?>
+                      <span class="me-1"><?= h($m) ?></span><br>
+                      <a class="btn btn-outline-secondary btn-sm me-1" href="tel:+88<?= h($m) ?>" title="Call"><i class="bi bi-telephone"></i></a>
+                      <a class="btn btn-outline-secondary btn-sm me-1" href="sms:+88<?= h($m) ?>" title="SMS"><i class="bi bi-chat-dots"></i></a>
+                      <a class="btn btn-outline-success btn-sm" target="_blank" rel="noopener" href="https://wa.me/+88<?= preg_replace('/\D/', '', $m) ?>" title="WhatsApp"><i class="bi bi-whatsapp"></i></a>
                     <?php else: ?>-<?php endif; ?>
+                  </div>
+                  <div class="inline-edit d-none">
+                    <input type="text" class="form-control form-control-sm" value="<?= h($m) ?>">
+                  </div>
                 </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-envelope"></i> Email</td>
-                <td class="v"><?= h($client['email'] ?: '-') ?></td>
+                <td class="v" data-inline-field="email">
+                  <div class="inline-view" data-value="<?= h($client['email'] ?? '') ?>"><?= h($client['email'] ?: '-') ?></div>
+                  <div class="inline-edit d-none">
+                    <input type="email" class="form-control form-control-sm" value="<?= h($client['email'] ?? '') ?>">
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-card-list"></i> NID No.</td>
@@ -991,15 +1052,45 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-map"></i> Area</td>
-                <td class="v"><?= h($client['area'] ?: '-') ?></td>
+                <td class="v" data-inline-field="area">
+                  <div class="inline-view" data-value="<?= h($client['area'] ?? '') ?>"><?= h($client['area'] ?: '-') ?></div>
+                  <div class="inline-edit d-none">
+                    <select class="form-select form-select-sm" aria-label="Area নির্বাচন করুন">
+                      <option value="" disabled <?= empty($client['area']) ? 'selected' : '' ?>>Select</option>
+                      <?php foreach ($area_options as $opt): ?>
+                        <option value="<?= h($opt) ?>" <?= ($opt === ($client['area'] ?? '')) ? 'selected' : '' ?>><?= h($opt) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-map"></i> Sub Zone</td>
-                <td class="v"><?= h($client['sub_zone'] ?? '-') ?></td>
+                <td class="v" data-inline-field="sub_zone">
+                  <div class="inline-view" data-value="<?= h($client['sub_zone'] ?? '') ?>"><?= h($client['sub_zone'] ?? '-') ?></div>
+                  <div class="inline-edit d-none">
+                    <select class="form-select form-select-sm" aria-label="Sub Zone নির্বাচন করুন">
+                      <option value="" disabled <?= empty($client['sub_zone']) ? 'selected' : '' ?>>Select</option>
+                      <?php foreach ($subzone_options as $opt): ?>
+                        <option value="<?= h($opt) ?>" <?= ($opt === ($client['sub_zone'] ?? '')) ? 'selected' : '' ?>><?= h($opt) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-box2"></i> Box</td>
-                <td class="v"><?= h($client['box'] ?? '-') ?></td>
+                <td class="v" data-inline-field="box">
+                  <div class="inline-view" data-value="<?= h($client['box'] ?? '') ?>"><?= h($client['box'] ?? '-') ?></div>
+                  <div class="inline-edit d-none">
+                    <select class="form-select form-select-sm" aria-label="Box নির্বাচন করুন">
+                      <option value="" disabled <?= empty($client['box']) ? 'selected' : '' ?>>Select</option>
+                      <?php foreach ($box_options as $opt): ?>
+                        <option value="<?= h($opt) ?>" <?= ($opt === ($client['box'] ?? '')) ? 'selected' : '' ?>><?= h($opt) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-map"></i> Join Date</td>
@@ -1037,11 +1128,30 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-box2-fill"></i>Package</td>
-                <td class="v fw-bold"><?= h($client['package_name'] ?: 'N/A') ?></td>
+                <td class="v fw-bold" data-inline-field="package_id">
+                  <div class="inline-view" data-value="<?= (int)($client['package_id'] ?? 0) ?>">
+                    <?= h($client['package_name'] ?: 'N/A') ?>
+                  </div>
+                  <div class="inline-edit d-none">
+                    <select class="form-select form-select-sm" aria-label="প্যাকেজ নির্বাচন করুন (যেমন 5Mbps)">
+                      <option value="" disabled <?= empty($client['package_id']) ? 'selected' : '' ?>>Select</option>
+                      <?php foreach ($packages as $pkg): ?>
+                        <option value="<?= (int)$pkg['id'] ?>" <?= ((int)$pkg['id'] === (int)($client['package_id'] ?? 0)) ? 'selected' : '' ?>>
+                          <?= h($pkg['name'] ?? ('Package #'.(int)$pkg['id'])) ?><?= isset($pkg['price']) && $pkg['price'] !== null ? (' — '.h($pkg['price'])) : '' ?>
+                        </option>
+                      <?php endforeach; ?>
+                    </select>
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-cash-coin"></i>Packg Price</td>
-                <td class="v"><?= h($client['monthly_bill'] ?: '-') ?></td>
+                <td class="v" data-inline-field="monthly_bill">
+                  <div class="inline-view" data-value="<?= h((string)($client['monthly_bill'] ?? '')) ?>"><?= h($client['monthly_bill'] ?: '-') ?></div>
+                  <div class="inline-edit d-none">
+                    <input type="number" step="0.01" class="form-control form-control-sm" value="<?= h((string)($client['monthly_bill'] ?? '')) ?>" placeholder="0.00">
+                  </div>
+                </td>
               </tr>
               <tr>
                 <td class="k"><i class="bi bi-arrow-repeat"></i>Bill Cycle</td>
@@ -1063,8 +1173,11 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
               <tr>
                 <td class="k"><i class="bi bi-calendar-date"></i> Expiry Date</td>
                 <td class="v">
-                  <span><?= h($client['expiry_date'] ?? '-') ?></span>
-                  <button class="btn btn-outline-secondary btn-sm ms-1" title="Calendar"><i class="bi bi-calendar3"></i></button>
+                  <span id="expiry-text"><?= h($client['expiry_date'] ?? '-') ?></span>
+                  <button id="btn-expiry-modal" class="btn btn-outline-secondary btn-sm ms-1" title="Expiry renew"
+                    data-expiry="<?= h($expiry_date_form_value) ?>" data-bs-toggle="modal" data-bs-target="#expiryModal">
+                    <i class="bi bi-calendar3"></i>
+                  </button>
                 </td>
               </tr>
               <tr>
@@ -1075,12 +1188,12 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
           </table>
         </div>
         <div class="card-actions d-flex flex-wrap gap-2">
-          <!-- Pay Bill: always enabled -->
+          <!-- বিল পরিশোধ বাটন সবসময় সক্রিয় -->
           <a href="<?= h($pay_url) ?>" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-cash-coin"></i> Pay Bill
           </a>
 
-          <!-- Renew (invoice create) -->
+          <!-- রিনিউ (ইনভয়েস তৈরি) -->
           <button id="btnRenew" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#renewModal" title="Create Invoice">
             <i class="bi bi-receipt"></i> Create Invoice
           </button>
@@ -1276,8 +1389,37 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
   </div>
 </div>
 
+<!-- (বাংলা) এক্সপায়ারি তারিখ আপডেট মডাল -->
+<div class="modal fade" id="expiryModal" tabindex="-1" aria-labelledby="expiryModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" id="expiryForm">
+      <div class="modal-header">
+        <h6 class="modal-title" id="expiryModalLabel"><i class="bi bi-calendar-check"></i> Expiration date change</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label for="expiry-date-input" class="form-label">New expiration date</label>
+          <input type="date" class="form-control form-control-sm" id="expiry-date-input" name="expiry_date"
+            value="<?= h($expiry_date_form_value) ?>" required>
+        </div>
+        <div class="mb-2">
+          <label for="expiry-remarks-input" class="form-label">Note</label>
+          <textarea class="form-control form-control-sm" id="expiry-remarks-input" name="remarks" rows="2" placeholder=" "></textarea>
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- (বাংলা) বিল রিনিউ/ইনভয়েস তৈরির মডাল -->
-<!-- ===================== RENEW MODAL ===================== -->
+<!-- ===================== রিনিউ মডাল ===================== -->
 <div class="modal fade" id="renewModal" tabindex="-1" aria-labelledby="renewModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <form class="modal-content" id="renewForm">
@@ -1349,7 +1491,7 @@ $clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: 
     </form>
   </div>
 </div>
-<!-- =================== /RENEW MODAL =================== -->
+<!-- =================== /রিনিউ মডাল =================== -->
 
 <?php
 $client_view_boot = [
@@ -1366,9 +1508,9 @@ $client_view_boot = [
 <script>
   // (বাংলা) ক্লায়েন্ট ভিউর সব JS লজিক ইনলাইন রাখা হয়েছে, আলাদা ফাইলে নির্ভরতা নেই।
   const BOOT = window.CLIENT_VIEW_BOOT || {};
-  const API_SINGLE = '/api/control.php'; // বাংলা: action endpoint
+  const API_SINGLE = '/api/control.php'; // বাংলা: সব স্ট্যাটাস অ্যাকশন পাঠানোর এন্ডপয়েন্ট
   const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
-  const LIVE_STATUS_TIMEOUT_MS = 20000; // SNMP-heavy live status calls can take >10s; allow enough time
+  const LIVE_STATUS_TIMEOUT_MS = 20000; // বাংলা: ভারী SNMP কল ধরার জন্য টাইমআউট বাড়িয়ে ২০ সেকেন্ড রাখা হয়েছে
   const INITIAL_OLT_BINDING = BOOT.initialOltBinding || null;
   let currentOltBinding = INITIAL_OLT_BINDING && INITIAL_OLT_BINDING.olt_id ? INITIAL_OLT_BINDING : null;
   const CLIENT_ID = BOOT.clientId || 0;
@@ -1377,8 +1519,18 @@ $client_view_boot = [
   const PPP_PLAIN = BOOT.pp || '';
   const rxValueEl = document.getElementById('olt-last-rx-value');
   const rxBadgeEl = document.getElementById('olt-last-rx-badge');
+  const inlineBtn = document.getElementById('btn-inline-edit');
+  const inlineSave = document.getElementById('inline-save');
+  const inlineCancel = document.getElementById('inline-cancel');
+  const inlineFields = document.querySelectorAll('[data-inline-field]');
 
-  // (বাংলা) bits/bytes ভিত্তিক নেটওয়ার্ক usage ফরম্যাটার (Base-10)
+  // (বাংলা) YYYY-MM-DD ফরম্যাটে আজকের তারিখ ফেরত দেয়
+  function todayYMD() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // (বাংলা) বিট/বাইট ভিত্তিক নেটওয়ার্ক ব্যবহার ফরম্যাটার (বেস-১০)
   function formatNetworkUsage(valueInBits, displayAsBytes = false) {
     if (valueInBits === null || valueInBits === undefined || isNaN(Number(valueInBits))) return '—';
     let val = Number(valueInBits);
@@ -1469,7 +1621,7 @@ $client_view_boot = [
 
   renderOltBinding(currentOltBinding);
 
-  /* ===== Toast ===== */
+  /* ===== টোস্ট নোটিফিকেশন ===== */
   function showToast(msg, type = 'success', timeout = 2800) {
     const box = document.createElement('div');
     box.className = 'app-toast ' + (type === 'success' ? 'success' : 'error');
@@ -1479,7 +1631,7 @@ $client_view_boot = [
     setTimeout(() => box.classList.add('hide'), timeout - 200);
     setTimeout(() => box.remove(), timeout);
   }
-  /* Restore toast after reload */
+  /* রিলোডের পর সেশন টোস্ট ফিরিয়ে আনা */
   document.addEventListener('DOMContentLoaded', () => {
     const t = sessionStorage.getItem('toast');
     if (t) {
@@ -1491,7 +1643,141 @@ $client_view_boot = [
     }
   });
 
-  /* ===== Confirm dialog ===== */
+  // ===== এক্সপায়ারি তারিখ আপডেট মডাল =====
+  const expiryModalEl = document.getElementById('expiryModal');
+  const expiryInputEl = document.getElementById('expiry-date-input');
+  const expiryFormEl = document.getElementById('expiryForm');
+  const expiryBtnEl = document.getElementById('btn-expiry-modal');
+  const expiryRemarksEl = document.getElementById('expiry-remarks-input');
+
+  if (expiryModalEl && expiryModalEl.parentElement !== document.body) {
+    document.body.appendChild(expiryModalEl);
+  }
+
+  expiryModalEl?.addEventListener('show.bs.modal', () => {
+    const preset = (expiryBtnEl?.dataset.expiry || '').trim();
+    const val = preset || EXPIRY_DATE || todayYMD();
+    if (expiryInputEl) expiryInputEl.value = val;
+    if (expiryRemarksEl) expiryRemarksEl.value = '';
+  });
+
+  expiryFormEl?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const val = (expiryInputEl?.value || '').trim();
+    if (!val) {
+      showToast('এক্সপায়ারি তারিখ দিন', 'error');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      showToast('তারিখ ফরম্যাট YYYY-MM-DD হতে হবে', 'error');
+      return;
+    }
+    const btn = expiryFormEl.querySelector('button[type="submit"]');
+    const old = btn?.innerHTML;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '...';
+    }
+    try {
+      const res = await fetch('/api/update_expiry.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: String(CLIENT_ID),
+          expiry_date: val,
+          remarks: (expiryRemarksEl?.value || '').trim(),
+          csrf_token: CSRF
+        })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        const msg = data.skipped ? 'একই এক্সপায়ারি থাকায় আপডেট/লগ স্কিপ হয়েছে' : 'এক্সপায়ারি তারিখ আপডেট হয়েছে';
+        showToast(msg, 'success', 2200);
+        setTimeout(() => location.reload(), 700);
+      } else {
+        showToast(data.message || 'আপডেট ব্যর্থ', 'error', 3000);
+      }
+    } catch (err) {
+      showToast('রিকোয়েস্ট ব্যর্থ', 'error', 3000);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = old || 'সেভ';
+      }
+    }
+  });
+
+  // ===== ইনলাইন এডিট হ্যান্ডলার =====
+  let inlineMode = false;
+  function setInlineMode(on) {
+    inlineMode = on;
+    inlineBtn?.classList.toggle('active', on);
+    inlineBtn?.setAttribute('aria-pressed', on ? 'true' : 'false');
+    inlineSave?.classList.toggle('d-none', !on);
+    inlineCancel?.classList.toggle('d-none', !on);
+    inlineFields.forEach((cell) => {
+      const view = cell.querySelector('.inline-view');
+      const edit = cell.querySelector('.inline-edit');
+      if (!view || !edit) return;
+      const input = edit.querySelector('input,textarea,select');
+      if (on) {
+        // মূল মান data-value থেকে ইনপুটে বসাই
+        const baseVal = view.dataset.value ?? '';
+        if (input) input.value = baseVal;
+      }
+      view.classList.toggle('d-none', on);
+      edit.classList.toggle('d-none', !on);
+    });
+  }
+  inlineBtn?.addEventListener('click', () => setInlineMode(!inlineMode));
+  inlineCancel?.addEventListener('click', () => setInlineMode(false));
+  inlineSave?.addEventListener('click', async () => {
+    const payload = {
+      client_id: String(CLIENT_ID),
+      csrf_token: CSRF
+    };
+    let dirty = false;
+    inlineFields.forEach((cell) => {
+      const key = cell.dataset.inlineField;
+      const view = cell.querySelector('.inline-view');
+      const input = cell.querySelector('.inline-edit input, .inline-edit textarea, .inline-edit select');
+      if (!key || !input || !view) return;
+      const orig = view.dataset.value ?? '';
+      const val = input.value.trim();
+      if (val !== orig) {
+        payload[key] = val;
+        dirty = true;
+      }
+    });
+    if (!dirty) {
+      showToast('কোনো পরিবর্তন পাওয়া যায়নি', 'error', 2000);
+      setInlineMode(false);
+      return;
+    }
+    inlineSave.disabled = true;
+    inlineSave.innerHTML = '...';
+    try {
+      const res = await fetch('/api/client_quick_update.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(payload)
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        showToast(data.message || 'Updated', 'success', 2000);
+        setTimeout(() => location.reload(), 700);
+      } else {
+        showToast(data.message || 'Update failed', 'error', 2800);
+      }
+    } catch (err) {
+      showToast('রিকোয়েস্ট ব্যর্থ', 'error', 2800);
+    } finally {
+      inlineSave.disabled = false;
+      inlineSave.innerHTML = '<i class="bi bi-check2"></i> Save';
+    }
+  });
+
+  /* ===== কাস্টম কনফার্ম ডায়ালগ ===== */
   function customConfirm({
     title = 'Confirm',
     message = 'Are you sure?',
@@ -1529,7 +1815,7 @@ $client_view_boot = [
     });
   }
 
-  /* ===== Enable/Disable/Kick — POST + CSRF ===== */
+  /* ===== এনেবল/ডিসেবল/কিক — POST + CSRF ===== */
   async function changeStatus(btn, id, action) {
     const ok = await customConfirm({
       title: (action === 'disable') ? 'Disable client?' : (action === 'kick' ? 'Disconnect client?' : 'Enable client?'),
@@ -1576,7 +1862,7 @@ $client_view_boot = [
       });
   }
 
-  /* ===== Auto-control trigger — POST + CSRF ===== */
+  /* ===== অটো-কন্ট্রোল ট্রিগার — POST + CSRF ===== */
   async function autoRecheck(btn, id) {
     const ok = await customConfirm({
       title: 'Auto re-evaluate?',
@@ -1620,7 +1906,7 @@ $client_view_boot = [
     }
   }
 
-  /* ===== Copy ===== */
+  /* ===== কপি ইউটিলিটি ===== */
   async function __copyTextRobust(t) {
     t = (t || '').trim();
     if (!t || t === '-' || t === '—') throw new Error('empty');
@@ -1659,7 +1945,7 @@ $client_view_boot = [
     }
   });
 
-  /* ===== Password eye toggle ===== */
+  /* ===== পাসওয়ার্ড দেখানো/লুকানোর টগল ===== */
   document.getElementById('ppp-eye')?.addEventListener('click', () => {
     const m = document.getElementById('ppp-mask');
     if (!m) return;
@@ -1673,7 +1959,7 @@ $client_view_boot = [
     }
   });
 
-  /* ===== Live status via API (10s; backoff) ===== */
+  /* ===== এপিআই থেকে লাইভ স্ট্যাটাস (১০ সেকেন্ড টাইমআউট + ব্যাকঅফ) ===== */
   let liveTimer = null,
     inflight = false,
     backoff = 10000;
@@ -1687,7 +1973,7 @@ $client_view_boot = [
       if (val === null || val === undefined) return '0 bps';
       const txt = String(val).trim();
       if (txt === '') return '0 bps';
-      // যদি সার্ভার ইউনিটসহ পাঠায় (e.g., "12 Mbps") 그대로 দেখাই
+      // সার্ভার ইউনিটসহ পাঠালে (যেমন "12 Mbps") সেটিই 그대로 দেখাই
       if (/[a-z]/i.test(txt)) return txt;
       const num = Number(txt);
       if (!Number.isFinite(num)) return '0 bps';
@@ -1802,10 +2088,10 @@ $client_view_boot = [
       const bitsFromGb = (v) => {
         const num = Number(v);
         if (!Number.isFinite(num)) return null;
-        return num * 8_000_000_000; // 1 GB = 8e9 bits (বেস ১০০০)
+        return num * 8_000_000_000; // ১ জিবি = ৮e৯ বিট (বেস ১০০০)
       };
 
-      // (বাংলা) MikroTik / API আসা ডাটা bits বা bytes হলে দ্রুত ফরম্যাটার (Base-10, bytes হলে 1024)
+      // (বাংলা) MikroTik/API থেকে আসা ডাটা বিট/বাইট হলে দ্রুত ফরম্যাটার (বেস-১০; বাইট হলে 1024)
       const formatMikrotikData = (val, isByte = false) => {
         if (val === null || val === undefined || val === '') return '0';
         let num = Number(val);
@@ -1839,9 +2125,9 @@ $client_view_boot = [
           }
           return null;
         };
-        // (বাংলা) নির্দেশনা অনুযায়ী rx_kbps এর মান Down Speed এ, tx_kbps এর মান Up Speed এ দেখাব—এখানে swap করছি
-        const rxVal = normalizeRate(d.tx_rate, d.tx_kbps, d.tx_bps ?? d.tx); // Down Speed: tx উৎস
-        const txVal = normalizeRate(d.rx_rate, d.rx_kbps, d.rx_bps ?? d.rx); // Up Speed: rx উৎস
+        // (বাংলা) নির্দেশনা অনুযায়ী rx_kbps এর মান ডাউন স্পিডে, tx_kbps এর মান আপ স্পিডে দেখাব—এখানে swap করছি
+        const rxVal = normalizeRate(d.tx_rate, d.tx_kbps, d.tx_bps ?? d.tx); // ডাউন স্পিড: tx উৎস
+        const txVal = normalizeRate(d.rx_rate, d.rx_kbps, d.rx_bps ?? d.rx); // আপ স্পিড: rx উৎস
         if (rx) rx.textContent = formatBps(rxVal);
         if (tx) tx.textContent = formatBps(txVal);
         updateRxDisplay(d.rx_power_dbm);
@@ -1897,7 +2183,7 @@ $client_view_boot = [
   loadLiveStatus();
   startLive();
 
-  /* ===== Renew submit (invoice+renew) ===== */
+  /* ===== রিনিউ সাবমিট (ইনভয়েস + রিনিউ) ===== */
   (function() {
     const renewModalEl = document.getElementById('renewModal');
     if (renewModalEl && renewModalEl.parentElement !== document.body) {
@@ -1935,7 +2221,7 @@ $client_view_boot = [
     document.getElementById('renewModal')?.addEventListener('shown.bs.modal', () => {
       const m = parseInt(monthsEl.value || '1', 10);
       if (!amountEl.dataset.touched) amountEl.value = (monthlyBill * (isNaN(m) ? 1 : m)).toFixed(2);
-      const base = maxDate(todayYMD(), (expCur || '')); // base = today বা current expiry এর বড় যেটা
+      const base = maxDate(todayYMD(), (expCur || '')); // ভিত্তি তারিখ: আজকের দিন ও বর্তমান এক্সপায়রির মধ্যে বড়টি
       document.getElementById('rn_exp_new').textContent = base ? addMonths(base, isNaN(m) ? 1 : m) : '—';
       document.getElementById('rn_exp_current').textContent = (expCur || '—');
     });

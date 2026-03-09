@@ -10,7 +10,9 @@ require_once __DIR__.'/telegram.php';
 $acl_file = $ROOT.'/app/acl.php'; if (is_file($acl_file)) require_once $acl_file;
 if (function_exists('require_perm')) { require_perm('notify.run'); }
 
-function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+if (!function_exists('h')) {
+  function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+}
 
 $pdo = db(); $pdo->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);
 
@@ -26,21 +28,12 @@ if (tg_tbl_exists($pdo, 'telegram_queue')) {
 }
 
 // HTML
-?><!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Telegram Runner</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css">
-  <style>
-    body{background:#f7f8fb}
-    .card{border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,.08)}
-    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, monospace}
-    .err{white-space:pre-wrap}
-  </style>
-</head>
-<body class="p-3 p-md-4">
-<div class="container">
+$page_title = 'Telegram Queue Runner';
+$_active = 'settings_tg';
+require_once $ROOT . '/partials/partials_header.php';
+?>
+
+<div class="container py-3">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Telegram Queue Runner</h4>
     <a class="btn btn-sm btn-outline-secondary" href="/tg/run_now.php">Run Again</a>
@@ -52,11 +45,11 @@ if (tg_tbl_exists($pdo, 'telegram_queue')) {
     &nbsp;&nbsp;Failed=<strong><?= (int)$res['failed'] ?></strong>
   </div>
 
-  <div class="card">
+  <div class="card ads-ds-card">
     <div class="card-header bg-light"><strong>Recent Queue (last 10)</strong></div>
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
+        <table class="table table-sm table-hover align-middle mb-0 ads-ds-table">
           <thead class="table-light">
             <tr>
               <th>ID</th>
@@ -106,5 +99,4 @@ if (tg_tbl_exists($pdo, 'telegram_queue')) {
     Tip: যদি <span class="badge bg-danger">failed</span> সাঝে <code>No active Telegram subscriber</code> দেখেন, তাহলে নিচের লিংকার ফাইল দিয়ে client-কে সাবস্ক্রাইব করান।
   </div>
 </div>
-</body>
-</html>
+<?php require_once $ROOT . '/partials/partials_footer.php'; ?>

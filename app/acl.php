@@ -7,11 +7,6 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/db.php';
 
-require_perm('reseller.view');     // লিস্ট/ভিউ দেখতে
-require_perm('reseller.manage');   // add/edit/delete reseller
-require_perm('reseller.pricing');  // প্যাকেজ-প্রাইসিং সেট/এডিট
-
-
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 /* ===================== Config ===================== */
@@ -27,6 +22,23 @@ const ACL_WRITE_KEYWORDS = [
   'create','store','add','update','edit','write','patch','post','put','delete','remove','destroy',
   'toggle','reset','approve','assign','change','manage','import','upload','password','role','status',
   'activate','deactivate','ban','void'
+];
+
+// (বাংলা) পারমিশন এলিয়াস: পুরোনো/ডুপ্লিকেট কী → ক্যানোনিকাল কী
+const ACL_PERM_ALIASES = [
+  'payments.add'            => 'add.payments',
+  'invoice.generate'        => 'generate.invoice',
+  'client.edit'             => 'edit.client',
+  'clients.edit'            => 'edit.client',
+  'ppp.enable_disable'      => 'enable.disable.ppp',
+  'router.edit'             => 'edit.routers',
+  'router.delete'           => 'edit.routers',
+  'add.router'              => 'edit.routers',
+  'report.income_expense'   => 'income.expense',
+  'audit.view'              => 'view.audit.log',
+  'manage.global.setting'   => 'settings.manage',
+  'role.management'         => 'users.manage',
+  'user.permission'         => 'users.manage',
 ];
 
 // (বাংলা) PHP<8 হলে starts_with পলিফিল
@@ -131,6 +143,14 @@ function acl_emp_id(): ?string {
   return null;
 }
 
+/* ===================== Normalizer ===================== */
+function acl_normalize_perm_key(string $k): string {
+  $k = strtolower(trim($k));
+  if ($k === '') return $k;
+  if (isset(ACL_PERM_ALIASES[$k])) return ACL_PERM_ALIASES[$k];
+  return $k;
+}
+
 /* ===================== Permission loading ===================== */
 function acl_load_user_permissions(int $uid): array {
   // (বাংলা) নতুন স্কিমা perm_key; পুরোনো হলে code — দুটোই সাপোর্ট
@@ -147,7 +167,10 @@ function acl_load_user_permissions(int $uid): array {
   $st1 = $pdo->prepare($sql1); 
   $st1->execute([$uid]);
   foreach ($st1->fetchAll(PDO::FETCH_COLUMN) as $k) {
-    if ($k) $perms[(string)$k] = true;
+    if ($k) {
+      $norm = acl_normalize_perm_key((string)$k);
+      if ($norm !== '') $perms[$norm] = true;
+    }
   }
 
   // 2) employees_roles (EMP_ID ভিত্তিক) → merge
@@ -160,7 +183,10 @@ function acl_load_user_permissions(int $uid): array {
     $st2 = $pdo->prepare($sql2);
     $st2->execute([$emp]);
     foreach ($st2->fetchAll(PDO::FETCH_COLUMN) as $k) {
-      if ($k) $perms[(string)$k] = true;
+      if ($k) {
+        $norm = acl_normalize_perm_key((string)$k);
+        if ($norm !== '') $perms[$norm] = true;
+      }
     }
   }
 
@@ -217,6 +243,7 @@ function acl_perm_match(array $permSet, string $key): bool {
 
 /* ===================== Core check ===================== */
 function acl_can(string $perm_key): bool {
+  $perm_key = acl_normalize_perm_key($perm_key);
   $uid = acl_current_user_id();
   if ($uid<=0) return false;
 
@@ -231,8 +258,11 @@ function acl_can(string $perm_key): bool {
 
   // (বাংলা) viewer হলে read-only অ্যালাউ
   if ($role==='viewer') {
+    // viewer এর জন্য শুধুমাত্র view.* / read-only পারমিশন বা এক্সপ্লিসিট গ্র্যান্ট
+    if (!empty($perms) && acl_perm_match($perms,$perm_key)) return true;
     if (acl_perm_is_write($perm_key)) return false;
-    return true;
+    if (acl_perm_is_view($perm_key)) return true;
+    return false;
   }
 
   // (বাংলা) অন্য কোনো রোলের ক্ষেত্রে ডিফল্ট ব্লক
@@ -241,6 +271,18 @@ function acl_can(string $perm_key): bool {
 
 function acl_can_any(array $keys): bool { foreach($keys as $k) if (acl_can((string)$k)) return true; return false; }
 function acl_can_all(array $keys): bool { foreach($keys as $k) if (!acl_can((string)$k)) return false; return true; }
+
+// (বাংলা) ফুল-রাইটস চেক (অ্যাডমিন বা ওয়াইল্ডকার্ড পারমিশন)
+function acl_can_write_everything(): bool {
+  $uid = acl_current_user_id();
+  if ($uid<=0) return false;
+  if (acl_is_admin_role($uid) || acl_is_username_admin()) return true;
+  $perms = acl_perms();
+  if (empty($perms)) return false;
+  if (acl_perm_match($perms, '*')) return true;
+  if (acl_perm_match($perms, 'admin.*')) return true;
+  return acl_perm_match($perms, 'system.*');
+}
 
 /* ===================== Guards ===================== */
 function acl_forbid_403(string $msg='You do not have permission.'): void {

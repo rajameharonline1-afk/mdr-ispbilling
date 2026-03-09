@@ -38,7 +38,9 @@ set_time_limit(0);
 
  $db = db();
  $debugMode = isset($request['debug']);
- $mode = strtolower(trim((string)($request['mode'] ?? 'fast')));
+ // ডিফল্ট মোড আগে ছিল "fast" (শুধু MAC টেবিল); এতে RX / অপটিক পাওয়ার সংগ্রহ হতো না।
+ // এখন ডিফল্ট মোড "rx" করা হল যাতে অপারেটর আলাদা ফ্ল্যাগ না দিলেও L(dBm) ফিল্ড পূরণ হয়।
+ $mode = strtolower(trim((string)($request['mode'] ?? 'rx')));
  $mode = match($mode){
    'full','rx' => $mode,
    'diag','diagnostic','rxfast' => 'rx',
@@ -452,6 +454,22 @@ function parse_mac_entries(string $txt): array {
     $mac = norm_mac($m[1]);
     if(!$mac) continue;
 
+    // VLAN বের করা: MAC টোকেনের ঠিক আগের টোকেন যদি 1-4094 সংখ্যার VLAN হয়।
+    $vlan = null;
+    $parts = preg_split('/\s+/', $line);
+    $macPattern = '/^(?:[0-9a-f]{2}[-:]){5}[0-9a-f]{2}$|^[0-9a-f]{4}[-:][0-9a-f]{4}[-:][0-9a-f]{4}$|^[0-9a-f]{4}\\.[0-9a-f]{4}\\.[0-9a-f]{4}$/i';
+    foreach($parts as $idx => $tok){
+      if(preg_match($macPattern, $tok)){
+        if($idx > 0 && ctype_digit($parts[$idx-1] ?? '') ){
+          $v = (int)$parts[$idx-1];
+          if($v >= 1 && $v <= 4094){
+            $vlan = $v;
+            break;
+          }
+        }
+      }
+    }
+
     $portLabel = null;
     $onu = null;
     $family = null;
@@ -501,7 +519,7 @@ function parse_mac_entries(string $txt): array {
       'mac'  => $mac,
       'port' => $portLabel,
       'onu'  => $onu ? ('ONU '.$onu) : null,
-      'vlan' => null,
+      'vlan' => $vlan,
       'onu_num' => $onu,
       'family'  => $family,
       'slot'    => $slotInt,
@@ -1357,7 +1375,8 @@ if($prepOk){
   }
   unset($entry);
   $descMap = [];
-  if($fullMode && $portOnuMap){
+  // rxMode/fullMode উভয়েই বর্ণনা (description) টেনে আনা হবে, যাতে টেবিলের Description কলাম ফাঁকা না থাকে।
+  if(($fullMode || $rxMode) && $portOnuMap){
     $errorBucket = &$summary['errors'];
     $descMap = fetch_onu_descriptions_for_ports(
       $host,

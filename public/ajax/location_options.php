@@ -18,7 +18,7 @@ $pdo = db();
 function require_manage_perm(): void {
     $canManage = acl_can('settings.manage');
     $canClientAdd = acl_can('add.client');
-    $canClientEdit = acl_can('edit.client') || acl_can('client.edit');
+    $canClientEdit = acl_can('edit.client');
     if (!($canManage || $canClientAdd || $canClientEdit)) {
         http_response_code(403);
         echo json_encode(['ok'=>false,'error'=>'Permission denied.']);

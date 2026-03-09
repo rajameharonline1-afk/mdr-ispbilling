@@ -4,7 +4,7 @@
 if (PHP_SAPI !== 'cli' && !defined('APP_INTERNAL_CALL')) {
   require_once __DIR__ . '/../app/require_login.php';
   require_once __DIR__ . '/../app/acl.php';
-  require_perm('invoice.generate'); // (বাংলা) পার্মিশন দরকার (ওয়েবে)
+  require_perm('generate.invoice'); // (বাংলা) পার্মিশন দরকার (ওয়েবে)
 }
 require_once __DIR__ . '/../app/db.php';
 

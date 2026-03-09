@@ -160,6 +160,20 @@ $jobs = [
     'timeout' => 180,
     'schedule' => '30 3 * * *',
   ],
+  'expire_inactive' => [
+    'title' => 'Expire Inactive (disable PPPoE)',
+    'url'   => '/cron/expire_inactive.php',
+    'method'=> 'GET',
+    'timeout' => 300,
+    'schedule' => '0 7 * * *',
+  ],
+  'expire_active' => [
+    'title' => 'Expire Active (enable PPPoE)',
+    'url'   => '/cron/expire_active.php',
+    'method'=> 'GET',
+    'timeout' => 300,
+    'schedule' => '* * * * *',
+  ],
   'save_client_traffic' => [
     'title' => 'Save Client Traffic',
     'url'   => '/cron/save_client_traffic.php',

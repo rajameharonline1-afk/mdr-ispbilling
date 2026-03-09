@@ -5,6 +5,11 @@
 
 declare(strict_types=1);
 
+if (strtolower(trim((string)($_GET['status'] ?? ''))) === 'left') {
+    header('Location: /new/clients/left', true, 302);
+    exit;
+}
+
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 

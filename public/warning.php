@@ -20,7 +20,7 @@
           <a href="/public/login.php" class="btn btn-sm btn-outline-primary">
             <i class="bi bi-box-arrow-in-right"></i> Sign in as different user
           </a>
-          <a href="mailto:swapon9124@gmail.com?subject=Access%20Request%3A%20add.router"
+          <a href="mailto:swapon9124@gmail.com?subject=Access%20Request%3A%20edit.routers"
              class="btn btn-sm btn-warning">
             <i class="bi bi-key"></i> Request access
           </a>

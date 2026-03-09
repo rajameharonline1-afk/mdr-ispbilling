@@ -7,6 +7,7 @@
 
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/acl.php';
 
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
@@ -55,14 +56,16 @@ function resolve_cols(): array {
     $ID         = pick(['id','user_id'], $av, 'id'); // ডিফল্ট id
     $USERNAME   = pick(['username','user_name','login','uid'], $av, 'username');
     $NAME       = pick(['full_name','name','display_name','realname'], $av, null); // না থাকলে username দেখাবো
+    $MOBILE     = pick(['mobile','phone','contact','phone_number'], $av, null);
     $EMAIL      = pick(['email','email_address','mail'], $av, null);
     $PASSHASH   = pick(['password_hash','password','pass_hash','passwd'], $av, 'password_hash');
     $ROLE       = pick(['role','user_type','type','user_role'], $av, null);
+    $ROLE_ID    = pick(['role_id','rid','roleid'], $av, null);
     $STATUS     = pick(['status','state','active','is_active','enabled'], $av, null);
     $CREATED    = pick(['created_at','created','created_on','inserted_at','reg_date'], $av, null);
     $DELETED    = pick(['is_deleted','deleted','removed','is_remove'], $av, null);
     $DELETED_AT = pick(['deleted_at','removed_at','archived_at'], $av, null);
-    return compact('ID','USERNAME','NAME','EMAIL','PASSHASH','ROLE','STATUS','CREATED','DELETED','DELETED_AT');
+    return compact('ID','USERNAME','NAME','MOBILE','EMAIL','PASSHASH','ROLE','ROLE_ID','STATUS','CREATED','DELETED','DELETED_AT');
 }
 $UC = resolve_cols();
 
@@ -130,6 +133,53 @@ function pick_safe_default_role(array $opts): string {
 $ROLE_OPTIONS = get_allowed_roles($UC);
 $DEFAULT_ROLE = pick_safe_default_role($ROLE_OPTIONS);
 
+/* ----- map role name → roles.id (RBAC table) ----- */
+function resolve_role_id(?string $role_name): ?int {
+    static $cache = [];
+    if ($role_name === null) return null;
+    $r = strtolower(trim($role_name));
+    if ($r === '') return null;
+    $alias = [
+        'account' => 'accounts',
+    ];
+    if (isset($alias[$r])) $r = $alias[$r];
+    if (isset($cache[$r])) return $cache[$r];
+    try {
+        $st = db_safe()->prepare("SELECT id FROM roles WHERE LOWER(name)=? LIMIT 1");
+        $st->execute([$r]);
+        $val = $st->fetchColumn();
+        $cache[$r] = $val !== false ? (int)$val : null;
+    } catch (Throwable $e) {
+        $cache[$r] = null;
+    }
+    return $cache[$r];
+}
+
+/* ----- validators ----- */
+function ensure_username(string $u): string {
+    $u = trim($u);
+    if ($u === '' || strlen($u) < 3 || strlen($u) > 50 || !preg_match('/^[A-Za-z0-9._-]+$/', $u)) {
+        throw new RuntimeException('Username must be 3-50 chars, alphanumeric/._- only.');
+    }
+    return $u;
+}
+function ensure_password(string $p): string {
+    if (strlen($p) < 8) throw new RuntimeException('Password must be at least 8 characters.');
+    return $p;
+}
+function ensure_email(?string $e): ?string {
+    $e = trim((string)$e);
+    if ($e === '') return null;
+    if (!filter_var($e, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('Invalid email address.');
+    return $e;
+}
+function ensure_mobile(?string $m): ?string {
+    $m = trim((string)$m);
+    if ($m === '') return null;
+    if (!preg_match('/^[0-9+ -]{6,20}$/', $m)) throw new RuntimeException('Invalid mobile number.');
+    return $m;
+}
+
 /* ===== permissions ===== */
 function cur_role(): string {
     $r = (
@@ -155,9 +205,11 @@ function cur_user_id_guess(array $UC): int {
     return 0;
 }
 function can_view_users(): bool {
+    if (function_exists('acl_can')) return acl_can('users.manage');
     return in_array(cur_role(), ['admin','superadmin','manager','account','support','viewer'], true);
 }
 function can_manage_users(): bool {
+    if (function_exists('acl_can')) return acl_can('users.manage');
     return in_array(cur_role(), ['admin','superadmin'], true);
 }
 if (!can_view_users()) { http_response_code(403); echo "Permission denied."; exit; }
@@ -182,27 +234,29 @@ try {
 
         if ($op==='create') {
             $name     = trim($_POST['name'] ?? '');
-            $username = trim($_POST['username'] ?? '');
-            $email    = trim($_POST['email'] ?? '');
+            $username = ensure_username((string)($_POST['username'] ?? ''));
+            $email    = ensure_email($_POST['email'] ?? '');
+            $mobile   = ensure_mobile($_POST['mobile'] ?? '');
             $role_in  = strtolower(trim($_POST['role'] ?? ''));
-            $password = (string)($_POST['password'] ?? '');
-            if ($username==='' || $password==='') throw new RuntimeException('Username and Password are required.');
+            $password = ensure_password((string)($_POST['password'] ?? ''));
             $role = in_array($role_in, $ROLE_OPTIONS, true) ? $role_in : $DEFAULT_ROLE;
+            $role_id = resolve_role_id($role);
 
-            if (!empty($UC['EMAIL'])) {
-                $sql = "SELECT 1 FROM `users` WHERE ".qi($UC['USERNAME'])."=? OR ".qi($UC['EMAIL'])."=? LIMIT 1";
-                $dup = $pdo->prepare($sql); $dup->execute([$username, $email]);
-            } else {
-                $sql = "SELECT 1 FROM `users` WHERE ".qi($UC['USERNAME'])."=? LIMIT 1";
-                $dup = $pdo->prepare($sql); $dup->execute([$username]);
-            }
-            if ($dup->fetch()) throw new RuntimeException('Username or Email already exists.');
+            // Duplicate check on username/email/mobile (if columns present)
+            $dupWhere = [qi($UC['USERNAME'])."=?"]; $dupParams = [$username];
+            if (!empty($UC['EMAIL']) && $email!=='') { $dupWhere[] = qi($UC['EMAIL'])."=?"; $dupParams[] = $email; }
+            if (!empty($UC['MOBILE']) && $mobile!=='') { $dupWhere[] = qi($UC['MOBILE'])."=?"; $dupParams[] = $mobile; }
+            $sql = "SELECT 1 FROM `users` WHERE ".implode(' OR ', $dupWhere)." LIMIT 1";
+            $dup = $pdo->prepare($sql); $dup->execute($dupParams);
+            if ($dup->fetch()) throw new RuntimeException('Username/Email/Mobile already exists.');
 
             $hash = password_hash($password, PASSWORD_DEFAULT);
 
             $cols = [ $UC['USERNAME'], $UC['PASSHASH'] ]; $vals = [ $username, $hash ];
             if (!empty($UC['ROLE']))    { $cols[]=$UC['ROLE'];    $vals[]=$role; }
+            if (!empty($UC['ROLE_ID'])) { $cols[]=$UC['ROLE_ID']; $vals[]=$role_id; }
             if (!empty($UC['NAME']))    { $cols[]=$UC['NAME'];    $vals[]= ($name!==''?$name:$username); }
+            if (!empty($UC['MOBILE']))  { $cols[]=$UC['MOBILE'];  $vals[]= ($mobile!==''?$mobile:null); }
             if (!empty($UC['EMAIL']))   { $cols[]=$UC['EMAIL'];   $vals[]= ($email!==''?$email:''); }
             if (!empty($UC['STATUS']))  { $cols[]=$UC['STATUS'];  $vals[]= detect_status_tokens($UC)['active']; }
             if (!empty($UC['CREATED'])) { $cols[]=$UC['CREATED']; $vals[]= date('Y-m-d H:i:s'); }
@@ -220,8 +274,11 @@ try {
             $role = strtolower(trim($_POST['role'] ?? ''));
             if (!in_array($role, $ROLE_OPTIONS, true)) { $role = $DEFAULT_ROLE; }
             if ($id<=0 || $role==='') throw new RuntimeException('Invalid input.');
-            $sql = "UPDATE `users` SET ".qi($UC['ROLE'])."=? WHERE ".qi($UC['ID'])."=?";
-            $pdo->prepare($sql)->execute([$role, $id]);
+            $set = [qi($UC['ROLE'])."=?"]; $params = [$role];
+            if (!empty($UC['ROLE_ID'])) { $set[] = qi($UC['ROLE_ID'])."=?"; $params[] = resolve_role_id($role); }
+            $params[] = $id;
+            $sql = "UPDATE `users` SET ".implode(',', $set)." WHERE ".qi($UC['ID'])."=?";
+            $pdo->prepare($sql)->execute($params);
             $alert = 'Role updated.';
 
         } elseif ($op === 'set_status') { // single-button enable/disable
@@ -244,7 +301,7 @@ try {
 
         } elseif ($op==='reset_password') {
             $id = (int)($_POST['id'] ?? 0);
-            $newpass = (string)($_POST['new_password'] ?? '');
+            $newpass = ensure_password((string)($_POST['new_password'] ?? ''));
             if ($id<=0 || $newpass==='') throw new RuntimeException('New password required.');
             if (empty($UC['PASSHASH'])) throw new RuntimeException('Password column not found.');
             $hash = password_hash($newpass, PASSWORD_DEFAULT);
@@ -306,6 +363,7 @@ $sel = [];
 $sel[] = qi($UC['ID'])." AS id";
 $sel[] = ($UC['NAME'] ? qcol_safe($UC['NAME'], 'name') : qcol_safe($UC['USERNAME'], 'name')); // name না থাকলে username->name
 $sel[] = qcol_safe($UC['USERNAME'], 'username');
+$sel[] = qcol_safe($UC['MOBILE'], 'mobile');
 $sel[] = qcol_safe($UC['EMAIL'], 'email');
 $sel[] = qcol_safe($UC['ROLE'], 'role');
 $sel[] = qcol_safe($UC['STATUS'], 'status');
@@ -352,10 +410,123 @@ $start_page = max(1, $page-2); $end_page = min($total_pages, $start_page+4);
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link href="/assets/bootstrap.min.css" rel="stylesheet">
 <style>
-.container-narrow{max-width:1100px;}
+:root {
+  --bg-a: #0b1729;
+  --bg-b: #142b44;
+  --card: rgba(255,255,255,0.08);
+  --card-border: rgba(255,255,255,0.15);
+  --text-main: #e9edf5;
+  --text-muted: #9fb2cc;
+  --pill: #1f8cff;
+  --pill-soft: rgba(31,140,255,0.15);
+}
+body {
+  background: radial-gradient(circle at 15% 20%, rgba(56,123,255,0.15), transparent 25%),
+              radial-gradient(circle at 80% 0%, rgba(109,213,237,0.2), transparent 28%),
+              linear-gradient(135deg, var(--bg-a), var(--bg-b));
+}
+.card, .table, .form-control, .form-select { color: #111; }
+.container-narrow{max-width:1200px;}
+.glass-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+  backdrop-filter: blur(10px);
+  color: var(--text-main);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+.glass-card .card-header {
+  border-bottom: 1px solid var(--card-border);
+  font-weight: 600;
+  color: var(--text-main);
+}
+.glass-card .form-label { color: var(--text-main); }
+.glass-card .form-control,
+.glass-card .form-select {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(12,21,35,0.15);
+  color: #0f1b2e;
+  border-radius: 10px;
+}
+.role-select {
+  min-width: 140px;
+  background: #f8fbff;
+  color: #0b1424;
+  font-weight: 600;
+}
+.role-select:focus {
+  background: #fff;
+}
+.glass-card .form-control::placeholder,
+.glass-card .form-select option { color: #6f809a; }
+.glass-card .form-control,
+.glass-card .form-select {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.glass-card .form-control:focus,
+.glass-card .form-select:focus {
+  background: #f8fbff;
+  color: #0b1424;
+  border-color: var(--pill);
+  box-shadow: 0 0 0 0.1rem rgba(31,140,255,0.2);
+}
 .table thead th{white-space:nowrap;}
-.form-required:after{content:" *"; color:#dc3545;}
+.table thead { background: rgba(255,255,255,0.08); color: var(--text-main); }
+.table tbody tr { background: rgba(255,255,255,0.03); color: var(--text-main); }
+.table tbody tr:hover { background: rgba(255,255,255,0.08); }
+.table tbody input.form-control { background: #fff; color: #111; }
+.form-label { color: #0f1b2e; font-weight: 600; }
+.form-hint { color: var(--text-muted); font-size: 0.9rem; }
+.input-title { color: var(--text-main); font-weight: 700; letter-spacing: 0.01em; }
+.form-required:after{content:" *"; color:#ff8c8c;}
 form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
+.badge.status-active { background: #21c55d; color: #0c2a16; }
+.badge.status-inactive { background: #6c757d; }
+.role-pill {
+  display:inline-flex; align-items:center; gap:.3rem;
+  background: var(--pill-soft); color: var(--text-main);
+  padding:.25rem .6rem; border-radius:999px; font-size:.85rem;
+}
+.actions-stack { display:flex; flex-wrap:wrap; gap:.4rem; justify-content:flex-end; }
+.pill-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-main);
+  padding: 0.35rem 0.9rem;
+  font-weight: 600;
+}
+.pill-btn:hover { border-color: var(--pill); color: #fff; }
+.search-bar { background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color: var(--text-main); }
+.search-bar:focus { border-color: var(--pill); box-shadow: 0 0 0 0.1rem rgba(31,140,255,0.25); }
+.table thead th,
+.table td { border-color: rgba(255,255,255,0.12) !important; }
+.card-subtitle { color: var(--text-muted); font-size: 0.95rem; }
+.muted-label { color: var(--text-muted); font-size: 0.9rem; }
+.table-card { border-radius: 14px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.22); }
+.glass-card:hover { transform: translateY(-2px); box-shadow: 0 14px 50px rgba(0,0,0,0.38); }
+.content-spacer { gap: 1.25rem; }
+
+@media (max-width: 992px) {
+  .glass-card { box-shadow: 0 8px 28px rgba(0,0,0,0.28); }
+  .table-card { box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+}
+@media (max-width: 768px) {
+  .glass-card .card-header { flex-wrap: wrap; gap: .5rem; }
+  .actions-stack { flex-direction: column; align-items: flex-start; }
+  .role-select { min-width: 120px; }
+  .table-responsive { font-size: 0.92rem; }
+  .container-narrow { padding-left: .5rem; padding-right: .5rem; }
+}
+@media (max-width: 576px) {
+  .table thead { display: none; }
+  .table tbody tr { display: block; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; margin-bottom: 12px; padding: .75rem; }
+  .table tbody td { display: flex; justify-content: space-between; border: 0 !important; padding: .35rem 0; }
+  .table tbody td::before { content: attr(data-label); font-weight: 700; color: var(--text-muted); margin-right: .75rem; }
+  .actions-stack { width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -363,7 +534,10 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
 
 <div class="container container-narrow my-4">
   <div class="d-flex align-items-center justify-content-between mb-3">
-    <h3 class="mb-0">Users</h3>
+    <div>
+      <h3 class="accordion-header">Users</h3>
+      <div class="card-subtitle">Create, review, and control user access from one place.</div>
+    </div>
   </div>
 
   <?php if ($alert!==''): ?>
@@ -372,8 +546,11 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
 
   <!-- Create User -->
   <?php if (can_manage_users()): ?>
-  <div class="card mb-3">
-    <div class="card-header">Create New User</div>
+  <div class="card mb-4 glass-card">
+    <div class="card-header d-flex align-items-center gap-2">
+      <span class="bi bi-person-plus-fill"></span>
+      <span>Create New User</span>
+    </div>
     <div class="card-body">
       <form method="post" action="users.php" class="row g-2">
         <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
@@ -391,12 +568,16 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
           <input class="form-control" type="email" name="email" placeholder="(optional)">
         </div>
         <div class="col-md-2">
+          <label class="form-label">Mobile</label>
+          <input class="form-control" name="mobile" placeholder="(optional)">
+        </div>
+        <div class="col-md-2">
           <label class="form-label form-required">Password</label>
           <input class="form-control" type="password" name="password" autocomplete="new-password" required>
         </div>
         <div class="col-md-1">
           <label class="form-label">Role</label>
-          <select class="form-select" name="role" <?php echo empty($UC['ROLE'])?'disabled':''; ?>>
+          <select class="form-select role-select" name="role" <?php echo empty($UC['ROLE'])?'disabled':''; ?>>
             <?php foreach($ROLE_OPTIONS as $opt): ?>
               <option value="<?php echo h($opt); ?>" <?php echo ($opt===$DEFAULT_ROLE)?'selected':''; ?>>
                 <?php echo ucfirst($opt); ?>
@@ -418,23 +599,24 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
   <?php endif; ?>
 
   <!-- Search -->
-  <form class="row g-2 mb-3" method="get" action="users.php">
+  <form class="row g-2 mb-3 align-items-center" method="get" action="users.php">
     <div class="col-sm-6 col-md-4">
-      <input type="text" name="search" class="form-control" placeholder="Search name/username/email/role" value="<?php echo h($search); ?>">
+      <input type="text" name="search" class="form-control search-bar" placeholder="Search name/username/email/role" value="<?php echo h($search); ?>">
     </div>
     <div class="col-auto">
-      <button type="submit" class="btn btn-outline-secondary">Search</button>
+      <button type="submit" class="btn pill-btn"><i class="bi bi-search"></i> Search</button>
     </div>
   </form>
 
   <!-- List -->
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
-      <thead class="table-light">
+  <div class="table-responsive glass-card p-2">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
         <tr>
           <th>#</th>
           <th>Name</th>
           <th>Username</th>
+          <th>Mobile</th>
           <th>Email</th>
           <th>Role</th>
           <th>Status</th>
@@ -450,6 +632,7 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
             <td><?php echo (int)$r['id']; ?></td>
             <td><?php echo h($r['name'] ?? ''); ?></td>
             <td><?php echo h($r['username'] ?? ''); ?></td>
+            <td><?php echo h($r['mobile'] ?? ''); ?></td>
             <td><?php echo h($r['email'] ?? ''); ?></td>
 
             <!-- Role cell -->
@@ -460,7 +643,7 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
                     <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
                     <input type="hidden" name="op" value="update_role">
                     <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                    <select name="role" class="form-select form-select-sm" style="min-width:120px">
+                    <select name="role" class="form-select form-select-sm role-select" style="min-width:120px">
                       <?php foreach($ROLE_OPTIONS as $opt): ?>
                         <option value="<?php echo h($opt); ?>" <?php echo (strtolower((string)$r['role'])===strtolower($opt))?'selected':''; ?>>
                           <?php echo ucfirst($opt); ?>
@@ -470,7 +653,7 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
                     <button type="submit" class="btn btn-sm btn-outline-primary">Update</button>
                   </form>
                 <?php else: ?>
-                  <span class="badge text-bg-light"><?php echo ucfirst((string)($r['role'] ?? '')); ?></span>
+                  <span class="role-pill"><?php echo ucfirst((string)($r['role'] ?? '')); ?></span>
                 <?php endif; ?>
               <?php else: ?>
                 <span class="badge text-bg-secondary">N/A</span>
@@ -481,9 +664,9 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
             <td>
               <?php if (!empty($UC['STATUS'])): ?>
                 <?php if (is_active_val($r['status'] ?? '', $STAT)): ?>
-                  <span class="badge text-bg-success">Active</span>
+                  <span class="badge status-active">Active</span>
                 <?php else: ?>
-                  <span class="badge text-bg-secondary">Inactive</span>
+                  <span class="badge status-inactive">Inactive</span>
                 <?php endif; ?>
               <?php else: ?>
                 <span class="badge text-bg-light">N/A</span>
@@ -496,21 +679,22 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
             <!-- Actions -->
             <td class="text-end">
               <?php if (can_manage_users()): ?>
-                <!-- Reset password -->
-                <form method="post" action="users.php" class="inline-form">
-                  <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
-                  <input type="hidden" name="op" value="reset_password">
-                  <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                  <input class="form-control form-control-sm" type="password" name="new_password" placeholder="New password" autocomplete="new-password" style="max-width:160px" required>
-                  <button type="submit" class="btn btn-sm btn-warning">Reset</button>
-                </form>
+                <div class="actions-stack">
+                  <!-- Reset password -->
+                  <form method="post" action="users.php" class="inline-form">
+                    <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
+                    <input type="hidden" name="op" value="reset_password">
+                    <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
+                    <input class="form-control form-control-sm" type="password" name="new_password" placeholder="New password" autocomplete="new-password" style="max-width:160px" required>
+                    <button type="submit" class="btn btn-sm btn-warning">Reset</button>
+                  </form>
 
                 <?php $isInactive = !is_active_val($r['status'] ?? '', $STAT); ?>
 
                 <!-- Single Enable/Disable button -->
                 <?php if (!empty($UC['STATUS'])): ?>
-                <form method="post" action="users.php" class="inline-form"
-                      onsubmit="return confirm('<?php echo $isInactive ? 'Enable this user?' : 'Disable this user?'; ?>');">
+                  <form method="post" action="users.php" class="inline-form"
+                        onsubmit="return confirm('<?php echo $isInactive ? 'Enable this user?' : 'Disable this user?'; ?>');">
                   <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
                   <input type="hidden" name="op" value="set_status">
                   <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
@@ -522,18 +706,15 @@ form.inline-form{ display:inline-flex; align-items:center; gap:.5rem; }
                 </form>
                 <?php endif; ?>
 
- 
+                  <!-- Hard Delete -->
+                  <form method="post" action="users.php" class="inline-form" onsubmit="return confirm('PERMANENT DELETE! This cannot be undone. Continue?');">
+                    <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
+                    <input type="hidden" name="op" value="hard_delete_user">
+                    <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Hard Delete</button>
+                  </form>
+                </div>
 
-                <!-- Hard Delete -->
-                <form method="post" action="users.php" class="inline-form" onsubmit="return confirm('PERMANENT DELETE! This cannot be undone. Continue?');">
-                  <input type="hidden" name="csrf" value="<?php echo h($CSRF); ?>">
-                  <input type="hidden" name="op" value="hard_delete_user">
-                  <input type="hidden" name="id" value="<?php echo (int)$r['id']; ?>">
-                  <button type="submit" class="btn btn-sm btn-outline-danger">Hard Delete</button>
-                </form>
-				
-				
-				
               <?php else: ?>
                 <span class="text-muted">Read-only</span>
               <?php endif; ?>

@@ -18,7 +18,7 @@ $acl_file = $ROOT . '/app/acl.php';
 if (is_file($acl_file)) require_once $acl_file;
 if (function_exists('require_perm')) {
   // বাংলা: শুধু উদাহরণ—আপনার প্রকল্পে আলাদা perm key থাকলে সেটি ব্যবহার করুন
-  require_perm('payments.add');
+  require_perm('add.payments');
 }
 
 // Header partial (keeps light theme/page chrome consistent)

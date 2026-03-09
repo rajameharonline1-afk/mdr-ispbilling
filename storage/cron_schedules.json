@@ -5,10 +5,12 @@
     "auto_billing": "15 2 1 * *",
     "auto_suspend": "7-59/15 * * * *",
     "auto_suspend_enable": "* * * * *",
-    "auto_expire_inactive": "30 3 * * *",
+    "auto_expire_inactive": "* * * * *",
+    "expire_inactive": "0 7 * * *",
+    "expire_active": "* * * * *",
     "save_client_traffic": "*/10 * * * *",
-    "sms_sender": "*/5 * * * *",
-    "sms_due_reminder": "0 9 * * *",
+    "sms_sender": "* * * * *",
+    "sms_due_reminder": "* * * * *",
     "enqueue_due_notifications": "10 */2 * * *",
     "notify_runner": "20,50 * * * *",
     "sync_clients": "*/5 * * * *",
@@ -18,6 +20,6 @@
     "bkash_rtn_process": "*/10 * * * *",
     "db_backup": "15 3 * * *",
     "generate_invoices": "0 1 * * *",
-    "auto_link_pppoe_olt_legacy": "*/5 * * * *",
-    "olt_mac_refresh_telnet": "0 */3 * * *"
+    "auto_link_pppoe_olt_legacy": "* */2 * * *",
+    "olt_mac_refresh_telnet": "*/30 * * * *"
 }

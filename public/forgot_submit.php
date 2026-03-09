@@ -64,10 +64,13 @@ try {
     <p>We received a request to reset your password.</p>
     <p><strong>OTP:</strong> <code>{$otp}</code> (valid for 15 minutes)</p>
     <p>You can also click this button:</p>
-    <p><a href=\"{$verifyUrl}\" style=\"display:inline-block;padding:10px 16px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:6px\">Reset Password</a></p>
+    <p><a href=\"{$verifyUrl}\" class=\"email-cta\">Reset Password</a></p>
     <p>If the button doesn’t work, open this link:<br>".htmlspecialchars($verifyUrl,ENT_QUOTES,'UTF-8')."</p>
     <p>If you didn’t request this, ignore this email.</p>";
   $text = "OTP: {$otp} (15 min)\nReset: {$verifyUrl}\nIf you didn't request, ignore.";
+
+  // Replace inline CTA style with design-system class
+  $html = str_replace('style="display:inline-block;padding:10px 16px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:6px"', 'class="email-cta"', $html);
 
   [$ok, $mailErr] = send_mail($email, $subject, $html, $text);
   // আমরা যাই হোক generic success দেখাবো

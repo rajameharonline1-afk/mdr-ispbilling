@@ -10,7 +10,9 @@ require_once __DIR__.'/telegram.php';
 $acl_file = $ROOT.'/app/acl.php'; if (is_file($acl_file)) require_once $acl_file;
 if (function_exists('require_perm')) { require_perm('notify.manage'); }
 
-function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+if (!function_exists('h')) {
+  function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+}
 
 $pdo = db(); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
@@ -40,19 +42,12 @@ if ($client_id > 0) {
   }
 }
 
-?><!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Telegram Subscribe Link</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css">
-  <style>
-    body{background:#f7f8fb}
-    .card{border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,.08)}
-  </style>
-</head>
-<body class="p-3 p-md-4">
-<div class="container" style="max-width:720px">
+$page_title = 'Telegram Subscribe Link';
+$_active = 'settings_tg';
+require_once $ROOT . '/partials/partials_header.php';
+?>
+
+<div class="container py-3" style="max-width:720px">
   <h4 class="mb-3">Telegram Subscribe Link</h4>
 
   <form class="row g-2 mb-3" method="get" action="/tg/link_client.php">
@@ -70,7 +65,7 @@ if ($client_id > 0) {
   <?php endif; ?>
 
   <?php if ($link): ?>
-    <div class="card">
+    <div class="card ads-ds-card">
       <div class="card-body">
         <div class="mb-2">Send this link to the customer. Ask them to open and press <strong>Start</strong> in your bot.</div>
         <input type="text" class="form-control" value="<?= h($link) ?>" readonly onclick="this.select()">
@@ -79,5 +74,4 @@ if ($client_id > 0) {
     </div>
   <?php endif; ?>
 </div>
-</body>
-</html>
+<?php require_once $ROOT . '/partials/partials_footer.php'; ?>

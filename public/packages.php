@@ -1,6 +1,6 @@
 <?php
 // /public/packages.php
-// (বাংলা) Packages: list + search + sort + pagination + add/edit + delete + import + export
+// (বাংলা) Packages: list + search + sort + pagination + add/edit + delete + export
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 
@@ -26,11 +26,8 @@ function hascol(PDO $pdo, string $tbl, string $col): bool {
 
 /* ------- DB ------- */
 $pdo = db();
+$has_speed = hascol($pdo,'packages','speed');
 $has_is_deleted = hascol($pdo,'packages','is_deleted');
-
-/* Routers for Import modal */
-$rstmt   = $pdo->query("SELECT id, name FROM routers ORDER BY name ASC");
-$routers = $rstmt->fetchAll(PDO::FETCH_ASSOC);
 
 /* WHERE */
 $where = $has_is_deleted ? "COALESCE(p.is_deleted,0)=0" : "1=1";
@@ -48,7 +45,9 @@ $total = (int)$stc->fetchColumn();
 $total_pages = max(1, (int)ceil($total / $limit));
 
 /* Data */
-$sql = "SELECT p.id, p.name, p.price, COALESCE(cnt.cnt,0) AS clients
+$cols = "p.id, p.name, p.price, p.description";
+if ($has_speed) $cols .= ", p.speed";
+$sql = "SELECT $cols, COALESCE(cnt.cnt,0) AS clients
         FROM packages p
         LEFT JOIN (
           SELECT package_id, COUNT(*) cnt
@@ -82,6 +81,17 @@ include __DIR__ . '/../partials/partials_header.php';
 .table-container{background:#fff;padding:15px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.1);}
 .app-toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;border:0;border-radius:120px;box-shadow:0 16px 40px rgba(0,0,0,.25);padding:14px 18px;min-width:280px;text-align:center;color:#fff;background:#0d6efd;transition:opacity .25s,transform .25s;}
 .app-toast.success{background:#198754}.app-toast.error{background:#dc3545}.app-toast.hide{opacity:0;transform:translate(-50%,-60%)}
+/* Keep package modal above backdrop even if parent containers have stacking contexts */
+.modal-backdrop{z-index:1045;}
+.modal{z-index:1050;}
+.table-packages th,.table-packages td{vertical-align:middle;}
+.table-packages .col-id{width:70px;white-space:nowrap;}
+.table-packages .col-speed{width:150px;white-space:nowrap;}
+.table-packages .col-price{width:150px;white-space:nowrap;}
+.table-packages .col-desc{min-width:220px;max-width:360px;}
+.table-packages .col-desc .desc-text{display:block;max-height:3.6rem;overflow:hidden;}
+.table-packages .col-clients{width:120px;white-space:nowrap;}
+.table-packages .col-action{width:170px;white-space:nowrap;}
 </style>
 
 <div class="container-fluid py-3">
@@ -100,9 +110,6 @@ include __DIR__ . '/../partials/partials_header.php';
       <a class="btn btn-outline-secondary btn-sm" href="/public/packages_export.php?<?= http_build_query(['search'=>$search]) ?>">
         <i class="bi bi-filetype-csv"></i> Export CSV
       </a>
-      <button class="btn btn-outline-dark btn-sm" id="btn-import">
-        <i class="bi bi-cloud-arrow-down"></i> Import from MikroTik
-      </button>
       <button class="btn btn-success btn-sm" id="btn-add">
         <i class="bi bi-plus-circle"></i> New Package
       </button>
@@ -110,25 +117,29 @@ include __DIR__ . '/../partials/partials_header.php';
   </div>
 
   <div class="table-responsive mt-3 table-container">
-    <table class="table table-sm table-hover align-middle">
+    <table class="table table-sm table-hover align-middle table-packages">
       <thead class="table-primary">
         <tr>
-          <th style="width:80px"><?= sort_link('id','ID', $sort,$dir) ?></th>
-          <th><?= sort_link('name','Package Name', $sort,$dir) ?> <span class="text-muted small">(= PPP profile name)</span></th>
-          <th class="text-end" style="width:160px"><?= sort_link('price','Monthly Price', $sort,$dir) ?></th>
-          <th class="text-end" style="width:130px">Clients</th>
-          <th class="text-end" style="width:160px">Action</th>
+          <th class="col-id"><?= sort_link('id','ID', $sort,$dir) ?></th>
+          <th><?= sort_link('name','Package Name', $sort,$dir) ?></th>
+          <th class="col-speed">Speed</th>
+          <th class="text-end col-price"><?= sort_link('price','Monthly Price', $sort,$dir) ?></th>
+          <th class="col-desc">Description</th>
+          <th class="text-end col-clients">Clients</th>
+          <th class="text-end col-action">Action</th>
         </tr>
       </thead>
       <tbody>
       <?php if (!$rows): ?>
-        <tr><td colspan="5" class="text-center text-muted">No data</td></tr>
+        <tr><td colspan="7" class="text-center text-muted">No data</td></tr>
       <?php else: foreach($rows as $r): ?>
         <tr data-id="<?= (int)$r['id'] ?>">
-          <td><?= (int)$r['id'] ?></td>
+          <td class="col-id"><?= (int)$r['id'] ?></td>
           <td><?= htmlspecialchars($r['name']) ?></td>
-          <td class="text-end"><?= number_format((float)$r['price'], 2) ?></td>
-          <td class="text-end">
+          <td class="col-speed"><?= htmlspecialchars((string)($r['speed'] ?? '')) ?></td>
+          <td class="text-end col-price"><?= number_format((float)$r['price'], 2) ?></td>
+          <td class="col-desc text-wrap small"><span class="desc-text"><?= htmlspecialchars((string)($r['description'] ?? '')) ?></span></td>
+          <td class="text-end col-clients">
             <?php if ((int)$r['clients']>0): ?>
               <a class="btn btn-outline-secondary btn-sm" href="/public/clients.php?package_id=<?= (int)$r['id'] ?>">
                 <?= (int)$r['clients'] ?>
@@ -137,11 +148,13 @@ include __DIR__ . '/../partials/partials_header.php';
               <span class="text-muted">0</span>
             <?php endif; ?>
           </td>
-          <td class="text-end">
+          <td class="text-end col-action">
             <button class="btn btn-outline-primary btn-sm me-1 btn-edit"
                     data-id="<?= (int)$r['id'] ?>"
                     data-name="<?= htmlspecialchars($r['name']) ?>"
-                    data-price="<?= htmlspecialchars($r['price']) ?>">
+                    data-speed="<?= $has_speed ? htmlspecialchars((string)($r['speed'] ?? '')) : '' ?>"
+                    data-price="<?= htmlspecialchars($r['price']) ?>"
+                    data-desc="<?= htmlspecialchars($r['description'] ?? '') ?>">
               <i class="bi bi-pencil-square"></i>
             </button>
             <button class="btn btn-outline-danger btn-sm btn-delete" data-id="<?= (int)$r['id'] ?>">
@@ -188,41 +201,25 @@ include __DIR__ . '/../partials/partials_header.php';
       <div class="modal-body">
         <input type="hidden" name="id" id="pkg-id">
 
-        <!-- (বাংলা) Router + PPP profile selector (for autofill only) -->
         <div class="mb-2">
-          <label class="form-label">MikroTik Router</label>
-          <select class="form-select" id="router-id">
-            <option value="">— Select router —</option>
-            <?php foreach($routers as $rt): ?>
-              <option value="<?= (int)$rt['id'] ?>"><?= htmlspecialchars($rt['name']) ?></option>
-            <?php endforeach; ?>
-          </select>
-          <div class="form-text">Profiles will be loaded for name autofill.</div>
-        </div>
-
-        <div class="mb-2">
-          <label class="form-label d-flex justify-content-between align-items-center">
-            <span>PPP Profile (from router)</span>
-            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-load-ppp" disabled>
-              <i class="bi bi-arrow-repeat"></i> Load
-            </button>
-          </label>
-          <select id="ppp-profile" class="form-select" disabled>
-            <option value="">— Select router first —</option>
-          </select>
-        </div>
-
-        <div class="mb-2">
-          <label class="form-label">Package Name <small class="text-muted">(1:1 with PPP profile)</small></label>
+          <label class="form-label">Package Name</label>
           <input type="text" class="form-control" name="name" id="pkg-name" required>
         </div>
-        <div>
+        <div class="mb-2">
+          <label class="form-label">Speed</label>
+          <input type="text" class="form-control" name="speed" id="pkg-speed" placeholder="e.g. 10Mbps/5Mbps" required>
+        </div>
+        <div class="mb-2">
           <label class="form-label">Monthly Price</label>
           <input type="number" step="0.01" min="0" class="form-control" name="price" id="pkg-price" required>
         </div>
+        <div>
+          <label class="form-label">Description (optional)</label>
+          <textarea class="form-control" name="description" id="pkg-description" rows="2" placeholder="Details, speed notes, etc."></textarea>
+        </div>
         <div class="form-text mt-1">
           <i class="bi bi-info-circle"></i>
-          <span class="text-muted">Changing package name may require updating client PPP profiles.</span>
+          <span class="text-muted">Changing package name may require updating existing client assignments.</span>
         </div>
       </div>
       <div class="modal-footer">
@@ -233,71 +230,9 @@ include __DIR__ . '/../partials/partials_header.php';
   </div>
 </div>
 
-<!-- Modal: Import from MikroTik -->
-<div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
-    <form class="modal-content" id="importForm" autocomplete="off">
-      <div class="modal-header">
-        <h6 class="modal-title">Import Packages from MikroTik PPP Profiles</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="row g-2">
-          <div class="col-md-4">
-            <label class="form-label">Router</label>
-            <select class="form-select" id="imp-router">
-              <option value="">— Select router —</option>
-              <?php foreach($routers as $rt): ?>
-                <option value="<?= (int)$rt['id'] ?>"><?= htmlspecialchars($rt['name']) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Default Price</label>
-            <input type="number" step="0.01" min="0" class="form-control" id="imp-price" placeholder="0">
-          </div>
-          <div class="col-md-5 d-flex align-items-end">
-            <button type="button" class="btn btn-outline-secondary me-2" id="imp-load" disabled>
-              <i class="bi bi-arrow-repeat"></i> Load Profiles
-            </button>
-            <button type="submit" class="btn btn-primary" id="imp-create" disabled>
-              <i class="bi bi-plus-circle"></i> Create Missing
-            </button>
-          </div>
-        </div>
-
-        <div class="mt-3">
-          <div class="table-responsive" style="max-height:50vh; overflow:auto;">
-            <table class="table table-sm table-hover align-middle">
-              <thead>
-                <tr>
-                  <th style="width:38px"><input type="checkbox" id="imp-checkall" disabled></th>
-                  <th>PPP Profile</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="imp-body">
-                <tr class="text-muted"><td colspan="3">Load profiles…</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="small text-muted mt-1">
-            “Create Missing” will create new packages for profiles that don’t exist yet.
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-      </div>
-    </form>
-  </div>
-</div>
-
 <script>
 const API_UPSERT = '/api/package_upsert.php';
 const API_DELETE = '/api/package_delete.php';
-const API_PPP    = '/api/ppp_profiles.php';
-const API_IMPORT = '/api/package_bulk_import.php';
 
 /* Toast */
 function showToast(message, type='success', timeout=2500){
@@ -309,26 +244,23 @@ function showToast(message, type='success', timeout=2500){
   setTimeout(()=> box.remove(), timeout);
 }
 function simpleConfirm(msg){ return new Promise(r=> r(confirm(msg))); }
-function enable(el,on=true){ if(el) el.disabled=!on; }
-function clearSelect(sel, ph=''){ if(!sel) return; sel.innerHTML=''; const o=document.createElement('option'); o.value=''; o.textContent=ph; sel.appendChild(o); }
-function esc(s){ return (s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
 /* ===== Add/Edit Modal ===== */
 document.addEventListener('DOMContentLoaded', ()=>{
   const modalEl = document.getElementById('pkgModal');
+  if (!modalEl || !window.bootstrap || !bootstrap.Modal) return;
+  if (modalEl.parentElement !== document.body) document.body.appendChild(modalEl);
   const modal = new bootstrap.Modal(modalEl);
   const form  = document.getElementById('pkgForm');
+  const speedInput = document.getElementById('pkg-speed');
+  const descInput = document.getElementById('pkg-description');
 
-  document.getElementById('btn-add').addEventListener('click', ()=>{
+  document.getElementById('btn-add')?.addEventListener('click', (e)=>{
+    e.preventDefault();
     form.reset();
     form.querySelector('#pkg-id').value = '';
-    const rsel = document.getElementById('router-id');
-    const psel = document.getElementById('ppp-profile');
-    const btn  = document.getElementById('btn-load-ppp');
-    if (rsel && psel && btn){
-      rsel.value='';
-      enable(btn,false); clearSelect(psel,'— Select router first —'); enable(psel,false);
-    }
+    if (speedInput) speedInput.value = '';
+    if (descInput) descInput.value = '';
     modal.show();
   });
 
@@ -337,55 +269,29 @@ document.addEventListener('DOMContentLoaded', ()=>{
       form.reset();
       form.querySelector('#pkg-id').value   = btn.dataset.id || '';
       form.querySelector('#pkg-name').value = btn.dataset.name || '';
+      if (speedInput) speedInput.value      = btn.dataset.speed || '';
       form.querySelector('#pkg-price').value= btn.dataset.price || '';
+      if (descInput) descInput.value = btn.dataset.desc || '';
       modal.show();
     });
   });
-
-  // (বাংলা) PPP loader (autofill name)
-  const rsel = document.getElementById('router-id');
-  const psel = document.getElementById('ppp-profile');
-  const btnL = document.getElementById('btn-load-ppp');
-  const nameInput = document.getElementById('pkg-name');
-
-  rsel?.addEventListener('change', ()=>{
-    enable(btnL, !!rsel.value);
-    clearSelect(psel, rsel.value ? 'Click Load…' : '— Select router first —');
-    enable(psel, false);
-  });
-
-  btnL?.addEventListener('click', async ()=>{
-    if (!rsel.value) return;
-    btnL.disabled=true; btnL.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Loading';
-    try{
-      const res = await fetch(`${API_PPP}?router_id=${encodeURIComponent(rsel.value)}`);
-      const j   = await res.json();
-      const list = (j.profiles||j.items||[]).map(x=> typeof x==='string'? x : (x.name||'')).filter(Boolean);
-      clearSelect(psel, '— Select PPP profile —');
-      list.sort((a,b)=>a.localeCompare(b)).forEach(n=>{
-        const o=document.createElement('option'); o.value=n; o.textContent=n; psel.appendChild(o);
-      });
-      enable(psel,true);
-      showToast(`Loaded ${list.length} profile(s)`, 'success');
-    }catch(e){ clearSelect(psel,'Load failed'); showToast('Load failed','error'); enable(psel,false); }
-    finally{ btnL.disabled=false; btnL.innerHTML='<i class="bi bi-arrow-repeat"></i> Load'; }
-  });
-
-  psel?.addEventListener('change', ()=>{ if (psel.value && nameInput) nameInput.value = psel.value; });
 
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(form);
     const data = Object.fromEntries(fd.entries());
     const name = (data.name||'').trim();
+    const speed= (data.speed||'').trim();
     const price= parseFloat(data.price||'0');
+    const desc = (data.description||'').trim();
     if (!name) return showToast('Package name is required','error');
+    if (!speed) return showToast('Speed is required','error');
     if (isNaN(price) || price<0) return showToast('Enter a valid price (>= 0)','error');
 
     try{
       const res = await fetch(API_UPSERT, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ id: data.id||null, name, price })
+        body: JSON.stringify({ id: data.id||null, name, speed, price, description: desc || null })
       });
       const j = await res.json();
       if (j.ok){ showToast(j.message||'Saved'); setTimeout(()=> location.reload(), 500); }
@@ -412,111 +318,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
     });
   });
 
-  /* ===== Import from MikroTik ===== */
-  const impModalEl = document.getElementById('importModal');
-  const impModal   = new bootstrap.Modal(impModalEl);
-  const btnImport  = document.getElementById('btn-import');
-  const impRouter  = document.getElementById('imp-router');
-  const impLoad    = document.getElementById('imp-load');
-  const impBody    = document.getElementById('imp-body');
-  const impCreate  = document.getElementById('imp-create');
-  const impCheckAll= document.getElementById('imp-checkall');
-  const impPrice   = document.getElementById('imp-price');
-
-  btnImport?.addEventListener('click', ()=>{
-    impRouter.value=''; impPrice.value='';
-    impLoad.disabled = true; impCreate.disabled = true;
-    impCheckAll.checked=false; impCheckAll.disabled=true;
-    impBody.innerHTML = '<tr class="text-muted"><td colspan="3">Load profiles…</td></tr>';
-    impModal.show();
-  });
-
-  impRouter?.addEventListener('change', ()=>{
-    impLoad.disabled = !impRouter.value;
-    impCreate.disabled = true;
-    impCheckAll.disabled = true; impCheckAll.checked=false;
-    impBody.innerHTML = '<tr class="text-muted"><td colspan="3">Load profiles…</td></tr>';
-  });
-
-  impLoad?.addEventListener('click', async ()=>{
-    if (!impRouter.value) return;
-    impLoad.disabled = true; impLoad.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading';
-    try{
-      const r1 = await fetch(`${API_PPP}?router_id=${encodeURIComponent(impRouter.value)}`);
-      const j1 = await r1.json();
-      const profiles = (j1.profiles||j1.items||[]).map(x=> typeof x==='string'? x : (x.name||'')).filter(Boolean);
-
-      const r2 = await fetch(API_IMPORT, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ router_id: parseInt(impRouter.value,10), profiles, dry:1 })
-      });
-      const j2 = await r2.json();
-      if (!j2.ok) throw new Error(j2.error||'Failed');
-
-      if (!j2.items || !j2.items.length){
-        impBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No profiles found</td></tr>';
-        impCreate.disabled = true; impCheckAll.disabled = true;
-      } else {
-        let html = '';
-        j2.items.forEach(it=>{
-          html += `<tr>
-            <td><input type="checkbox" class="imp-check" data-name="${esc(it.name)}" ${it.exists?'disabled':''}></td>
-            <td>${esc(it.name)}</td>
-            <td>${it.exists?'<span class="badge text-bg-secondary">exists</span>':'<span class="badge text-bg-success">new</span>'}</td>
-          </tr>`;
-        });
-        impBody.innerHTML = html;
-        const hasNew = j2.items.some(x=>!x.exists);
-        impCreate.disabled = !hasNew;
-        impCheckAll.disabled = !hasNew;
-        impCheckAll.checked = hasNew;
-        document.querySelectorAll('.imp-check').forEach(ch=>{
-          if (!ch.disabled) ch.checked = true;
-        });
-      }
-      showToast(`Loaded ${profiles.length} profile(s)`);
-    }catch(e){
-      impBody.innerHTML = `<tr><td colspan="3" class="text-danger">Load failed: ${esc(e.message||'Failed')}</td></tr>`;
-      impCreate.disabled = true; impCheckAll.disabled = true;
-    }finally{
-      impLoad.disabled = false; impLoad.innerHTML = '<i class="bi bi-arrow-repeat"></i> Load Profiles';
-    }
-  });
-
-  impCheckAll?.addEventListener('change', ()=>{
-    document.querySelectorAll('.imp-check').forEach(ch=>{
-      if (!ch.disabled) ch.checked = impCheckAll.checked;
-    });
-  });
-
-  document.getElementById('importForm')?.addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    const names = Array.from(document.querySelectorAll('.imp-check'))
-      .filter(ch=> ch.checked && !ch.disabled)
-      .map(ch=> ch.dataset.name);
-    if (!names.length) return showToast('Select at least one profile','error');
-
-    try{
-      impCreate.disabled = true;
-      const res = await fetch(API_IMPORT, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          router_id: parseInt(impRouter.value,10),
-          profiles: names,
-          default_price: parseFloat(impPrice.value||'0'),
-          dry: 0
-        })
-      });
-      const j = await res.json();
-      if (j.ok){
-        showToast(`Created ${j.created}, skipped ${j.skipped}`);
-        setTimeout(()=> location.reload(), 600);
-      } else {
-        showToast(j.error||'Import failed','error');
-        impCreate.disabled = false;
-      }
-    }catch(_){ showToast('Request failed','error'); impCreate.disabled=false; }
-  });
 });
 </script>
 

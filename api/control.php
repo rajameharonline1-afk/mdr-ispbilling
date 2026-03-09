@@ -27,7 +27,7 @@ $__audit = $ROOT . '/app/audit.php';
 if (is_file($__audit)) require_once $__audit; // optional
 require_once $ROOT . '/app/require_login.php'; // may echo notices; we will clean
 $__acl = $ROOT . '/app/acl.php';
-if (is_file($__acl)) { require_once $__acl; if (function_exists('require_perm')) { require_perm('ppp.enable_disable'); } }
+if (is_file($__acl)) { require_once $__acl; if (function_exists('require_perm')) { require_perm('enable.disable.ppp'); } }
 
 /* ---------- Helpers ---------- */
 function respond(array $arr, int $code = 200): void {

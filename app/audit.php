@@ -111,6 +111,19 @@ function audit_client_ip(): string {
 }
 
 /* ---------- main logger (flexible signatures) ---------- */
+function _audit_duplicate_exists(PDO $pdo, string $entity, ?int $entity_id, string $action, ?string $oldJson, ?string $newJson, string $ua, int $windowSeconds=300): bool {
+  if ($windowSeconds <= 0) return false;
+  $since = date('Y-m-d H:i:s', time() - $windowSeconds);
+  try {
+    $sql = "SELECT 1 FROM audit_logs WHERE entity <=> ? AND entity_id <=> ? AND action = ? AND user_agent <=> ? AND created_at >= ? AND old_json <=> ? AND new_json <=> ? ORDER BY id DESC LIMIT 1";
+    $st  = $pdo->prepare($sql);
+    $st->execute([$entity, $entity_id, $action, $ua, $since, $oldJson, $newJson]);
+    return (bool)$st->fetchColumn();
+  } catch (Throwable $e) {
+    return false;
+  }
+}
+
 function _audit_write(string $entity, ?int $entity_id, string $action, $old=null, $new=null): void {
   $pdo = audit_db(); audit_bootstrap();
 
@@ -119,17 +132,25 @@ function _audit_write(string $entity, ?int $entity_id, string $action, $old=null
   $ip  = audit_client_ip();
   $ua  = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
 
+  $flags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
+  $oldJson = $old!==null ? json_encode($old,$flags) : null;
+  $newJson = $new!==null ? json_encode($new,$flags) : null;
+
+  $shouldDedup = ($uid === 0) && (($ua === 'cron_runner') || PHP_SAPI === 'cli');
+  if ($shouldDedup && _audit_duplicate_exists($pdo, $entity, $entity_id, $action, $oldJson, $newJson, $ua)) {
+    return;
+  }
+
   $ins = $pdo->prepare("
     INSERT INTO audit_logs(entity, entity_id, action, old_json, new_json, user_id, ip, user_agent)
     VALUES (?,?,?,?,?,?,?,?)
   ");
-  $flags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
   $ins->execute([
     $entity,
     $entity_id,
     $action,
-    $old!==null ? json_encode($old,$flags) : null,
-    $new!==null ? json_encode($new,$flags) : null,
+    $oldJson,
+    $newJson,
     $uid,
     $ip,
     $ua
@@ -166,15 +187,8 @@ function audit_log(...$args): void {
 
   $argc = count($args);
   if ($argc >= 3) {
-    // (action, entity_id, meta array) — common lightweight caller shape
-    if (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_array($args[2])) {
-      $action = $args[0];
-      $entity_id = _audit_int($args[1]);
-      $entity = _audit_guess_entity($action);
-      $new = $args[2];
-    }
     // (entity, entity_id, action, old?, new?)
-    elseif (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
+    if (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
       $entity = $args[0];
       $entity_id = _audit_int($args[1]);
       $action = $args[2];
@@ -186,6 +200,12 @@ function audit_log(...$args): void {
       $entity = $args[1];
       $entity_id = _audit_int($args[2]);
       $new = $args[3] ?? null;
+    // (action, entity_id, meta)
+    } elseif (is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_array($args[2])) {
+      $action = $args[0];
+      $entity_id = _audit_int($args[1]);
+      $entity = _audit_guess_entity($action);
+      $new = $args[2];
     // (user_id, entity_id, action, meta)
     } elseif (is_numeric($args[0]) && (is_numeric($args[1]) || $args[1] === null) && is_string($args[2])) {
       $entity_id = _audit_int($args[1]);
@@ -200,11 +220,6 @@ function audit_log(...$args): void {
     // (action, meta)
     $action = $args[0];
     $new = $args[1];
-  } elseif ($argc === 2 && is_string($args[0]) && (is_numeric($args[1]) || $args[1] === null)) {
-    // (action, entity_id)
-    $action = $args[0];
-    $entity_id = _audit_int($args[1]);
-    $entity = _audit_guess_entity($action);
   }
 
   if ($action === '') return;

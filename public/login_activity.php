@@ -17,8 +17,8 @@ require_once __DIR__ . '/../app/db.php';
 $acl_file = __DIR__ . '/../app/acl.php';
 if (is_file($acl_file)) require_once $acl_file;
 if (function_exists('require_perm')) {
-  // বাংলা: আপনার ACL-এ 'audit.view' থাকলে গার্ড করবে; না থাকলে admin bypass (আপনার ACL মোতাবেক)
-  require_perm('audit.view');
+  // বাংলা: আপনার ACL-এ 'view.audit.log' থাকলে গার্ড করবে; না থাকলে admin bypass (আপনার ACL মোতাবেক)
+  require_perm('view.audit.log');
 }
 
 /* ---------------- helpers ---------------- */

@@ -175,194 +175,217 @@ try {
 /* (বাংলা) নতুন জব যোগ করতে $jobs অ্যারে-তে আরেকটা কী যোগ করুন */
 $current_month = date('Y-m');
 $jobs = [
-  'mt_sync' => [
-    'title' => 'MikroTik Sync Clients',
-    'url'   => '/api/mt_sync_clients.php',
-    'method'=> 'GET',
-    'desc'  => 'Upsert clients from RouterOS (show-sensitive aware).',
-    'timeout' => 180,
-    'schedule' => '*/5 * * * *',
-    'supports' => [], // extra inputs নেই
-  ],
-  'invoice_month' => [
-    'title' => 'Generate Monthly Invoices (commit)',
-    // (বাংলা) {month} প্লেসহোল্ডার রিপ্লেস হবে; নিচে ফর্মে month নেওয়া হচ্ছে
-    // JSON API পথ ব্যবহার করছি যাতে HTML আউটপুট না আসে
-    'url'   => '/cron/generate_invoices.php?month={month}&mode=replace',
-    'method'=> 'GET',
-    'desc'  => 'Create/replace invoices for a given month and update ledgers.',
-    'timeout' => 240,
-    'schedule' => '0 6 1 * *',
-    'supports' => ['month'], // extra input: month (YYYY-MM)
-  ],
-  'pppoe_olt_link' => [
-    'title' => 'PPPoE → OLT Auto Link',
-    'url'   => '/cron/auto_link_pppoe_olt.php',
-    'method'=> 'GET',
-    'desc'  => 'Sync PPPoE active MACs, update clients.router_mac, link to OLT cache, fill OLT fields.',
-    'timeout' => 180,
-    'schedule' => '2-59/5 * * * *', // offset to run at 02,07,12... to avoid locking with OLT job
-    'supports' => [],
-  ],
-  'auto_billing' => [
-    'title' => 'Auto Billing',
-    'url'   => '/cron/auto_billing.php',
-    'method'=> 'GET',
-    'desc'  => 'Generate periodic billing actions.',
-    'timeout' => 180,
-    'schedule' => '15 2 1 * *', // 1st of month, after OLT window
-    'supports' => [],
-  ],
-  'auto_suspend' => [
-    'title' => 'Auto Suspend (due clients)',
-    'url'   => '/cron/auto_suspend.php',
-    'method'=> 'GET',
-    'desc'  => 'Suspend clients based on due rules.',
-    'timeout' => 420,
-    'schedule' => '7-59/15 * * * *', // offset away from OLT job start
-    'supports' => [],
-  ],
-  'auto_suspend_enable' => [
-    'title' => 'Auto Resume (enable)',
-    'url'   => '/cron/auto_suspend_enable.php',
-    'method'=> 'GET',
-    'desc'  => 'Re-enable clients when dues cleared.',
-    'timeout' => 180,
-    'schedule' => '12-59/15 * * * *', // staggered away from suspend and OLT
-    'supports' => [],
-  ],
-  'auto_expire_inactive' => [
-    'title' => 'Expire Inactive Accounts',
-    'url'   => '/cron/auto_expire_inactive.php',
-    'method'=> 'GET',
-    'desc'  => 'Mark inactive/expired accounts.',
-    'timeout' => 180,
-    'schedule' => '30 3 * * *',
-    'supports' => [],
-  ],
-  'save_client_traffic' => [
-    'title' => 'Save Client Traffic',
-    'url'   => '/cron/save_client_traffic.php',
-    'method'=> 'GET',
-    'desc'  => 'Poll live status and log to client_traffic_log.',
-    'timeout' => 1200,
-    'schedule' => '*/10 * * * *',
-    'supports' => [],
-  ],
-  'sms_sender' => [
-    'title' => 'SMS Sender',
-    'url'   => '/cron/sms_sender.php',
-    'method'=> 'GET',
-    'desc'  => 'Send queued SMS messages.',
-    'timeout' => 120,
-    'schedule' => '*/5 * * * *',
-    'supports' => [],
-  ],
-  'sms_due_reminder' => [
-    'title' => 'SMS Due Reminder',
-    'url'   => '/cron/sms_due_reminder.php',
-    'method'=> 'GET',
-    'desc'  => 'Send due reminder SMS.',
-    'timeout' => 120,
-    'schedule' => '0 9 * * *',
-    'supports' => [],
-  ],
-  'enqueue_due_notifications' => [
-    'title' => 'Enqueue Due Notifications',
-    'url'   => '/cron/enqueue_due_notifications.php',
-    'method'=> 'GET',
-    'desc'  => 'Queue due notifications for later sending.',
-    'timeout' => 120,
-    'schedule' => '10 */2 * * *', // OLT overlap এড়াতে ঘণ্টা +10 মিনিটে চালাও
-    'supports' => [],
-  ],
-  'notify_runner' => [
-    'title' => 'Notification Runner',
-    'url'   => '/cron/notify_runner.php',
-    'method'=> 'GET',
-    'desc'  => 'Process notification queue.',
-    'timeout' => 120,
-    'schedule' => '20,50 * * * *', // OLT :00/:30 থেকে সরে 20/50 মিনিটে
-    'supports' => [],
-  ],
-  'sync_clients' => [
-    'title' => 'Sync Clients (general)',
-    'url'   => '/cron/sync_clients.php',
-    'method'=> 'GET',
-    'desc'  => 'Sync clients from external source.',
-    'timeout' => 240,
-    'supports' => [],
-  ],
-  'sync_packages' => [
-    'title' => 'Sync Packages (default)',
-    'url'   => '/cron/sync_packages.php',
-    'method'=> 'GET',
-    'desc'  => 'Sync package list.',
-    'timeout' => 180,
-    'schedule' => '3-59/10 * * * *', // OLT :00/:30 এড়াতে ৩ মিনিট অফসেট
-    'supports' => [],
-  ],
-  'sync_packages_all' => [
-    'title' => 'Sync Packages (all)',
-    'url'   => '/cron/sync_packages_all.php',
-    'method'=> 'GET',
-    'desc'  => 'Sync all package profiles.',
-    'timeout' => 240,
-    'schedule' => '3-59/10 * * * *', // same offset slot
-    'supports' => [],
-  ],
-  'auto_bkash_apply' => [
-    'title' => 'Auto bKash Apply',
-    'url'   => '/cron/auto_bkash_apply.php',
-    'method'=> 'GET',
-    'desc'  => 'Apply bKash payments automatically.',
-    'timeout' => 180,
-    'schedule' => '5,35 * * * *', // OLT :00/:30 এড়াতে ৫/৩৫ মিনিটে
-    'supports' => [],
-  ],
-  'bkash_rtn_process' => [
-    'title' => 'bKash Return Process',
-    'url'   => '/cron/bkash_rtn_process.php',
-    'method'=> 'GET',
-    'desc'  => 'Process bKash return callbacks.',
-    'timeout' => 120,
-    'supports' => [],
-  ],
-  'db_backup' => [
-    'title' => 'DB Backup',
-    'url'   => '/cron/db_backup.php',
-    'method'=> 'GET',
-    'desc'  => 'Create database backup.',
-    'timeout' => 300,
-    'schedule' => '15 3 * * *', // রাত ৩:১৫ এ (বড় জব থেকে সরে)
-    'supports' => [],
-  ],
-  'generate_invoices' => [
-    'title' => 'Generate Invoices (legacy)',
-    'url'   => '/cron/generate_invoices.php',
-    'method'=> 'GET',
-    'desc'  => 'Legacy invoice generation script.',
-    'timeout' => 240,
-    'supports' => [],
-  ],
-  'auto_link_pppoe_olt_legacy' => [
-    'title' => 'Auto Link PPPoE to OLT (legacy)',
-    'url'   => '/cron/auto_link_pppoe_olt.php',
-    'method'=> 'GET',
-    'desc'  => 'Backfill PPPoE to OLT linkage.',
-    'timeout' => 180,
-    'supports' => [],
-  ],
-  'olt_mac_refresh_telnet' => [
-    'title' => 'OLT MAC Refresh (telnet)',
-    'url'   => '/api/olt_mac_refresh_telnet.php?mode=full',
-    'method'=> 'GET',
-    'desc'  => 'Refresh OLT MAC cache via telnet (onu_inventory/onu_mac_map টেবিল প্রয়োজন)।',
-    'timeout' => 600, // heavy job; cap at 10m to avoid UI hang
-    'async' => true, // detach response early so browser doesn't hang
-    'schedule' => '*/30 * * * *', // default every 30 minutes
-    'supports' => ['olt_id','skip_pppoe'], // allow narrowing to a specific OLT / skipping PPPoE link phase
-  ],
+  // 'mt_sync' => [
+  //   'title' => 'MikroTik Sync Clients',
+  //   'url'   => '/api/mt_sync_clients.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Upsert clients from RouterOS (show-sensitive aware).',
+  //   'timeout' => 180,
+  //   'schedule' => '*/5 * * * *',
+  //   'supports' => [], // extra inputs নেই
+  // ],
+  // 'invoice_month' => [
+  //   'title' => 'Generate Monthly Invoices (commit)',
+  //   // (বাংলা) {month} প্লেসহোল্ডার রিপ্লেস হবে; নিচে ফর্মে month নেওয়া হচ্ছে
+  //   // JSON API পথ ব্যবহার করছি যাতে HTML আউটপুট না আসে
+  //   'url'   => '/cron/generate_invoices.php?month={month}&mode=replace',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Create/replace invoices for a given month and update ledgers.',
+  //   'timeout' => 240,
+  //   'schedule' => '0 6 1 * *',
+  //   'supports' => ['month'], // extra input: month (YYYY-MM)
+  // ],
+  // 'pppoe_olt_link' => [
+  //   'title' => 'PPPoE → OLT Auto Link',
+  //   'url'   => '/cron/auto_link_pppoe_olt.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Sync PPPoE active MACs, update clients.router_mac, link to OLT cache, fill OLT fields.',
+  //   'timeout' => 180,
+  //   'schedule' => '2-59/5 * * * *', // offset to run at 02,07,12... to avoid locking with OLT job
+  //   'supports' => [],
+  // ],
+  // 'auto_billing' => [
+  //   'title' => 'Auto Billing',
+  //   'url'   => '/cron/auto_billing.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Generate periodic billing actions.',
+  //   'timeout' => 180,
+  //   'schedule' => '15 2 1 * *', // 1st of month, after OLT window
+  //   'supports' => [],
+  // ],
+  // 'auto_suspend' => [
+  //   'title' => 'Auto Suspend (due clients)',
+  //   'url'   => '/cron/auto_suspend.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Suspend clients based on due rules.',
+  //   'timeout' => 420,
+  //   'schedule' => '7-59/15 * * * *', // offset away from OLT job start
+  //   'supports' => [],
+  // ],
+  // 'auto_suspend_enable' => [
+  //   'title' => 'Auto Resume (enable)',
+  //   'url'   => '/cron/auto_suspend_enable.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Re-enable clients when dues cleared.',
+  //   'timeout' => 180,
+  //   'schedule' => '12-59/15 * * * *', // staggered away from suspend and OLT
+  //   'supports' => [],
+  // ],
+  // 'auto_expire_inactive' => [
+  //   'title' => 'Expire Inactive Accounts',
+  //   'url'   => '/cron/auto_expire_inactive.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Mark inactive/expired accounts.',
+  //   'timeout' => 180,
+  //   'schedule' => '30 3 * * *',
+  //   'supports' => [],
+  // ],
+
+
+
+  // 'expire_inactive' => [
+  //   'title' => 'Expire Inactive (disable PPPoE)',
+  //   'url'   => '/cron/expire_inactive.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Expire clients by date and disable PPPoE secrets on routers.',
+  //   'timeout' => 300,
+  //   'schedule' => '0 7 * * *',
+  //   'supports' => [],
+  // ],
+  // 'expire_active' => [
+  //   'title' => 'Expire Active (enable PPPoE)',
+  //   'url'   => '/cron/expire_active.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Re-activate clients whose expiry moved to future and enable PPPoE secrets.',
+  //   'timeout' => 300,
+  //   'schedule' => '* * * * *',
+  //   'supports' => [],
+  // ],
+  // 'save_client_traffic' => [
+  //   'title' => 'Save Client Traffic',
+  //   'url'   => '/cron/save_client_traffic.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Poll live status and log to client_traffic_log.',
+  //   'timeout' => 1200,
+  //   'schedule' => '*/10 * * * *',
+  //   'supports' => [],
+  // ],
+
+  
+  // 'sms_sender' => [
+  //   'title' => 'SMS Sender',
+  //   'url'   => '/cron/sms_sender.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Send queued SMS messages.',
+  //   'timeout' => 120,
+  //   'schedule' => '*/5 * * * *',
+  //   'supports' => [],
+  // ],
+  // 'sms_due_reminder' => [
+  //   'title' => 'SMS Due Reminder',
+  //   'url'   => '/cron/sms_due_reminder.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Send due reminder SMS.',
+  //   'timeout' => 120,
+  //   'schedule' => '0 9 * * *',
+  //   'supports' => [],
+  // ],
+  // 'enqueue_due_notifications' => [
+  //   'title' => 'Enqueue Due Notifications',
+  //   'url'   => '/cron/enqueue_due_notifications.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Queue due notifications for later sending.',
+  //   'timeout' => 120,
+  //   'schedule' => '10 */2 * * *', // OLT overlap এড়াতে ঘণ্টা +10 মিনিটে চালাও
+  //   'supports' => [],
+  // ],
+  // 'notify_runner' => [
+  //   'title' => 'Notification Runner',
+  //   'url'   => '/cron/notify_runner.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Process notification queue.',
+  //   'timeout' => 120,
+  //   'schedule' => '20,50 * * * *', // OLT :00/:30 থেকে সরে 20/50 মিনিটে
+  //   'supports' => [],
+  // ],
+  // 'sync_clients' => [
+  //   'title' => 'Sync Clients (general)',
+  //   'url'   => '/cron/sync_clients.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Sync clients from external source.',
+  //   'timeout' => 240,
+  //   'supports' => [],
+  // ],
+  // 'sync_packages' => [
+  //   'title' => 'Sync Packages (default)',
+  //   'url'   => '/cron/sync_packages.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Sync package list.',
+  //   'timeout' => 180,
+  //   'schedule' => '3-59/10 * * * *', // OLT :00/:30 এড়াতে ৩ মিনিট অফসেট
+  //   'supports' => [],
+  // ],
+  // 'sync_packages_all' => [
+  //   'title' => 'Sync Packages (all)',
+  //   'url'   => '/cron/sync_packages_all.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Sync all package profiles.',
+  //   'timeout' => 240,
+  //   'schedule' => '3-59/10 * * * *', // same offset slot
+  //   'supports' => [],
+  // ],
+  // 'auto_bkash_apply' => [
+  //   'title' => 'Auto bKash Apply',
+  //   'url'   => '/cron/auto_bkash_apply.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Apply bKash payments automatically.',
+  //   'timeout' => 180,
+  //   'schedule' => '5,35 * * * *', // OLT :00/:30 এড়াতে ৫/৩৫ মিনিটে
+  //   'supports' => [],
+  // ],
+  // 'bkash_rtn_process' => [
+  //   'title' => 'bKash Return Process',
+  //   'url'   => '/cron/bkash_rtn_process.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Process bKash return callbacks.',
+  //   'timeout' => 120,
+  //   'supports' => [],
+  // ],
+  // 'db_backup' => [
+  //   'title' => 'DB Backup',
+  //   'url'   => '/cron/db_backup.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Create database backup.',
+  //   'timeout' => 300,
+  //   'schedule' => '15 3 * * *', // রাত ৩:১৫ এ (বড় জব থেকে সরে)
+  //   'supports' => [],
+  // ],
+  // 'generate_invoices' => [
+  //   'title' => 'Generate Invoices (legacy)',
+  //   'url'   => '/cron/generate_invoices.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Legacy invoice generation script.',
+  //   'timeout' => 240,
+  //   'supports' => [],
+  // ],
+  // 'auto_link_pppoe_olt_legacy' => [
+  //   'title' => 'Auto Link PPPoE to OLT (legacy)',
+  //   'url'   => '/cron/auto_link_pppoe_olt.php',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Backfill PPPoE to OLT linkage.',
+  //   'timeout' => 180,
+  //   'supports' => [],
+  // ],
+  // 'olt_mac_refresh_telnet' => [
+  //   'title' => 'OLT MAC Refresh (telnet)',
+  //   'url'   => '/api/olt_mac_refresh_telnet.php?mode=full',
+  //   'method'=> 'GET',
+  //   'desc'  => 'Refresh OLT MAC cache via telnet (onu_inventory/onu_mac_map টেবিল প্রয়োজন)।',
+  //   'timeout' => 600, // heavy job; cap at 10m to avoid UI hang
+  //   'async' => true, // detach response early so browser doesn't hang
+  //   'schedule' => '*/30 * * * *', // default every 30 minutes
+  //   'supports' => ['olt_id','skip_pppoe'], // allow narrowing to a specific OLT / skipping PPPoE link phase
+  // ],
 ];
 
 /* ---------- Helpers ---------- */

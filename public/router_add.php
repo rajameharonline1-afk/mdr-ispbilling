@@ -1,6 +1,11 @@
 <?php
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/acl.php';
+
+if (function_exists('require_perm')) {
+    require_perm('edit.routers');
+}
 
 $message = '';
 
@@ -25,23 +30,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = '<div class="alert alert-danger">❌ Please fill all required fields!</div>';
     }
 }
+
+$page_title = 'Add Router';
+$_active = 'router_add';
+include __DIR__ . '/../partials/partials_header.php';
 ?>
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-<meta charset="UTF-8">
 
-
-
-<title>Add Router</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
-<link rel="stylesheet" href="../assets/css/style.css">
-</head>
-<body>
-<?php include __DIR__ . '/../partials/partials_header.php'; ?>
-
-
-<?php if (hasPermission('add.router')){ ?>
+<?php if (hasPermission('edit.routers')){ ?>
 
 
 
@@ -98,5 +93,3 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <?php include __DIR__ . '/../partials/alert_denied.php'; ?>
 <?php include __DIR__ . '/../partials/partials_footer.php'; ?>
-</body>
-</html>

@@ -25,6 +25,10 @@ if (!function_exists('menu_db')) {
 --------------------------------------------------------- */
 if (!function_exists('has_perm')) {
   function has_perm(string $perm): bool {
+    // Prefer central ACL if available (supports admin bypass + wildcards)
+    if (function_exists('acl_can')) {
+      return acl_can($perm);
+    }
     // Admin bypass
     $u = strtolower((string)($_SESSION['username'] ?? ''));
     if ($u === 'admin') return true;

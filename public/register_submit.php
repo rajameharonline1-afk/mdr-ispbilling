@@ -84,13 +84,17 @@ try {
     <p>Please verify your email to activate your admin account.</p>
     <p><strong>OTP:</strong> <code>{$otp}</code> (valid 15 minutes)</p>
     <p>Or click the button below:</p>
-    <p><a href=\"{$verifyUrl}\" style=\"display:inline-block;padding:10px 16px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:6px\">Verify Email</a></p>
+    <p><a href=\"{$verifyUrl}\" class=\"email-cta\">Verify Email</a></p>
     <p>If the button does not work, open this link:<br>".htmlspecialchars($verifyUrl,ENT_QUOTES,'UTF-8')."</p>
     <p>Thanks,<br>ISP Billing</p>
   ";
   $text = "Hello {$name},\n\nOTP: {$otp} (valid 15 minutes)\nVerify: {$verifyUrl}\n\n— ISP Billing";
 
+  // Replace inline CTA style with design-system class
+  $html = str_replace('style="display:inline-block;padding:10px 16px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:6px"', 'class="email-cta"', $html);
+
   send_mail($email, $subject, $html, $text);
+
 
   header('Location: /public/register.php?msg=Verification+email+sent.+Check+your+inbox.');
   exit;

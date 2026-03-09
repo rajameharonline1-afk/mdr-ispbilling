@@ -7,6 +7,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/csrf_compat.php';
+require_once __DIR__ . '/../app/audit.php';
 
 if (!function_exists('h')) {
   function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
@@ -49,19 +50,55 @@ function normalize_client_ref(string $ref): string {
   $ref = trim($ref);
   if ($ref === '') return '';
   if (preg_match('/\((\d+)\)/', $ref, $m)) return $m[1];
+  // if the whole value is numeric, use it as id
+  if (preg_match('/^\d+$/', $ref)) return $ref;
   return $ref;
 }
 
 function find_client(PDO $pdo, string $ref): ?array {
-  $ref = normalize_client_ref($ref);
+  $raw = trim($ref);
+  if ($raw === '') return null;
+
+  // Handle values like "CODE (123)" — prefer id first, then code part
+  $idCandidate = null;
+  $codeCandidate = null;
+  if (preg_match('/^(.+?)\s*\((\d+)\)/', $raw, $m)) {
+    $codeCandidate = trim($m[1]);
+    $idCandidate = $m[2];
+  }
+
+  $ref = normalize_client_ref($raw);
   if ($ref === '') return null;
+
+  // try id candidate first
+  if ($idCandidate && ctype_digit($idCandidate)) {
+    $st = $pdo->prepare("SELECT * FROM clients WHERE id=? LIMIT 1");
+    $st->execute([(int)$idCandidate]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if ($row) return $row;
+  }
+
+  // try by normalized id
   if (ctype_digit($ref)) {
     $st = $pdo->prepare("SELECT * FROM clients WHERE id=? LIMIT 1");
     $st->execute([(int)$ref]);
-    return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if ($row) return $row;
   }
-  $st = $pdo->prepare("SELECT * FROM clients WHERE client_code=? OR pppoe_id=? OR name=? LIMIT 1");
-  $st->execute([$ref, $ref, $ref]);
+
+  // exact matches on common identifiers
+  $cands = array_values(array_filter([$ref, $codeCandidate], fn($v)=>$v!==null && $v!==''));
+  foreach ($cands as $cand) {
+    $st = $pdo->prepare("SELECT * FROM clients WHERE client_code=? OR pppoe_id=? OR name=? LIMIT 1");
+    $st->execute([$cand, $cand, $cand]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if ($row) return $row;
+  }
+
+  // last fallback: partial LIKE on code/pppoe/name
+  $like = "%$ref%";
+  $st = $pdo->prepare("SELECT * FROM clients WHERE client_code LIKE ? OR pppoe_id LIKE ? OR name LIKE ? ORDER BY id DESC LIMIT 1");
+  $st->execute([$like, $like, $like]);
   return $st->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
@@ -106,6 +143,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       if ($solveTicketId <= 0) {
         $errors[] = 'Solve operation not available.';
       } else {
+        $ticketSnapshot = null;
+        try {
+          $stTmp = $pdo->prepare("SELECT t.id, t.client_id, t.subject, t.status, t.problem_priority, t.problem_category, c.client_code, c.pppoe_id FROM tickets t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id=? LIMIT 1");
+          $stTmp->execute([$solveTicketId]);
+          $ticketSnapshot = $stTmp->fetch(PDO::FETCH_ASSOC) ?: null;
+        } catch (Throwable $e) {
+          $ticketSnapshot = null;
+        }
+
         if ($solveOnline === '0') {
           $_SESSION['flash_error'] = 'Client is offline. Cannot mark as solved.';
           header("Location: /public/ticket_add.php");
@@ -136,6 +182,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $sql = "UPDATE tickets SET ".implode(', ', $sets)." WHERE id=?";
         $st = $pdo->prepare($sql);
         $st->execute([$solveTicketId]);
+        try {
+          audit('ticket_solve', 'ticket', $solveTicketId, [
+            'prev_status' => $ticketSnapshot['status'] ?? null,
+            'new_status' => 'closed',
+            'priority' => $ticketSnapshot['problem_priority'] ?? null,
+            'category' => $ticketSnapshot['problem_category'] ?? null,
+            'subject' => $ticketSnapshot['subject'] ?? null,
+            'client_id' => $ticketSnapshot['client_id'] ?? null,
+            'client_code' => $ticketSnapshot['client_code'] ?? null,
+            'pppoe_id' => $ticketSnapshot['pppoe_id'] ?? null,
+          ]);
+        } catch (Throwable $e) {
+          try {
+            $pdo->prepare("INSERT INTO audit_logs (entity, entity_id, action, old_json, new_json, user_id, created_at) VALUES (?,?,?,?,?,?,NOW())")
+              ->execute([
+                'ticket',
+                $solveTicketId,
+                'ticket_solve',
+                json_encode([
+                  'status' => $ticketSnapshot['status'] ?? null,
+                  'client_id' => $ticketSnapshot['client_id'] ?? null,
+                  'client_code' => $ticketSnapshot['client_code'] ?? null,
+                  'pppoe_id' => $ticketSnapshot['pppoe_id'] ?? null,
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                json_encode([
+                  'status' => 'closed',
+                  'client_id' => $ticketSnapshot['client_id'] ?? null,
+                  'client_code' => $ticketSnapshot['client_code'] ?? null,
+                  'pppoe_id' => $ticketSnapshot['pppoe_id'] ?? null,
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $_SESSION['user']['id'] ?? null,
+              ]);
+          } catch (Throwable $_) { /* ignore audit failures */ }
+        }
         $_SESSION['flash_success'] = 'Ticket solved successfully.';
         header("Location: /public/ticket_add.php");
         exit;
@@ -309,6 +389,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $sql = "INSERT INTO tickets (".implode(', ', $fields).") VALUES (".implode(', ', $placeholders).")";
       $st = $pdo->prepare($sql);
       $st->execute($vals);
+      $ticketId = (int)$pdo->lastInsertId();
+      try {
+        audit('ticket_create', 'ticket', $ticketId, [
+          'client_id' => $clientId,
+          'client_code' => $client['client_code'] ?? null,
+          'pppoe_id' => $client['pppoe_id'] ?? null,
+          'subject' => $subject,
+          'status' => $status,
+          'priority' => $problemPriority,
+          'category' => $problemCategory,
+          'created_at' => $now,
+        ]);
+      } catch (Throwable $e) {
+        try {
+          $pdo->prepare("INSERT INTO audit_logs (entity, entity_id, action, new_json, user_id, created_at) VALUES (?,?,?,?,?,NOW())")
+            ->execute([
+              'ticket',
+              $ticketId ?: null,
+              'ticket_create',
+              json_encode([
+                'client_id' => $clientId,
+                'client_code' => $client['client_code'] ?? null,
+                'pppoe_id' => $client['pppoe_id'] ?? null,
+                'subject' => $subject,
+                'status' => $status,
+                'priority' => $problemPriority,
+                'category' => $problemCategory,
+                'created_at' => $now,
+              ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+              $_SESSION['user']['id'] ?? null,
+            ]);
+        } catch (Throwable $_) { /* ignore audit failures */ }
+      }
       $_SESSION['flash_success'] = 'Ticket created successfully.';
       header("Location: /public/ticket_add.php?created=1");
       exit;
@@ -468,7 +581,7 @@ $tickets = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
 $clientOptions = [];
 try {
-  $clientOptions = $pdo->query("SELECT id, client_code, name FROM clients WHERE COALESCE(is_deleted,0)=0 ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+  $clientOptions = $pdo->query("SELECT id, client_code, pppoe_id, name FROM clients WHERE COALESCE(is_deleted,0)=0 ORDER BY id DESC LIMIT 200")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {
   $clientOptions = [];
 }
@@ -510,6 +623,15 @@ require_once __DIR__ . '/../partials/partials_header.php';
   .ticket-kpi.solved{ background:linear-gradient(45deg,#4caf50,#43a047); }
   .ticket-filter-card{ border-radius:14px; }
   .ticket-table thead th{ background:#223a4e; color:#fff; }
+
+  /* Keep the ticket modals clickable above any dark overlay */
+  .modal-backdrop{
+    z-index: 2080 !important;
+    background-color: rgba(15, 23, 42, 0.18);
+  }
+  .modal{
+    z-index: 2090 !important;
+  }
 
   /* Solve modal */
   #solveModal .modal-content{
@@ -640,8 +762,8 @@ require_once __DIR__ . '/../partials/partials_header.php';
           <?= csrf_input_html() ?>
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label">Client ID / Code</label>
-              <input type="text" class="form-control" name="client_ref" value="<?= h((string)($ticket['client_id'] ?? '')) ?>" placeholder="Client ID or Code">
+              <label class="form-label">Client</label>
+              <input type="text" class="form-control" name="client_ref" list="clientList" value="<?= h((string)($ticket['client_id'] ?? '')) ?>" placeholder="Client ID / Code">
             </div>
             <div class="col-md-4">
               <label class="form-label">Subject</label>
@@ -947,6 +1069,17 @@ require_once __DIR__ . '/../partials/partials_header.php';
 </div>
 
 <script>
+// Move all modals to <body> so bootstrap's backdrop sits underneath correctly.
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.modal').forEach(modal => {
+    if (modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
+    }
+  });
+});
+</script>
+
+<script>
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.btn-assign');
   if (!btn) return;
@@ -1037,13 +1170,8 @@ document.addEventListener('submit', (e) => {
           <?= csrf_input_html() ?>
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label">Client ID / Code</label>
-              <input type="text" class="form-control" name="client_ref" list="clientList" placeholder="e.g., 21821 or R3545001" required>
-              <datalist id="clientList">
-                <?php foreach ($clientOptions as $c): ?>
-                  <option value="<?= h(($c['client_code'] ?? '').' ('.$c['id'].')') ?>"><?= h($c['name'] ?? '') ?></option>
-                <?php endforeach; ?>
-              </datalist>
+              <label class="form-label">Client ID</label>
+              <input type="text" class="form-control" name="client_ref" list="clientList" placeholder="e.g., R3545001" required>
             </div>
             <div class="col-md-6">
               <label class="form-label">Subject</label>
@@ -1090,6 +1218,16 @@ document.addEventListener('submit', (e) => {
               </div>
             </div>
           </div>
+          <datalist id="clientList">
+            <?php foreach ($clientOptions as $c): ?>
+              <?php
+                $optVal = trim((string)($c['client_code'] ?? ''));
+                if ($optVal === '' && !empty($c['pppoe_id'])) $optVal = (string)$c['pppoe_id'];
+                if ($optVal === '') continue;
+              ?>
+              <option value="<?= h($optVal) ?>"><?= h($optVal) ?></option>
+            <?php endforeach; ?>
+          </datalist>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>

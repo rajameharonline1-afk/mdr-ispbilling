@@ -17,6 +17,9 @@ try{
   $id    = isset($in['id']) && $in['id'] !== '' ? (int)$in['id'] : null;
   $name  = trim((string)($in['name'] ?? ''));
   $price = (float)($in['price'] ?? 0);
+  $speed = trim((string)($in['speed'] ?? ''));
+  $desc  = trim((string)($in['description'] ?? ''));
+  $desc  = ($desc === '') ? null : $desc;
 
   if ($name === '') out(['ok'=>false,'error'=>'Package name is required']);
   if ($price < 0)   out(['ok'=>false,'error'=>'Price must be >= 0']);
@@ -27,6 +30,9 @@ try{
   $hasUpdated = hascol($pdo,'packages','updated_at');
   $hasSpeed   = hascol($pdo,'packages','speed');
   $hasValidity= hascol($pdo,'packages','validity');
+  $hasDesc    = hascol($pdo,'packages','description');
+
+  if ($hasSpeed && $speed === '') out(['ok'=>false,'error'=>'Speed is required']);
 
   // (বাংলা) name unique (case-insensitive)
   $sqlDup = "SELECT id FROM packages WHERE LOWER(name)=LOWER(?)";
@@ -38,6 +44,14 @@ try{
   if ($id) {
     $sql = "UPDATE packages SET name=?, price=?";
     $params = [$name,$price];
+    if ($hasDesc) {
+      $sql .= ", description=?";
+      $params[] = $desc;
+    }
+    if ($hasSpeed) {
+      $sql .= ", speed=?";
+      $params[] = $speed;
+    }
     if ($hasUpdated) {
       $sql .= ", updated_at=NOW()";
     }
@@ -50,10 +64,15 @@ try{
     $cols = ['name','price'];
     $vals = ['?','?'];
     $params = [$name,$price];
+    if ($hasDesc) {
+      $cols[] = 'description';
+      $vals[] = '?';
+      $params[] = $desc;
+    }
     if ($hasSpeed) {
       $cols[] = 'speed';
       $vals[] = '?';
-      $params[] = 'N/A';
+      $params[] = $speed;
     }
     if ($hasValidity) {
       $cols[] = 'validity';

@@ -1,0 +1,149 @@
+/* Global design system overrides for Rajamehar Online */
+:root{
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --muted: #6b7280;
+  --border: #e6e9ef;
+  --primary: #0b66a3; /* brand blue - tweak as needed */
+  --accent: #0ea5e9;
+  --shadow: 0 6px 18px rgba(2,6,23,0.06);
+}
+html,body{height:100%;}
+body{font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin:0;background:var(--bg);color:#0f172a}
+
+/* Mobile smooth scrolling & touch handling */
+html, body, .content-area { -webkit-overflow-scrolling: touch; }
+body, .content-area { touch-action: pan-y; }
+
+/* Topbar (site uses .topbar) */
+.topbar{background:var(--primary);color:#fff;border-bottom:1px solid rgba(0,0,0,0.06);box-shadow:0 2px 6px rgba(2,6,23,0.12)}
+.topbar .navbar-brand img{height:28px}
+.topbar .navbar-brand span{color:#fff}
+.topbar a, .topbar .btn{color:inherit}
+
+/* Sidebar (offcanvas) */
+#sidebarOffcanvas{background:var(--surface);border-right:1px solid var(--border)}
+#sidebarOffcanvas .offcanvas-body{padding:0}
+#sidebarOffcanvas .menu{padding:12px}
+#sidebarOffcanvas .menu a{color:#111827}
+#sidebarOffcanvas .menu a.active{background:linear-gradient(90deg,var(--accent),var(--primary));color:#fff}
+
+/* App layout helpers */
+.app-shell{min-height:100vh;display:flex;flex-direction:column}
+.app-wrap{display:flex;align-items:stretch}
+.content-area, .content{padding:16px}
+
+/* Ensure main content scrolls independently on mobile and desktop */
+.app-shell .content-area {
+  flex: 1 1 auto;
+  min-height: 0; /* allow flex child to shrink and enable scrolling */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Offcanvas sidebar scroll behavior */
+#sidebarOffcanvas .offcanvas-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Design-system classes applied by JS */
+.ads-ds-card, .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;box-shadow:var(--shadow);margin-bottom:12px}
+.ads-ds-card .card-title{font-weight:600;margin-bottom:8px}
+
+.ads-ds-table, .table{width:100%;border-collapse:collapse;background:transparent}
+.ads-ds-table th, .ads-ds-table td, .table th, .table td{padding:10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.ads-ds-table thead th{background:#fbfdff;font-weight:700}
+.ads-ds-table tbody tr:hover{background:#fbfbff}
+
+/* Modal */
+.ads-ds-modal .modal-content, .modal .modal-content{border-radius:10px;border:1px solid var(--border)}
+
+/* Buttons & toggles */
+.btn{border-radius:8px}
+.btn-outline-primary{border-color:rgba(11,102,163,0.12);color:var(--primary)}
+.toggle, .form-check.form-switch{display:inline-flex;align-items:center}
+
+/* Email CTA used in transactional emails */
+.email-cta{display:inline-block;padding:10px 16px;background:var(--primary);color:#fff;text-decoration:none;border-radius:6px}
+.email-cta:hover{filter:brightness(.96)}
+
+/* Action toggle (styled switch) */
+.ads-action-toggle{width:44px;height:24px;appearance:none;background:#e6eef7;border-radius:999px;position:relative;border:1px solid rgba(2,6,23,0.04);cursor:pointer;transition:background .18s,box-shadow .18s}
+.ads-action-toggle:before{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(2,6,23,0.08);transition:transform .18s}
+.ads-action-toggle:checked{background:linear-gradient(90deg,var(--accent),var(--primary));border-color:rgba(11,102,163,0.14)}
+.ads-action-toggle:checked:before{transform:translateX(20px)}
+
+/* Tooltip helpers (non-bootstrap fallback) */
+[data-tooltip]{position:relative}
+[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;transform:translateX(-50%) translateY(-8px);bottom:100%;white-space:nowrap;background:#111;color:#fff;padding:6px 8px;border-radius:6px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .12s,transform .12s}
+[data-tooltip].show::after{opacity:1;transform:translateX(-50%) translateY(-12px)}
+
+/* Tooltip z-index and subtle shadow for visibility */
+[data-tooltip]::after{z-index:2200;box-shadow:0 6px 18px rgba(2,6,23,0.12)}
+
+/* Icons spacing */
+.bi, .fa, .fas, .fi{font-size:16px;vertical-align:-2px}
+
+/* Icon color helpers */
+.icon-muted{color:var(--muted)}
+.icon-primary{color:var(--primary)}
+
+/* Spacing utilities (small set) */
+.gap-xs{gap:6px}
+.gap-sm{gap:10px}
+.gap-md{gap:16px}
+.p-sm{padding:8px}
+.p-md{padding:12px}
+.p-lg{padding:18px}
+
+/* Modal backdrop override to ensure stacking on mobile */
+.modal-backdrop, .offcanvas-backdrop{background:rgba(2,6,23,0.45) !important;z-index:1040}
+
+/* Prevent stray backdrops from blocking input when not visible */
+.modal-backdrop:not(.show), .offcanvas-backdrop:not(.show) {
+  display: none !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+.modal-backdrop.show, .offcanvas-backdrop.show { pointer-events: auto !important; }
+
+/* Ensure consistent card spacing on mobile */
+@media (max-width:767.98px){
+  .ads-ds-card, .card{padding:14px;margin-bottom:14px}
+  .content-area, .content{padding:12px}
+}
+
+/* Utility */
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.text-nowrap{white-space:nowrap}
+
+/* Ensure top summary panels and badges look consistent */
+.badge{border-radius:8px}
+
+/* High specificity overrides for pages that use inline styles frequently */
+nav.topbar, .navbar.topbar{background:var(--primary) !important;color:#fff !important}
+#sidebarOffcanvas, .offcanvas-body{background:var(--surface) !important}
+
+/* Let admin dashboard system own topbar/sidebar theming in app shell */
+body.app-shell nav.topbar,
+body.app-shell .navbar.topbar {
+  background: var(--ads-topbar-bg, var(--primary)) !important;
+  color: #fff !important;
+}
+
+body.app-shell #sidebarOffcanvas,
+body.app-shell .offcanvas-body {
+  background: var(--ads-sidebar-bg, var(--surface)) !important;
+}
+
+/* Page-specific conveniences */
+.container-admin .olt-mac-table-page .form-control-sm{min-width:180px}
+.olt-summary-block .badge{margin-right:6px}
+.olt-filters-wrap .card{padding:10px}
+.olt-mac-table .table thead th{background:transparent}
+
+/* Ensure small pill badges for PON list */
+.pon-badge, .badge.text-bg-light.border{border-radius:999px;padding:.35rem .6rem;font-size:.85rem}
+

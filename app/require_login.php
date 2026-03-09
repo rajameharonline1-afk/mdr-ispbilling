@@ -63,16 +63,28 @@ $_SESSION['last_activity'] = $now;
 /* ------------------------------
    Normalize role into session
    ------------------------------ */
-// বাংলা: users.role (বা roles টেবিল) থেকে রোল নাম sync, default 'viewer'.
-if (empty($_SESSION['role'])) {
-    $st = db()->prepare("SELECT COALESCE(LOWER(role), 'viewer') FROM users WHERE id = ? LIMIT 1");
+// বাংলা: users.role_id + roles.name থেকে রোল নাম/id sync, default 'viewer'.
+if (empty($_SESSION['role']) || empty($_SESSION['role_id'])) {
+    $st = db()->prepare("
+        SELECT u.role_id,
+               COALESCE(LOWER(r.name), LOWER(u.role), 'viewer') AS role_name
+          FROM users u
+          LEFT JOIN roles r ON u.role_id = r.id
+         WHERE u.id = ?
+         LIMIT 1
+    ");
     $st->execute([ (int)$_SESSION['user_id'] ]);
-    $role = strtolower(trim((string)$st->fetchColumn()));
-    $_SESSION['role'] = $role !== '' ? $role : 'viewer';
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    $roleId   = isset($row['role_id']) ? (int)$row['role_id'] : null;
+    $roleName = strtolower(trim((string)($row['role_name'] ?? 'viewer')));
+    if ($roleName === '') $roleName = 'viewer';
+    $_SESSION['role_id'] = $roleId ?: ($_SESSION['role_id'] ?? null);
+    $_SESSION['role']    = $roleName;
 }
 // বাংলা: ACL helper গুলো session['user']['role'] পড়ে — সেটাও সিঙ্ক করি
-$_SESSION['user']['role']  = $_SESSION['role'];
-$_SESSION['acl_role_name'] = $_SESSION['role'];
+$_SESSION['user']['role']    = $_SESSION['role'];
+$_SESSION['user']['role_id'] = $_SESSION['role_id'] ?? null;
+$_SESSION['acl_role_name']   = $_SESSION['role'];
 
 /* ------------------------------
    Ensure user struct consistency

@@ -1,6 +1,6 @@
 <?php
 // /public/invoice_delete.php
-// Hard delete invoice and recalc client ledger.
+// (বাংলা) ইনভয়েস ডিলিট: রিমার্ক + লক লগ করে তারপর হার্ড ডিলিট ও লেজার রিক্যাল্ক।
 
 declare(strict_types=1);
 
@@ -23,7 +23,7 @@ if (!csrf_verify()) {
   $originHost = $origin ? (parse_url($origin, PHP_URL_HOST) ?: '') : '';
   $sameHost = ($refHost && $host && strcasecmp($refHost, $host) === 0) || ($originHost && $host && strcasecmp($originHost, $host) === 0);
   if (!($sameHost && !empty($_SESSION['user_id']))) {
-    // fallback: allow if logged in (avoid blocking legitimate actions in strict referrer environments)
+    // (বাংলা) রেফারার ব্লক থাকলেও যদি লগইন করা থাকে তাহলে এক্সেস দিই; না হলে ব্লক।
     if (empty($_SESSION['user_id'])) {
       $_SESSION['flash_error'] = 'Invalid CSRF token.';
       header('Location: /invoices.php');
@@ -33,31 +33,96 @@ if (!csrf_verify()) {
 }
 
 function col_exists(PDO $pdo, string $tbl, string $col): bool {
-  $st = $pdo->prepare("SHOW COLUMNS FROM `$tbl` LIKE ?");
-  $st->execute([$col]);
-  return (bool)$st->fetchColumn();
+  try{
+    $st = $pdo->prepare("SHOW COLUMNS FROM `$tbl` LIKE ?");
+    $st->execute([$col]);
+    return (bool)$st->fetchColumn();
+  }catch(Throwable $e){ return false; }
 }
-function column_type(PDO $pdo, string $tbl, string $col): ?string {
-  $st = $pdo->prepare("SHOW COLUMNS FROM `$tbl` LIKE ?");
-  $st->execute([$col]);
-  $row = $st->fetch(PDO::FETCH_ASSOC);
-  return $row['Type'] ?? null;
+function add_col_if_missing(PDO $pdo, string $tbl, string $colDef): void {
+  preg_match('/`([^`]+)`/',$colDef,$m);
+  $col = $m[1] ?? null;
+  if (!$col || col_exists($pdo,$tbl,$col)) return;
+  try { $pdo->exec("ALTER TABLE `$tbl` ADD COLUMN $colDef"); } catch(Throwable $e) {}
 }
-function status_void_value(PDO $pdo): ?string {
-  $type = column_type($pdo, 'invoices', 'status');
-  if (!$type) return null;
-  $type = strtolower($type);
-  if (preg_match("/^enum\\((.+)\\)$/", $type, $m)) {
-    $raw = $m[1];
-    $vals = array_map(function ($v) {
-      return trim($v, " '\"");
-    }, explode(',', $raw));
-    foreach (['void','deleted','cancelled','canceled'] as $v) {
-      if (in_array($v, $vals, true)) return $v;
-    }
-    return null;
+function ensure_audit_logs_schema(PDO $pdo): void {
+  try {
+    $pdo->exec("
+      CREATE TABLE IF NOT EXISTS `audit_logs`(
+        `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `entity` VARCHAR(64) NULL,
+        `entity_id` BIGINT NULL,
+        `action` VARCHAR(64) NULL,
+        `meta` LONGTEXT NULL,
+        `new_json` LONGTEXT NULL,
+        `user_id` BIGINT NULL,
+        `ip` VARCHAR(45) NULL,
+        `user_agent` VARCHAR(255) NULL,
+        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    add_col_if_missing($pdo,'audit_logs',"`entity` VARCHAR(64) NULL");
+    add_col_if_missing($pdo,'audit_logs',"`entity_id` BIGINT NULL");
+    add_col_if_missing($pdo,'audit_logs',"`action` VARCHAR(64) NULL");
+    add_col_if_missing($pdo,'audit_logs',"`meta` LONGTEXT NULL");
+    add_col_if_missing($pdo,'audit_logs',"`new_json` LONGTEXT NULL");
+    add_col_if_missing($pdo,'audit_logs',"`user_id` BIGINT NULL");
+    add_col_if_missing($pdo,'audit_logs',"`ip` VARCHAR(45) NULL");
+    add_col_if_missing($pdo,'audit_logs',"`user_agent` VARCHAR(255) NULL");
+    add_col_if_missing($pdo,'audit_logs',"`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP");
+  } catch(Throwable $e) { /* ignore schema bootstrap error */ }
+}
+function current_user_id(): int {
+  foreach ([
+    $_SESSION['user']['id'] ?? null,
+    $_SESSION['user_id'] ?? null,
+    $_SESSION['SESS_USER_ID'] ?? null,
+  ] as $v) {
+    $id = (int)$v;
+    if ($id > 0) return $id;
   }
-  return in_array($type, ['varchar(20)','varchar(50)','varchar(100)','text'], true) ? 'void' : null;
+  return 0;
+}
+function client_ip(): string {
+  foreach (['HTTP_X_FORWARDED_FOR','HTTP_CLIENT_IP','REMOTE_ADDR'] as $k) {
+    if (!empty($_SERVER[$k])) {
+      $ip = explode(',', $_SERVER[$k])[0];
+      return trim($ip);
+    }
+  }
+  return '';
+}
+function log_invoice_delete_lock(PDO $pdo, int $invoice_id, int $client_id, string $lock_code, string $remarks): void {
+  $payload = [
+    'lock' => $lock_code,
+    'remarks' => $remarks,
+    'invoice_id' => $invoice_id,
+    'client_id' => $client_id,
+    'user_id' => current_user_id(),
+    'ip' => client_ip(),
+    'ua' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
+    'at' => date('c'),
+  ];
+  $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+  $cols = ['entity','entity_id','action'];
+  $vals = ['invoice',$invoice_id,'invoice_delete_lock'];
+
+  if (col_exists($pdo,'audit_logs','new_json')) {
+    $cols[]='new_json'; $vals[]=$json;
+  } elseif (col_exists($pdo,'audit_logs','meta')) {
+    $cols[]='meta'; $vals[]=$json;
+  } else {
+    $cols[]='remarks'; $vals[]=$json;
+  }
+  if (col_exists($pdo,'audit_logs','user_id')) { $cols[]='user_id'; $vals[]=$payload['user_id'] ?: null; }
+  if (col_exists($pdo,'audit_logs','ip')) { $cols[]='ip'; $vals[]=$payload['ip']; }
+  if (col_exists($pdo,'audit_logs','user_agent')) { $cols[]='user_agent'; $vals[]=$payload['ua']; }
+  if (col_exists($pdo,'audit_logs','created_at')) { $cols[]='created_at'; $vals[] = date('Y-m-d H:i:s'); }
+
+  $ph = implode(',', array_fill(0, count($cols), '?'));
+  $sql = "INSERT INTO audit_logs (".implode(',', $cols).") VALUES ($ph)";
+  $st = $pdo->prepare($sql);
+  $st->execute($vals);
 }
 function payments_active_where(PDO $pdo, string $alias='pm'): string {
   $conds=[];
@@ -106,9 +171,18 @@ if ($invoice_id <= 0) {
   header('Location: /invoices.php');
   exit;
 }
+$remarks = trim((string)($_POST['remarks'] ?? ''));
+$remarks = $remarks !== '' ? (function_exists('mb_substr') ? mb_substr($remarks, 0, 500) : substr($remarks, 0, 500)) : '';
+if ($remarks === '') {
+  $_SESSION['flash_error'] = 'Remarks প্রয়োজন।';
+  header('Location: /invoices.php');
+  exit;
+}
+$lock_code = 'INV-DEL-' . strtoupper(bin2hex(random_bytes(4)));
 
 $pdo = db();
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+ensure_audit_logs_schema($pdo);
 
 $st = $pdo->prepare("SELECT id, client_id FROM invoices WHERE id=? LIMIT 1");
 $st->execute([$invoice_id]);
@@ -123,7 +197,10 @@ $client_id = (int)$inv['client_id'];
 try {
   $pdo->beginTransaction();
 
-  // Hard delete: remove children first, then the invoice row.
+  // (বাংলা) ডিলিটের আগে লক + রিমার্ক অডিটে লগ
+  log_invoice_delete_lock($pdo, $invoice_id, $client_id, $lock_code, $remarks);
+
+  // (বাংলা) হার্ড ডিলিট: চাইল্ড টেবিল আগে, পরে ইনভয়েস সারি
   if (col_exists($pdo, 'invoice_items', 'invoice_id')) {
     $pdo->prepare("DELETE FROM invoice_items WHERE invoice_id=?")->execute([$invoice_id]);
   }
@@ -135,7 +212,7 @@ try {
   }
   $pdo->prepare("DELETE FROM invoices WHERE id=?")->execute([$invoice_id]);
 
-  // Recalc client ledger
+  // (বাংলা) ক্লায়েন্ট লেজার আপডেট
   $invAmountCol = col_exists($pdo,'invoices','total') ? 'total' : (col_exists($pdo,'invoices','payable') ? 'payable' : (col_exists($pdo,'invoices','amount') ? 'amount' : 'total'));
   $isNetInvAmount = in_array($invAmountCol, ['payable','net_amount','net_total'], true);
   $hasPayDiscount = col_exists($pdo,'payments','discount');
@@ -150,7 +227,7 @@ try {
   $_SESSION['flash'] = json_encode([
     'type' => 'success',
     'title'=> 'Deleted',
-    'message' => 'Invoice removed successfully.'
+    'message' => 'Invoice removed successfully. Lock: '.$lock_code
   ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
   if ($pdo->inTransaction()) $pdo->rollBack();

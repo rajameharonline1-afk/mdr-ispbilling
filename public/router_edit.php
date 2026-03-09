@@ -1,6 +1,11 @@
 <?php
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
+require_once __DIR__ . '/../app/acl.php';
+
+if (function_exists('require_perm')) {
+    require_perm('edit.routers');
+}
 
 $message = '';
 
@@ -60,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
 <?php include __DIR__ . '/../partials/partials_header.php'; ?>
 
-<?php if (hasPermission('edit_router')){ ?>   
+<?php if (hasPermission('edit.routers')){ ?>   
         <div class="main-content p-4">
         <h3 class="mb-4"><i class="bi bi-pencil-square"></i> Edit Router</h3>
         <?php echo $message; ?>
@@ -107,8 +112,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <a href="routers.php" class="btn btn-secondary">Back</a>
     </form>
 </div>
+<?php } else { ?>
+<?= 'Not permitted Please contact with your Administrator' ?>
 <?php } ?>
-<?= 'Not permitted Please contact wih your Administrator' ?>
 
 
 <?php include __DIR__ . '/../partials/partials_footer.php'; ?>

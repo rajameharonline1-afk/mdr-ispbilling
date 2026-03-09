@@ -3,6 +3,9 @@ require_once __DIR__ . '/../app/require_login.php';
 require_admin();
 require_once __DIR__ . '/../app/db.php';
 
+$page_title = 'Edit Payment';
+$_active = 'billing';
+
 $id = $_GET['id'] ?? null;
 $success = $error = '';
 
@@ -64,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 ?>
-<?php include __DIR__ . '/../app/header.php'; ?>
+<?php include __DIR__ . '/../partials/partials_header.php'; ?>
 <div class="container mt-4">
     <h4>Edit Payment</h4>
     <?php if ($success): ?><div class="alert alert-success"><?= $success ?></div><?php endif; ?>
@@ -101,4 +104,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <button type="submit" class="btn btn-primary">Update Payment</button>
     </form>
 </div>
-<?php include __DIR__ . '/../app/footer.php'; ?>
+<?php include __DIR__ . '/../partials/partials_footer.php'; ?>

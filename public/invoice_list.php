@@ -2,6 +2,9 @@
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 
+$page_title = 'Invoice List';
+$_active = 'billing';
+
 // ইনভয়েস লিস্ট
 $stmt = db()->prepare("
     SELECT invoices.*, clients.name AS client_name 
@@ -12,7 +15,7 @@ $stmt = db()->prepare("
 $stmt->execute();
 $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-include __DIR__ . '/../app/header.php';
+include __DIR__ . '/../partials/partials_header.php';
 ?>
 
 <div class="container mt-4">
@@ -64,4 +67,4 @@ include __DIR__ . '/../app/header.php';
     </div>
 </div>
 
-<?php include __DIR__ . '/../app/footer.php'; ?>
+<?php include __DIR__ . '/../partials/partials_footer.php'; ?>

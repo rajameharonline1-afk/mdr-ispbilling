@@ -1,7 +1,7 @@
 <?php
 // /public/invoices.php
-// Invoices list + sorting + tabs + advanced filters (router/package/area) + export link + Print/PDF actions
-// UI English; বাংলা কমেন্ট; schema-aware (billing_month/invoice_date, total/payable/amount, status fallback)
+// ইনভয়েস লিস্ট: সর্ট/ট্যাব/অ্যাডভান্সড ফিল্টার (রাউটার/প্যাকেজ/এরিয়া) + এক্সপোর্ট/প্রিন্ট/PDF সব এক পাতায়।
+// UI ইংরেজি; সব ব্যাখ্যা বাংলা; স্কিমা-সচেতন (billing_month/invoice_date, total/payable/amount, status fallback)
 
 require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
@@ -41,10 +41,10 @@ $derived_sql = "COALESCE(".
   ($has_amount_col ? "i.amount," : "").
   "0)";
 
-// ============== Inputs ==============
+// ============== ইনপুট ফিল্টার ==============
 $search   = trim($_GET['search'] ?? '');
 $statusQ  = trim($_GET['status'] ?? ''); // '', unpaid, paid, partial
-$month    = trim($_GET['month']  ?? ''); // YYYY-MM
+$month    = trim($_GET['month']  ?? ''); // YYYY-MM (বিলিং মাস)
 $inv_from = trim($_GET['inv_from'] ?? '');
 $inv_to   = trim($_GET['inv_to']   ?? '');
 $due_from = trim($_GET['due_from'] ?? '');
@@ -61,23 +61,23 @@ if ($due_from && !preg_match($re_date, $due_from)) $due_from = '';
 if ($due_to   && !preg_match($re_date, $due_to))   $due_to   = '';
 
 $page   = max(1, intval($_GET['page'] ?? 1));
-$limit  = max(10, min(100, intval($_GET['limit'] ?? 20))); // Per Page সাপোর্ট
+$limit  = max(10, min(100, intval($_GET['limit'] ?? 20))); // প্রতি পাতার আইটেম সীমা
 $offset = ($page - 1) * $limit;
 
-// ---- Sorting (?sort=&dir=) ----
+// ---- সর্টিং (?sort=&dir=) ----
 $sort   = strtolower($_GET['sort'] ?? 'id');
 $dirRaw = strtolower($_GET['dir']  ?? 'desc');
 $dirRaw = in_array($dirRaw, ['asc','desc'], true) ? $dirRaw : 'desc';
 
-// (বাংলা) derived_total/amount sort map
+// (বাংলা) derived_total/amount সর্ট ম্যাপ
 $map = [
   'id'      => 'i.id',
   'number'  => $has_inv_number ? 'i.invoice_number' : 'i.id',
   'client'  => 'c.name',
   'start'   => $has_pstart ? 'i.period_start' : 'i.id',
   'end'     => $has_pend   ? 'i.period_end'   : 'i.id',
-  'amount'  => "$derived_sql",       // derived
-  'total'   => "$derived_sql",       // derived
+  'amount'  => "$derived_sql",       // ডেরাইভড সমষ্টি
+  'total'   => "$derived_sql",       // ডেরাইভড সমষ্টি
   'status'  => $has_status ? 'i.status' : 'computed_status',
   'invdate' => $has_inv_date ? 'i.invoice_date' : 'i.id',
   'duedate' => $has_due_date ? 'i.due_date'     : 'i.id',
@@ -85,12 +85,12 @@ $map = [
 ];
 if (!isset($map[$sort])) $sort = 'id';
 $dirSql = ($dirRaw === 'asc') ? 'ASC' : 'DESC';
-$order  = $map[$sort] . ' ' . $dirSql . ', i.id DESC'; // tie-breaker for stable pagination
+$order  = $map[$sort] . ' ' . $dirSql . ', i.id DESC'; // একই মান হলে id DESC ব্রেকার
 
-// ---- Sortable header link helper ----
+// ---- হেডারে সর্ট লিঙ্ক হেল্পার ----
 function sort_link($key, $label, $currentSort, $currentDirRaw){
   $qs = $_GET;
-  unset($qs['page']); // page reset on sort
+  unset($qs['page']); // সর্ট করলে পেজ রিসেট
   $nextDir = ($currentSort === $key && $currentDirRaw === 'asc') ? 'desc' : 'asc';
   $qs['sort'] = $key; $qs['dir']  = $nextDir; $qs['page'] = 1;
   $href = '?' . http_build_query($qs);
@@ -102,8 +102,8 @@ function sort_link($key, $label, $currentSort, $currentDirRaw){
   return '<a class="text-decoration-none" href="'.$href.'" title="Sort by '.$label.'">'.$label.$arrow.'</a>';
 }
 
-// ============== Query Base & Filters (reusable) ==============
-// বাংলা: status কলাম না থাকলে computed_status/HAVING দিয়ে ফিল্টার; billing_month থাকলে exact match; না থাকলে invoice_date মাসে fallback
+// ============== বেস কুয়েরি + ফিল্টার (রিইউজেবল) ==============
+// বাংলা: status কলাম না থাকলে computed_status/HAVING দিয়ে ফিল্টার; billing_month থাকলে exact match; নাহলে invoice_date মাসে fallback
 function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from, $inv_to, $due_from, $due_to, $router_id, $package_id, $area, $has_inv_number, $has_status, $has_bm, $has_inv_date, $has_due_date, $derived_sql){
   $sql =
     " FROM invoices i
@@ -118,7 +118,7 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
 
   $where = ["1=1"];
 
-  // Search (invoice_number থাকলে তাতে; নাহলে id/name/pppoe)
+  // সার্চ (invoice_number থাকলে তাতে; নাহলে id/name/pppoe)
   if ($search !== '') {
     if ($has_inv_number) {
       $where[] = "(i.invoice_number LIKE ? OR c.name LIKE ? OR c.pppoe_id LIKE ?)";
@@ -129,7 +129,7 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
     array_push($params, $like, $like, $like);
   }
 
-  // Billing month filter (FIXED: billing_month হলে exact match)
+  // বিলিং মাস ফিল্টার (billing_month হলে exact match)
   if (preg_match('/^\d{4}-\d{2}$/', $month)) {
     $mStart = $month.'-01';
     $mEnd   = date('Y-m-t', strtotime($mStart));
@@ -142,15 +142,15 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
     }
   }
 
-  // Invoice date range
+  // ইনভয়েস তারিখ রেঞ্জ
   if ($inv_from !== '' && $has_inv_date) { $where[] = "DATE(i.invoice_date) >= ?"; $params[] = $inv_from; }
   if ($inv_to   !== '' && $has_inv_date) { $where[] = "DATE(i.invoice_date) <= ?"; $params[] = $inv_to;   }
 
-  // Due date range
+  // ডিউ তারিখ রেঞ্জ
   if ($due_from !== '' && $has_due_date) { $where[] = "DATE(i.due_date) >= ?"; $params[] = $due_from; }
   if ($due_to   !== '' && $has_due_date) { $where[] = "DATE(i.due_date) <= ?"; $params[] = $due_to;   }
 
-  // Router/Package/Area
+  // রাউটার/প্যাকেজ/এরিয়া ফিল্টার
   if ($router_id !== '' && ctype_digit((string)$router_id))  { $where[] = "c.router_id = ?";  $params[] = (int)$router_id; }
   if ($package_id !== '' && ctype_digit((string)$package_id)){ $where[] = "c.package_id = ?"; $params[] = (int)$package_id; }
   if ($area !== '') { $where[] = "c.area LIKE ?"; $params[] = '%'.$area.'%'; }
@@ -164,10 +164,10 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
       $where[] = "i.status = ?";
       $params[] = $statusQ;
     } else {
-      // computed status:
+      // গাণিতিক status:
       // paid_amount >= derived_total → paid
       // paid_amount = 0 → unpaid
-      // else → partial
+      // নইলে → partial
       $having = " HAVING computed_status = ? ";
       $params[] = $statusQ;
     }
@@ -175,7 +175,7 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
 
   $whereSql = " WHERE ".implode(' AND ', $where);
 
-  // Select list (schema-aware)
+  // সিলেক্ট লিস্ট (স্কিমা-সচেতন)
   $select =
     "SELECT
       i.*,
@@ -193,11 +193,11 @@ function build_base_sql(PDO $pdo, &$params, $search, $statusQ, $month, $inv_from
           END AS computed_status"
       );
 
-  // Return full SQL pieces
+  // পূর্ণ SQL কম্পোনেন্ট ফিরিয়ে দাও
   return [$select, $sql.$whereSql, $having];
 }
 
-// ============== Main Query ==============
+// ============== মূল কুয়েরি ==============
 $params = [];
 list($selectCols, $sql_base, $having_for_status) =
   build_base_sql($pdo, $params, $search, $statusQ, $month, $inv_from, $inv_to, $due_from, $due_to, $router_id, $package_id, $area,
@@ -214,17 +214,17 @@ $total_records = (int)$stmt_count->fetchColumn();
 $total_pages   = max(1, (int)ceil($total_records / $limit));
 if ($page > $total_pages) { $page = $total_pages; $offset = ($page - 1) * $limit; }
 
-/* Data */
+/* ডেটা লোড */
 $sql = "$selectCols $sql_base $having_for_status ORDER BY $order LIMIT $limit OFFSET $offset";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-/* Page totals (derived_total) */
+/* পেজ টোটাল (derived_total) */
 $page_total = 0.0;
 foreach ($rows as $r) { $page_total += (float)$r['derived_total']; }
 
-/* ============== Tab Counters (All/Paid/Unpaid/Partial) ============== */
+/* ============== ট্যাব কাউন্টার (All/Paid/Unpaid/Partial) ============== */
 function count_by_status_tab(PDO $pdo, $statusKey, $search, $month, $inv_from, $inv_to, $due_from, $due_to, $router_id, $package_id, $area,
   $has_inv_number, $has_status, $has_bm, $has_inv_date, $has_due_date, $derived_sql) {
 
@@ -338,7 +338,7 @@ thead th a:hover{ text-decoration:underline; }
         </script>
       <?php endif; ?>
 
-    <!-- Header -->
+    <!-- হেডার -->
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
         <h4 class="mb-1">Invoices</h4>
@@ -357,7 +357,7 @@ thead th a:hover{ text-decoration:underline; }
     </div>
 
 
-    <!-- Export -->
+    <!-- এক্সপোর্ট -->
     <?php
       $export_params = [
         'search'=>$search,'month'=>$month,'status'=>$statusQ,
@@ -371,7 +371,7 @@ thead th a:hover{ text-decoration:underline; }
       <i class="bi bi-filetype-csv"></i> Export CSV
     </a>
 
-    <!-- Filters -->
+    <!-- ফিল্টার -->
     <form class="card border-0 filter-card mb-3" method="GET">
       <div class="card-body">
         <div class="row g-2">
@@ -422,7 +422,7 @@ thead th a:hover{ text-decoration:underline; }
           </div>
           <?php endif; ?>
 
-          <!-- Router/Package/Area -->
+          <!-- রাউটার/প্যাকেজ/এরিয়া -->
           <div class="col-6 col-md-2">
             <label class="form-label mb-1">Router</label>
             <select name="router" class="form-select form-select-sm">
@@ -480,13 +480,13 @@ thead th a:hover{ text-decoration:underline; }
         </div>
       </div>
 
-      <!-- keep sort/dir on filter submit -->
+      <!-- ফিল্টারে সাবমিট করলে sort/dir ধরে রাখো -->
       <input type="hidden" name="sort" value="<?= h($sort) ?>">
       <input type="hidden" name="dir"  value="<?= h($dirRaw) ?>">
       <input type="hidden" name="page" value="1">
     </form>
 
-    <!-- Table -->
+    <!-- টেবিল -->
     <div class="table-responsive">
       <table class="table table-hover table-striped table-sm align-middle">
         <thead>
@@ -584,13 +584,16 @@ thead th a:hover{ text-decoration:underline; }
                    href="invoice_print.php?id=<?= (int)$r['id'] ?>&pdf=1" target="_blank">
                   <i class="bi bi-file-earmark-arrow-down"></i>
                 </a>
-                <form class="d-inline js-invoice-delete" method="post" action="invoice_delete.php">
-                  <?= csrf_input_html() ?>
-                  <input type="hidden" name="invoice_id" value="<?= (int)$r['id'] ?>">
-                  <button class="btn btn-outline-danger" title="Delete">
-                    <i class="bi bi-trash"></i>
-                  </button>
-                </form>
+                <button
+                  type="button"
+                  class="btn btn-outline-danger btn-invoice-delete"
+                  title="Delete"
+                  data-id="<?= (int)$r['id'] ?>"
+                  data-number="<?= h($has_inv_number && !empty($r['invoice_number']) ? $r['invoice_number'] : 'ID-'.(int)$r['id']) ?>"
+                  data-client="<?= h($r['client_name']) ?>"
+                >
+                  <i class="bi bi-trash"></i>
+                </button>
               </div>
             </td>
           </tr>
@@ -601,7 +604,7 @@ thead th a:hover{ text-decoration:underline; }
       </table>
     </div>
 
-    <!-- Pagination -->
+    <!-- পেজিনেশন -->
     <?php if ($total_pages > 1): ?>
       <nav class="mt-3">
         <ul class="pagination justify-content-center pagination-sm">
@@ -639,7 +642,7 @@ thead th a:hover{ text-decoration:underline; }
   </div>
 </div>
 
-<!-- Edit Amount Modal -->
+<!-- এডিট এমাউন্ট মডাল -->
 <div class="modal fade" id="editAmountModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -666,7 +669,7 @@ thead th a:hover{ text-decoration:underline; }
   </div>
 </div>
 
-<!-- Payment Modal -->
+<!-- পেমেন্ট মডাল -->
 <div class="modal fade" id="payModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -728,9 +731,44 @@ thead th a:hover{ text-decoration:underline; }
   </div>
 </div>
 
+<!-- ডিলিট মডাল (রিমার্ক + লক নোটিশ) -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="invoice_delete.php" id="deleteForm">
+        <div class="modal-header">
+          <h5 class="modal-title text-danger"><i class="bi bi-trash"></i> Invoice Delete</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <?= csrf_input_html() ?>
+          <input type="hidden" name="invoice_id" id="delete_invoice_id" value="">
+          <div class="alert alert-warning small">
+            ডিলিটের আগে সিস্টেম একটি লক কোড তৈরি করে অডিটে রাখবে। নিচের রিমার্ক সেই লকের সাথে সংরক্ষিত হবে।
+          </div>
+          <div class="mb-2">
+            <div class="small text-muted">Invoice</div>
+            <div class="fw-semibold" id="delete_invoice_label">—</div>
+            <div class="text-muted small" id="delete_client_label" style="display:none;"></div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Remarks <span class="text-danger">*</span></label>
+            <textarea name="remarks" id="delete_remarks" class="form-control" rows="3" required placeholder="কেন ডিলিট করছেন লিখুন"></textarea>
+            <div class="form-text">ভবিষ্যৎ রিভিউর জন্য বাংলায় স্পষ্ট কারণ লিখুন।</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">বন্ধ</button>
+          <button class="btn btn-danger" type="submit"><i class="bi bi-shield-lock"></i> Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
 <script>
-// Payment modal init + submit (JSON-safe: text fallback)
+// বাংলা: পেমেন্ট/এডিট মডাল ইনিশিয়ালাইজ + সাবমিট (JSON ব্যর্থ হলে টেক্সট fallback)
 (function(){
   const editModal = document.getElementById('editAmountModal');
   if (editModal) {
@@ -767,7 +805,7 @@ thead th a:hover{ text-decoration:underline; }
       document.getElementById('pay_paid').value  = paid.toFixed(2);
       document.getElementById('pay_amount').value = remaining;
 
-      // default now (YYYY-MM-DDTHH:MM)
+      // ডিফল্ট টাইমস্ট্যাম্প (YYYY-MM-DDTHH:MM)
       const now = new Date();
       const pad = n => String(n).padStart(2,'0');
       const local = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+'T'+pad(now.getHours())+':'+pad(now.getMinutes());
@@ -782,7 +820,7 @@ thead th a:hover{ text-decoration:underline; }
   form?.addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(form);
-    // Force JSON response from payment_add.php
+    // payment_add.php কে জোর করে JSON রেসপন্স চাওয়া
     fd.append('ajax', '1');
     fd.append('popup', '1');
 
@@ -796,7 +834,7 @@ thead th a:hover{ text-decoration:underline; }
         credentials:'same-origin',
         headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
       });
-      const text = await res.text();   // read as text first (debug-friendly)
+      const text = await res.text();   // আগে টেক্সট পড়ি যাতে ত্রুটি বোঝা যায়
       let j;
       try { j = JSON.parse(text); }
       catch(parseErr){
@@ -818,48 +856,37 @@ thead th a:hover{ text-decoration:underline; }
     }
   });
 })();
-</script>
 
-<!-- Delete confirm overlay -->
-<div id="deleteConfirmBackdrop" class="d-none position-fixed top-0 start-0 vw-100 vh-100 bg-dark bg-opacity-50 d-flex align-items-center justify-content-center" style="z-index:2000;">
-  <div class="bg-white rounded-4 shadow-lg p-4" style="width:min(420px,90vw);">
-    <h5 class="mb-2 d-flex align-items-center gap-2"><i class="bi bi-trash text-danger"></i> Delete invoice?</h5>
-    <p class="text-muted mb-3 small">This will permanently remove the invoice. Continue?</p>
-    <div class="d-flex justify-content-end gap-2">
-      <button type="button" class="btn btn-light" id="deleteCancelBtn">Cancel</button>
-      <button type="button" class="btn btn-danger" id="deleteOkBtn">Delete</button>
-    </div>
-  </div>
-</div>
-<script>
+// বাংলা: ডিলিট মডাল (রিমার্ক + লক নোটিশ) হ্যান্ডলার
 (function(){
-  const backdrop = document.getElementById('deleteConfirmBackdrop');
-  if(!backdrop) return;
-  const cancelBtn = document.getElementById('deleteCancelBtn');
-  const okBtn = document.getElementById('deleteOkBtn');
-  let pendingForm = null;
+  const modalEl = document.getElementById('deleteModal');
+  if (!modalEl) return;
 
-  function openConfirm(form){
-    pendingForm = form;
-    backdrop.classList.remove('d-none');
+  if (modalEl.parentElement !== document.body) {
+    document.body.appendChild(modalEl);
   }
-  function closeConfirm(){
-    backdrop.classList.add('d-none');
-    pendingForm = null;
-  }
+  const modal = new bootstrap.Modal(modalEl);
+  const idInput = document.getElementById('delete_invoice_id');
+  const labelEl = document.getElementById('delete_invoice_label');
+  const clientEl = document.getElementById('delete_client_label');
+  const remarksInput = document.getElementById('delete_remarks');
 
-  document.addEventListener('submit', function(e){
-    const form = e.target.closest('form.js-invoice-delete');
-    if (!form) return;
+  modalEl.addEventListener('shown.bs.modal', ()=>{ remarksInput?.focus(); });
+
+  document.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.btn-invoice-delete');
+    if (!btn) return;
     e.preventDefault();
-    openConfirm(form);
-  });
+    const id = btn.getAttribute('data-id') || '';
+    const inv = btn.getAttribute('data-number') || '';
+    const client = btn.getAttribute('data-client') || '';
 
-  cancelBtn?.addEventListener('click', closeConfirm);
-  backdrop.addEventListener('click', (e)=>{ if(e.target === backdrop) closeConfirm(); });
-  okBtn?.addEventListener('click', ()=>{
-    if (pendingForm) pendingForm.submit();
-    closeConfirm();
+    idInput.value = id;
+    labelEl.textContent = inv || ('#'+id);
+    clientEl.textContent = client;
+    clientEl.style.display = client ? 'block' : 'none';
+    remarksInput.value = '';
+    modal.show();
   });
 })();
 </script>

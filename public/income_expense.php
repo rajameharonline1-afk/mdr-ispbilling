@@ -8,7 +8,7 @@ require_once __DIR__ . '/../app/require_login.php';
 require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/acl.php';
 
-require_perm('report.income_expense'); // পারমিশন লাগবে
+require_perm('income.expense'); // পারমিশন লাগবে
 
 $pdo = db();
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }

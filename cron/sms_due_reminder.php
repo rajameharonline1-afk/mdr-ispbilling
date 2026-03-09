@@ -81,7 +81,7 @@ if (!$list) { echo "No due clients.\n"; exit; }
 function render_msg(array $c, string $ym): string {
   // উদাহরণ: Discovery Internet: আপনার বকেয়া 650 TK (2025-08)। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।
   $due = number_format(abs((float)$c['ledger_balance']), 0, '.', '');
-  return "Discovery Internet: আপনার বকেয়া {$due} TK ({$ym})। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।";
+  return "Rajamehar Online: আপনার বকেয়া {$due} TK ({$ym})। অনুগ্রহ করে দ্রুত পরিশোধ করুন। ধন্যবাদ।";
 }
 
 // ---------- Insert queue (dedupe) ----------

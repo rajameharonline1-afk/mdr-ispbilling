@@ -143,9 +143,13 @@ if ($__resolved_active !== '') {
   <?php
   $css_main_ver = @filemtime(__DIR__ . '/../assets/css/style.css') ?: time();
   $css_mod_ver  = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time();
+  $css_ads_ver  = @filemtime(__DIR__ . '/../assets/css/admin-dashboard-system.css') ?: time();
+  $css_global_ver = @filemtime(__DIR__ . '/../assets/css/global.css') ?: time();
   ?>
   <link rel="stylesheet" href="/assets/css/style.css?v=<?php echo $css_main_ver; ?>">
   <link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?php echo $css_mod_ver; ?>">
+  <link rel="stylesheet" href="/assets/css/global.css?v=<?php echo $css_global_ver; ?>">
+  <link rel="stylesheet" href="/assets/css/admin-dashboard-system.css?v=<?php echo $css_ads_ver; ?>">
 </head>
 
 <body class="app-shell">

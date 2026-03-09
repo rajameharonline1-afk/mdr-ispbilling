@@ -339,6 +339,14 @@ $users = $pdo->query($sqlUsers)->fetchAll(PDO::FETCH_ASSOC);
 require_once __DIR__ . '/../partials/partials_header.php';
 ?>
 <style>
+  /* Modal / offcanvas guards */
+  .modal-backdrop,
+  .offcanvas-backdrop {
+    z-index: 2000 !important;
+    pointer-events: none !important; /* prevent frozen overlay */
+  }
+  .modal { z-index: 2005 !important; }
+
   /* Mobile-first responsive styles */
   .toolbar { 
     gap: .5rem; 
@@ -1142,6 +1150,33 @@ require_once __DIR__ . '/../partials/partials_header.php';
     const modalEl = document.getElementById('permCreateModal');
     const form = document.getElementById('permCreateForm');
     if (modalEl && form){
+      // Clean stray backdrops / modal-open state
+      const cleanBackdrops = () => {
+        ['.modal-backdrop', '.offcanvas-backdrop'].forEach(sel => {
+          const backs = Array.from(document.querySelectorAll(sel));
+          while (backs.length > 0) {
+            const el = backs.shift();
+            el?.remove();
+          }
+        });
+        if (!document.querySelector('.modal.show') && !document.querySelector('.offcanvas.show')) {
+          document.body.classList.remove('modal-open', 'offcanvas-open');
+          document.body.style.removeProperty('overflow');
+          document.body.style.removeProperty('padding-right');
+        }
+      };
+
+      modalEl.addEventListener('shown.bs.modal', () => {
+        cleanBackdrops();
+        form.reset();
+        const code = form.querySelector('input[name="code"]');
+        code && code.focus();
+      });
+
+      modalEl.addEventListener('hidden.bs.modal', () => {
+        cleanBackdrops();
+      });
+
       modalEl.addEventListener('shown.bs.modal', function(){
         form.reset();
         const code = form.querySelector('input[name="code"]');
@@ -1153,6 +1188,18 @@ require_once __DIR__ . '/../partials/partials_header.php';
       });
     }
   })();
+
+  /* ---- Stuck modal/backdrop guard ----
+     Sometimes after navigation the old Bootstrap backdrop remains in DOM.
+     On DOM ready clean any stray backdrops and modal-open state. */
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+    document.querySelectorAll('.offcanvas-backdrop').forEach(el => el.remove());
+    document.body.classList.remove('modal-open');
+    document.body.classList.remove('offcanvas-open');
+    document.body.style.removeProperty('overflow');
+    document.body.style.removeProperty('padding-right');
+  });
 </script>
 
 <?php

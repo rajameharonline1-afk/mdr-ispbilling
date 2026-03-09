@@ -4,13 +4,13 @@ require_once __DIR__ . '/../app/db.php';
 require_once __DIR__ . '/../app/routeros_api.class.php';
 require_once __DIR__ . '/../app/mikrotik.php';
 require_once __DIR__ . '/../app/package_profile.php';
-require_once __DIR__ . '/../app/audit.php'; // ✅ Audit helper
+require_once __DIR__ . '/../app/audit.php'; // ✅ অডিট সহায়ক ফাংশন
 require_once __DIR__ . '/../app/location_options.php';
 require_once __DIR__ . '/../app/csrf_compat.php';
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
-/* --------- helpers --------- */
+/* --------- সহায়তামূলক ফাংশন --------- */
 // (বাংলা) টেবিলের কলাম আছে কিনা — একবার চেক করে cache করি
 function db_has_column(string $table, string $column): bool {
     static $cache = [];
@@ -111,21 +111,18 @@ function mikrotik_fetch_pppoe_password(array $client): ?string {
 }
 
 /**
- * Save uploaded photo for a client using PPPoE ID for the filename.
- * - Filename: <pppoe-id-sanitized>.<ext>  (no random)
- * - Overwrites existing same-name file; removes previous file if path changed.
+ * (বাংলা) PPPoE ID ব্যবহার করে ক্লায়েন্টের ছবি সেভ করা।
+ * - ফাইলনেম: <pppoe-id-sanitized>.<ext> (র‌্যান্ডম নয়)
+ * - একই নামে আগের ফাইল থাকলে ওভাররাইট; পাথ বদলালে আগের ফাইল ডিলিট।
  *
  * @return array ['ok'=>bool, 'url'=>?string, 'error'=>?string]
- *
- * (বাংলা) pppoe_id থেকে নিরাপদ ফাইলনেম বানিয়ে সেভ করা;
- * আগের ফাইল থাকলে নিরাপদভাবে রিমুভ/ওভাররাইট।
  */
 function handle_client_photo_upload(int $client_id, string $pppoe_id, ?string $existing_url = null): array {
     $out = ['ok'=>true, 'url'=>$existing_url, 'error'=>null];
 
-    // Remove request
+    // (বাংলা) যদি ছবি রিমুভের অনুরোধ আসে
     if (!empty($_POST['remove_photo']) && $_POST['remove_photo'] === '1') {
-        // delete old file if it lives under uploads/clients
+        // (বাংলা) uploads/clients ফোল্ডারের পুরনো ফাইল হলে ডিলিট করি
         if ($existing_url && str_starts_with($existing_url, '/uploads/clients/')) {
             $absOld = realpath(__DIR__ . '/..' . $existing_url);
             $baseUploads = realpath(__DIR__ . '/../uploads/clients');
@@ -137,7 +134,7 @@ function handle_client_photo_upload(int $client_id, string $pppoe_id, ?string $e
         return $out;
     }
 
-    // No new file
+    // (বাংলা) নতুন কোনো ফাইল আপলোড করা হয়নি
     if (empty($_FILES['photo']) || (int)($_FILES['photo']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
         return $out;
     }
@@ -145,8 +142,8 @@ function handle_client_photo_upload(int $client_id, string $pppoe_id, ?string $e
     $f = $_FILES['photo'];
     if ($f['error'] !== UPLOAD_ERR_OK) { $out['ok']=false; $out['error']='Upload failed.'; return $out; }
 
-    // Validate
-    $maxBytes = 3 * 1024 * 1024; // 3MB
+    // (বাংলা) ফাইল সাইজ ও টাইপ যাচাই
+    $maxBytes = 3 * 1024 * 1024; // ৩ এমবি
     if ($f['size'] > $maxBytes) { $out['ok']=false; $out['error']='Max 3MB allowed.'; return $out; }
 
     $mime = function_exists('finfo_open') ? (function($tmp){
@@ -156,25 +153,25 @@ function handle_client_photo_upload(int $client_id, string $pppoe_id, ?string $e
     $allowed = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp'];
     if (!isset($allowed[$mime])) { $out['ok']=false; $out['error']='Only JPG/PNG/WebP.'; return $out; }
 
-    // Destination dir
+    // (বাংলা) গন্তব্য ফোল্ডার তৈরি/নিশ্চিত করা
     $upDir = __DIR__ . '/../uploads/clients';
     if (!is_dir($upDir)) { @mkdir($upDir, 0775, true); }
 
-    // Sanitize PPPoE ID for filename
+    // (বাংলা) PPPoE ID থেকে নিরাপদ ফাইলনেম বানানো
     $slug = strtolower($pppoe_id);
     $slug = preg_replace('/[^a-z0-9-_]+/i', '-', $slug);
     $slug = trim($slug, '-_');
     if ($slug === '') $slug = 'client-'.$client_id;
 
     $ext   = $allowed[$mime];
-    $fname = $slug.'.'.$ext;                          // ← no random
+    $fname = $slug.'.'.$ext;                          // ← র‌্যান্ডম ছাড়া ফাইলনেম
     $dest  = $upDir . '/' . $fname;
     $destWeb = '/uploads/clients/'.$fname;
 
-    // If a file with same name exists, overwrite
+    // (বাংলা) একই নামে ফাইল থাকলে আগেরটি ওভাররাইট
     if (file_exists($dest)) @unlink($dest);
 
-    // If previous URL is different file, delete that too (keeps storage clean)
+    // (বাংলা) আগের ইউআরএল অন্য ফাইল হলে সেটিও মুছে স্টোরেজ পরিষ্কার রাখা
     if ($existing_url && $existing_url !== $destWeb && str_starts_with($existing_url, '/uploads/clients/')) {
         $absOld = realpath(__DIR__ . '/..' . $existing_url);
         $baseUploads = realpath($upDir);
@@ -189,7 +186,7 @@ function handle_client_photo_upload(int $client_id, string $pppoe_id, ?string $e
     return $out;
 }
 
-/* ==================== Invoice helpers (expiry-based due) ==================== */
+/* ==================== ইনভয়েস সহায়ক অংশ (এক্সপায়ারি ভিত্তিক ডিউ) ==================== */
 function invoice_schema(): array {
     $has = fn($c)=> db_has_column('invoices', $c);
     $amount_target = $has('total') ? 'total' : ($has('payable') ? 'payable' : ($has('amount') ? 'amount' : null));
@@ -229,7 +226,7 @@ function create_due_invoice_for_expiry(int $client_id, float $amount, string $ex
     $ym_start = $ym.'-01';
     $ym_end   = date('Y-m-t', strtotime($ym_start));
 
-    // check existing invoice for that month
+    // (বাংলা) একই মাসে আগের ইনভয়েস আছে কি না চেক করা
     $rangeExpr = $sch['has_billing_month'] ? "billing_month BETWEEN ? AND ?"
                 : ($sch['has_invoice_date'] ? "DATE(invoice_date) BETWEEN ? AND ?"
                 : ($sch['has_month'] && $sch['has_year'] ? "month = ? AND year = ?"
@@ -317,7 +314,7 @@ function create_due_invoice_for_expiry(int $client_id, float $amount, string $ex
     }
 }
 
-/* --------- load client & lists --------- */
+/* --------- ক্লায়েন্ট ও তালিকা লোড --------- */
 $client_id = intval($_GET['id'] ?? $_POST['id'] ?? 0);
 if (!$client_id) { header("Location: clients.php"); exit; }
 
@@ -336,15 +333,15 @@ if (!$client) { header("Location: clients.php"); exit; }
 $packages = db()->query("SELECT id, name, price, profile, profile_name, router_id FROM packages ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 $routers  = db()->query("SELECT id, name, ip, username, password, api_port FROM routers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-// Ensure legacy unique index on mobile is removed to allow duplicates
+// (বাংলা) পুরনো unique index থাকলে তা ড্রপ করা (ডুপ্লিকেট মোবাইল অনুমতি)
 try {
     db()->exec("ALTER TABLE clients DROP INDEX uq_mobile");
 } catch (Throwable $e) {
-    // ignore
+    // (বাংলা) না পারলে উপেক্ষা করা হবে
 }
 
-/* --------- optional columns present? --------- */
-$SHOW_CLIENT_CODE = false; // client_code deprecated
+/* --------- কোন কোন কলাম আছে তা যাচাই --------- */
+$SHOW_CLIENT_CODE = false; // client_code পুরনো হওয়ায় হাইড করা হয়েছে
 $HAS_CLIENT_CODE = db_has_column('clients','client_code');
 $HAS_SUB_ZONE    = db_has_column('clients','sub_zone');
 $HAS_BOX         = db_has_column('clients','box');
@@ -407,26 +404,20 @@ if (($HAS_PPPOE_PASS || $HAS_PPPOE_PASSWORD) && $pppoe_pass_display === '') {
     }
 }
 
-/* --------- date helpers --------- */
+/* --------- তারিখ সংক্রান্ত সহায়তা --------- */
 function normalize_day_only_date(string $raw): string {
     $raw = trim($raw);
     if ($raw === '') return '';
     if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) return $raw;
-    if (preg_match('/^\d{1,2}$/', $raw)) {
-        $day = (int)$raw;
-        if ($day <= 0) return '';
-        $nextMonth = strtotime('first day of next month');
-        $year = (int)date('Y', $nextMonth);
-        $month = (int)date('m', $nextMonth);
-        $daysInMonth = (int)date('t', $nextMonth);
-        if ($day > $daysInMonth) $day = $daysInMonth;
-        return sprintf('%04d-%02d-%02d', $year, $month, $day);
-    }
+    // (বাংলা) কেবল পূর্ণ তারিখ রাখি, পরের মাসে অটো-রোলওভার লজিক সরানো হয়েছে
+    if (!preg_match('/[-\\/]/', $raw)) return '';
     $ts = strtotime($raw);
-    return $ts ? date('Y-m-d', $ts) : '';
+    if ($ts === false) return '';
+    $normalized = date('Y-m-d', $ts);
+    return $normalized;
 }
 
-/* --------- process save --------- */
+/* --------- সেভ প্রসেস --------- */
 $errors = [];
 $notice = null;
 
@@ -472,7 +463,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $client_code = client_code_from_pppoe($pppoe_id);
     }
 
-    // Package lookup (align with add flow)
+    // (বাংলা) প্যাকেজ তথ্য ফর্মের সঙ্গে সিঙ্ক রাখা (add ফ্লো এর মতো)
     $selectedPackage = null;
     if ($package_id > 0) {
         foreach ($packages as $pkgRow) {
@@ -517,9 +508,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($status === '') $status = strtolower(trim((string)($client['status'] ?? '')));
     $router_id_db = $router_id > 0 ? $router_id : null;
 
-    // duplicate mobile / PPPoE checks skipped per requirement
+    // (বাংলা) ডুপ্লিকেট মোবাইল/PPPoE চেক ইচ্ছাকৃতভাবে স্কিপ করা হয়েছে
 
-    // Handle photo (pppoe-based filename)
+    // (বাংলা) ছবি প্রসেসিং (PPPoE ভিত্তিক ফাইলনেম)
     $new_photo_url = $client['photo_url'] ?? null;
     if ($HAS_PHOTO_URL) {
         $photoResult = handle_client_photo_upload($client_id, $pppoe_id, $new_photo_url);
@@ -528,7 +519,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errors) {
-        // Build dynamic UPDATE
+        // (বাংলা) ডাইনামিক UPDATE কোয়েরি তৈরি
         $sets = [
             'name = :name',
             'mobile = :mobile',
@@ -586,7 +577,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdoSave->commit();
         $client_id = $new_client_id;
 
-        // ✅ Audit log: track all changed fields (excluding raw passwords)
+        // ✅ (বাংলা) অডিট লগ: বদলানো ফিল্ডগুলো ট্র্যাক (পাসওয়ার্ড ছাড়া)
         $oldData = [
             'id' => $client['id'] ?? null,
             'client_code' => $client['client_code'] ?? null,
@@ -694,7 +685,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($packageChanged) {
-            // ✅ Audit log: package change
+            // ✅ (বাংলা) অডিট লগ: প্যাকেজ বদল
             audit('package_change', 'client', (int)$client_id, [
                 'pppoe_id'    => $client['pppoe_id'] ?? '',
                 'name'        => $client['name'] ?? '',
@@ -709,7 +700,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // (বাংলা) expiry_date অনুযায়ী due invoice create (যদি আগে না থাকে)
         if ($expiry_date !== '' && $monthly_bill >= 0) {
-            // Prefer package price for auto invoice; fallback to monthly_bill
+            // (বাংলা) অটো ইনভয়েসের অগ্রাধিকার: প্যাকেজ প্রাইস, না হলে monthly_bill
             $inv_amount = $package_price > 0 ? (float)$package_price : (float)$monthly_bill;
             if ($inv_amount <= 0 && $package_id) {
                 try{
@@ -726,7 +717,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Reload fresh client
+        // (বাংলা) আপডেটের পর ক্লায়েন্টের নতুন ডেটা রিলোড
         $st = db()->prepare($sqlClient);
         $st->execute([$client_id]);
         $client = $st->fetch(PDO::FETCH_ASSOC);
@@ -736,14 +727,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $notice .= ' '.implode(' ', $successNotes);
         }
 
-        // PRG: redirect after POST to avoid resubmission prompt
+        // (বাংলা) PRG: POST শেষে রিডাইরেক্ট করে রি-সাবমিশন এড়ানো
         $_SESSION['flash_notice'] = $notice;
         header('Location: /public/client_edit.php?id='.(int)$client_id);
         exit;
     }
 }
 
-/* --------- UI helpers --------- */
+/* --------- UI সংক্রান্ত সহায়তা --------- */
 if ($notice === null && isset($_SESSION['flash_notice'])) {
     $notice = $_SESSION['flash_notice'];
     unset($_SESSION['flash_notice']);
@@ -822,7 +813,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
     <input type="hidden" name="csrf" value="<?= h($LOC_CSRF) ?>">
 
     <div class="row g-3">
-      <!-- Account + Photo -->
+      <!-- অ্যাকাউন্ট + ছবি -->
       <div class="col-12 col-lg-4">
         <div class="card-block h-100">
           <div class="card-title d-flex justify-content-between align-items-center">
@@ -837,7 +828,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
                      class="form-control form-control-sm"
                      value="<?= h($_POST['client_code'] ?? ($client['client_code'] ?? '')) ?>"
                      required>
-              <!-- <div class="form-text small">Blank হলে PPPoE username-এর শেষ ৪ ডিজিট ব্যবহার হবে।</div> -->
+              <!-- <div class="form-text small">ফাঁকা থাকলে PPPoE username-এর শেষ ৪ ডিজিট ব্যবহার হবে।</div> -->
             </div>
             <?php endif; ?>
             <div class="mb-2">
@@ -903,7 +894,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
             <div class="mb-2">
               <label class="form-label req">Mobile</label>
               <input type="text" name="mobile" pattern="\d{11}" maxlength="11" inputmode="numeric" class="form-control form-control-sm" value="<?= h($_POST['mobile'] ?? $client['mobile']) ?>" required>
-              <!-- <div class="form-text small">Enter 11-digit mobile number (digits only).</div> -->
+              <!-- <div class="form-text small">১১ সংখ্যার মোবাইল নাম্বার দিন (শুধু ডিজিট)।</div> -->
             </div>
             <div class="mb-2">
               <label class="form-label">Email</label>
@@ -924,7 +915,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
 
             <hr>
 
-            <!-- Photo -->
+            <!-- প্রোফাইল ছবি -->
             <div class="card">
               <div class="card-header fw-bold">Profile Photo</div>
               <div class="card-body">
@@ -954,7 +945,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
         </div>
       </div>
 
-      <!-- Billing -->
+      <!-- বিলিং -->
       <div class="col-12 col-lg-4">
         <div class="card-block h-100">
           <div class="card-title">Billing</div>
@@ -970,7 +961,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
                   </option>
                 <?php endforeach; ?>
               </select>
-              <!-- <div class="form-text small">(Package name = MikroTik PPP profile name 1:1)</div> -->
+              <!-- <div class="form-text small">(প্যাকেজ নাম = MikroTik PPP প্রোফাইল নাম এক-টু-এক)</div> -->
             </div>
             <div class="mb-2">
               <label class="form-label req">Monthly Bill</label>
@@ -992,7 +983,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
                      class="form-control form-control-sm"
                      value="<?= h($exp_display) ?>"
                      placeholder="YYYY-MM-DD">
-              <!-- <div class="form-text small">Calendar থেকে পূর্ণ তারিখ সিলেক্ট করুন (ফাঁকা রাখলে আপডেট হবে না)।</div> -->
+              <!-- <div class="form-text small">ক্যালেন্ডার থেকে পূর্ণ তারিখ সিলেক্ট করুন (ফাঁকা রাখলে আপডেট হবে না)।</div> -->
             </div>
             <div class="mb-2">
               <label class="form-label">Status</label>
@@ -1013,7 +1004,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
         </div>
       </div>
 
-      <!-- Server / PPP -->
+      <!-- সার্ভার / PPP -->
       <div class="col-12 col-lg-4">
         <div class="card-block h-100">
           <div class="card-title">Server / PPP</div>
@@ -1063,7 +1054,7 @@ $customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time
   </form>
 </div>
 
-<!-- Location Option Modal -->
+<!-- লোকেশন অপশন মডাল -->
 <div class="modal fade" id="locOptionModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
