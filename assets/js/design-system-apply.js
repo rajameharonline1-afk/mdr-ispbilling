@@ -14,8 +14,48 @@
 
     function initTooltips(root) {
       if (!(window.bootstrap && bootstrap.Tooltip) || !root || !root.querySelectorAll) return;
-      root.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el){
+      root.querySelectorAll('[data-bs-toggle="tooltip"], [data-tooltip], [title]').forEach(function(el){
+        if (el.hasAttribute('title') && !el.hasAttribute('data-bs-title') && !el.hasAttribute('data-tooltip')) {
+          el.setAttribute('data-bs-title', el.getAttribute('title') || '');
+          el.removeAttribute('title');
+        }
+        if (el.hasAttribute('data-tooltip') && !el.hasAttribute('data-bs-title')) {
+          el.setAttribute('data-bs-title', el.getAttribute('data-tooltip') || '');
+        }
+        if (!el.hasAttribute('data-bs-toggle')) {
+          el.setAttribute('data-bs-toggle', 'tooltip');
+        }
         bootstrap.Tooltip.getOrCreateInstance(el);
+      });
+    }
+
+    function normalizeTable(tableEl) {
+      if (!tableEl || !tableEl.classList) return;
+      if (!tableEl.classList.contains('ads-table')) {
+        tableEl.classList.add('ads-ds-table');
+      }
+      const parent = tableEl.parentElement;
+      if (!parent) return;
+      if (!parent.classList.contains('table-responsive')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'table-responsive';
+        parent.insertBefore(wrap, tableEl);
+        wrap.appendChild(tableEl);
+      }
+    }
+
+    function normalizeActionElements(root) {
+      root.querySelectorAll('.form-switch .form-check-input, input[type="checkbox"].toggle').forEach(function(el){
+        el.classList.add('ads-action-toggle');
+      });
+    }
+
+    function normalizeIcons(root) {
+      root.querySelectorAll('i.bi, i.fa, i.fas, i.far').forEach(function(el){
+        if (el.closest('.btn, .badge, .topbar, .sidebar, .ads-kpi-card, .ads-support-card')) return;
+        if (!el.classList.contains('icon-muted') && !el.classList.contains('icon-primary')) {
+          el.classList.add('icon-muted');
+        }
       });
     }
 
@@ -25,16 +65,13 @@
         el.classList.add('ads-ds-card');
       });
       root.querySelectorAll('table').forEach(function(el){
-        if (!el.classList.contains('ads-table')) {
-          el.classList.add('ads-ds-table');
-        }
+        normalizeTable(el);
       });
       root.querySelectorAll('.modal').forEach(function(el){
         el.classList.add('ads-ds-modal');
       });
-      root.querySelectorAll('.form-switch .form-check-input').forEach(function(el){
-        el.classList.add('ads-action-toggle');
-      });
+      normalizeActionElements(root);
+      normalizeIcons(root);
       initTooltips(root);
     }
 

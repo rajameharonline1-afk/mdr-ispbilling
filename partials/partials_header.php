@@ -205,7 +205,10 @@ if ($__resolved_active !== '') {
       </div>
 
       <div class="d-flex align-items-center gap-2 ms-auto">
-        <a href="/public/tickets.php" class="btn btn-outline-light btn-sm d-none d-sm-inline-flex">
+        <a href="/public/wallets_dashboard.php" class="btn topbar-cta btn-sm d-none d-sm-inline-flex">
+          <i class="bi bi-box-arrow-up-right"></i> Accounting Dashboard
+        </a>
+        <a href="/public/tickets.php" class="btn btn-outline-light btn-sm d-none d-lg-inline-flex">
           <i class="bi bi-life-preserver"></i> Tickets
         </a>
 
@@ -450,6 +453,9 @@ if ($__resolved_active !== '') {
 
       <div class="offcanvas-body p-0">
         <nav class="sidebar-scroll" id="sidebarAccordion">
+          <div class="menu-search-box px-2 pb-2">
+            <input id="menuQuickSearch" type="search" class="form-control form-control-sm" placeholder="Search menu..." aria-label="Search sidebar menu">
+          </div>
           <ul class="list-unstyled m-0">
 
             <!-- Dashboard -->
@@ -714,4 +720,12 @@ if ($__resolved_active !== '') {
 
     <!-- =============== Main Content Starts =============== -->
     <main class="content-area">
+      <div class="ads-action-rail" aria-label="Quick actions">
+        <a href="/public/wallets_dashboard.php" class="ads-rail-btn" data-bs-toggle="tooltip" data-bs-title="Accounting Dashboard" aria-label="Open accounting dashboard">
+          <i class="bi bi-box-arrow-up-right"></i>
+        </a>
+        <a href="/public/settings.php" class="ads-rail-btn" data-bs-toggle="tooltip" data-bs-title="Settings" aria-label="Open settings">
+          <i class="bi bi-gear-fill"></i>
+        </a>
+      </div>
       <!-- page content goes here -->

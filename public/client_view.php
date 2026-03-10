@@ -927,12 +927,9 @@ if (empty($_SESSION['csrf_token'])) {
 }
 $csrf = $_SESSION['csrf_token'];
 include __DIR__ . '/../partials/partials_header.php';
-$clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time();
 ?>
 <!-- JS-এর জন্য CSRF টোকেন -->
 <meta name="csrf-token" content="<?= h($csrf) ?>">
-<!-- (বাংলা) ক্লায়েন্ট ভিউয়ের স্টাইল assets/css/custom_modern.css এ রাখা হয়েছে -->
-<link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $clientViewCssVer ?>">
 <div class="container py-3 text-start page-shell">
 
   <!-- (বাংলা) হেডার ব্লক: প্রোফাইল, সারাংশ ব্যাজ, অ্যাকশন -->

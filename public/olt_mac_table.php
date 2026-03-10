@@ -811,14 +811,30 @@ $latestRowTs = null;
 $monitorRecent24 = 0;
 $stats = ['total_entries'=>0,'olt_count'=>0,'last_learned'=>null];
 $recent24 = 0;
+$tableMissing = false;
 
 // ---------- ডেটা লোড: প্রথমে onu_monitor_cache (নতুন স্কিমা), না থাকলে olt_mac_cache ----------
+if($filterOlt > 0){
 try{
   $monParams = [];
   $monWhere  = '';
   if($filterOlt > 0){
-    $monWhere = 'WHERE c.olt_id = ?';
-    $monParams[] = $filterOlt;
+    $latestGeneratedAt = null;
+    try {
+      $stLatest = $db->prepare("SELECT MAX(generated_at) FROM onu_monitor_cache WHERE olt_id = ?");
+      $stLatest->execute([$filterOlt]);
+      $latestGeneratedAt = $stLatest->fetchColumn() ?: null;
+    } catch (Throwable $e) {
+      $latestGeneratedAt = null;
+    }
+    if ($latestGeneratedAt !== null && $latestGeneratedAt !== '') {
+      $monWhere = 'WHERE c.olt_id = ? AND c.generated_at = ?';
+      $monParams[] = $filterOlt;
+      $monParams[] = $latestGeneratedAt;
+    } else {
+      $monWhere = 'WHERE c.olt_id = ?';
+      $monParams[] = $filterOlt;
+    }
   }
   $monSql = "SELECT c.*, o.name AS olt_name, o.host AS olt_host, o.vendor AS olt_vendor
              FROM onu_monitor_cache c
@@ -954,6 +970,7 @@ try{
     throw $e;
   }
 }
+}
 
 if($usingMonitorCache){
   // মনিটর ডাটা ফাঁকা হলে olt_mac_cache থেকে RX/দূরত্ব এনে ফ্যালব্যাক তৈরি
@@ -1001,7 +1018,7 @@ if($usingMonitorCache){
   ];
   $recent24 = $monitorRecent24;
   $tableMissing = false;
-} else {
+} elseif($filterOlt > 0) {
   $where = [];
   $params = [];
   if($filterOlt > 0){
@@ -1035,7 +1052,9 @@ $groupedMacs = [];
 $ponSummary = [];
 $ponTotals  = ['total_pons'=>0,'total_onu'=>0];
 $clientMacCache = $filterOlt > 0 ? load_onu_client_mac_rows($db, $filterOlt) : [];
-$clientLookup   = load_client_lookup($db, $filterOlt);
+$clientLookup   = $filterOlt > 0
+  ? load_client_lookup($db, $filterOlt)
+  : ['byKey' => [], 'byOnu' => [], 'byMac' => [], 'byId' => []];
 if(!$tableMissing && $rows){
   $processedRows = [];
   foreach($rows as $row){
@@ -1281,7 +1300,7 @@ if($rows){
     }
   }
 }
-if(!$usingMonitorCache){
+if($filterOlt > 0 && !$usingMonitorCache){
   $statWhere = [];
   $statParams = [];
   if($filterOlt > 0){
@@ -1581,7 +1600,6 @@ if ($isAjax) {
 // ---------- ফুল পেজ রেন্ডার ----------
 require_once __DIR__ . '/../partials/partials_header.php';
 ?>
-<link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= filemtime(__DIR__ . '/../assets/css/custom_modern.css'); ?>">
 <div class="olt-mac-wrap container-fluid">
   <div class="container-admin olt-mac-table-page">
 

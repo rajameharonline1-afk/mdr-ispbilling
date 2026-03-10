@@ -752,10 +752,7 @@ if ($photo_url !== '' && str_starts_with($photo_url, '/uploads/clients/')) {
 $client_initial = mb_strtoupper(mb_substr($client['name'] ?? '?', 0, 1, 'UTF-8'));
 
 include __DIR__ . '/../partials/partials_header.php';
-// (বাংলা) স্টাইল একীভূত ফাইল থেকে লোড করি
-$customCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time();
 ?>
-<link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $customCssVer ?>">
 
 <div class="container-fluid py-3 text-start client-edit-shell">
   <!-- (বাংলা) হেডার: ক্লায়েন্ট সারাংশ + কুইক মেটা + অ্যাকশন -->

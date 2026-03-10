@@ -647,9 +647,7 @@ if (!$errors) {
 }
 
 include __DIR__ . '/../partials/partials_header.php';
-$clientViewCssVer = @filemtime(__DIR__ . '/../assets/css/custom_modern.css') ?: time();
 ?>
-<link rel="stylesheet" href="/assets/css/custom_modern.css?v=<?= $clientViewCssVer ?>">
 <script>
 // (বাংলা) JS এর জন্য প্রয়োজনীয় ডাটা
 window.CLIENT_ADD_BOOT = {

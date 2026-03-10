@@ -5,22 +5,48 @@
     document.body.classList.toggle('sb-collapsed', collapsed);
   };
 
-  document.addEventListener('DOMContentLoaded', function(){
-    if (mq.matches) {
-      apply(false);
-      try{ localStorage.removeItem(KEY); }catch(e){}
-    } else {
-      const saved = localStorage.getItem(KEY);
-      apply(saved === '1');
+  const readSaved = () => {
+    try {
+      return localStorage.getItem(KEY) === '1';
+    } catch (e) {
+      return false;
     }
+  };
 
-    const btn = document.getElementById('btnSidebarToggle');
-    if (!btn) return;
+  const saveState = (collapsed) => {
+    try {
+      localStorage.setItem(KEY, collapsed ? '1' : '0');
+    } catch (e) {
+      // ignore storage write failures
+    }
+  };
 
-    btn.addEventListener('click', function(){
-      if (mq.matches) return;
-      const oc = document.getElementById('sidebarOffcanvas');
-      if (oc){ bootstrap.Offcanvas.getOrCreateInstance(oc, { backdrop: false, scroll: true }).show(); }
+  document.addEventListener('DOMContentLoaded', function(){
+    apply(readSaved());
+
+    mq.addEventListener('change', function(){
+      // Keep persisted collapse preference when switching between viewports.
+      apply(readSaved());
+    });
+
+    const toggles = Array.from(document.querySelectorAll('#btnSidebarToggle, #btnSidebarToggleDesktop'));
+    if (!toggles.length) return;
+
+    toggles.forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        if (mq.matches) {
+          ev.preventDefault();
+          const next = !document.body.classList.contains('sb-collapsed');
+          apply(next);
+          saveState(next);
+          return;
+        }
+
+        const oc = document.getElementById('sidebarOffcanvas');
+        if (oc && window.bootstrap && bootstrap.Offcanvas) {
+          bootstrap.Offcanvas.getOrCreateInstance(oc, { backdrop: false, scroll: true }).show();
+        }
+      });
     });
   });
 })();
